@@ -1,0 +1,21 @@
+# Build products
+/.build/
+/.dist/
+*.o
+*.swiftmodule
+
+# macOS
+.DS_Store
+
+# Xcode / SwiftPM local state
+/.swiftpm/
+*.xcodeproj
+Package.resolved
+
+# AI assistant support files (not part of the public project)
+/CLAUDE.md
+/spec/
+
+# Bundled third-party binary — fetched at package time, not committed.
+# (its README.md and License.txt ARE tracked, see vendor/sevenzip/)
+/vendor/sevenzip/7zz
