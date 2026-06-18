@@ -56,6 +56,37 @@ final class ArchiveLogicTests: XCTestCase {
         XCTAssertFalse(ArchiveFormat.tarGz.supportsEncryption)
     }
 
+    // MARK: LibArchive — per-archive charset detection + decode
+
+    // 华为MetaERP 1.5.1 产品文档 _1.5.1.hwics, GBK-encoded (no UTF-8 flag).
+    private static let gbkName = Data([0xbb, 0xaa, 0xce, 0xaa, 0x4d, 0x65, 0x74, 0x61, 0x45, 0x52, 0x50,
+                                       0x20, 0x31, 0x2e, 0x35, 0x2e, 0x31, 0x20, 0xb2, 0xfa, 0xc6, 0xb7,
+                                       0xce, 0xc4, 0xb5, 0xb5, 0x20, 0x5f, 0x31, 0x2e, 0x35, 0x2e, 0x31,
+                                       0x2e, 0x68, 0x77, 0x69, 0x63, 0x73])
+    // テスト.txt, Shift-JIS-encoded.
+    private static let sjisName = Data([0x83, 0x65, 0x83, 0x58, 0x83, 0x67, 0x2e, 0x74, 0x78, 0x74])
+
+    func testDetectsGBKArchiveAndDecodes() {
+        let enc = LibArchive.detectLegacyEncoding([Self.gbkName])
+        XCTAssertNotNil(enc)
+        XCTAssertEqual(LibArchive.decodeName(Self.gbkName, encoding: enc),
+                       "华为MetaERP 1.5.1 产品文档 _1.5.1.hwics")
+    }
+
+    func testDetectsShiftJISArchiveAndDecodes() {
+        // Detection adapts per-archive — a Japanese package is NOT forced to GBK.
+        let enc = LibArchive.detectLegacyEncoding([Self.sjisName])
+        XCTAssertNotNil(enc)
+        XCTAssertEqual(LibArchive.decodeName(Self.sjisName, encoding: enc), "テスト.txt")
+    }
+
+    func testAllUTF8NamesNeedNoDetection() {
+        // Pure-ASCII / UTF-8 names ⇒ no legacy charset, decode is identity.
+        XCTAssertNil(LibArchive.detectLegacyEncoding([Data("folder/file.txt".utf8)]))
+        XCTAssertEqual(LibArchive.decodeName(Data("产品文档.txt".utf8), encoding: nil), "产品文档.txt")
+        XCTAssertEqual(LibArchive.decodeName(Data("folder/file.txt".utf8), encoding: nil), "folder/file.txt")
+    }
+
     // MARK: FileItem.parentEntry
 
     func testParentEntryPointsToContainingDirectory() {
