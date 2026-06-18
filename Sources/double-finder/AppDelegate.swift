@@ -54,14 +54,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileMenuItem.submenu = fileMenu
         fileMenu.addItem(NSMenuItem(title: "New Directory", action: #selector(menuNewDirectory), keyEquivalent: "d"))
         let newFileItem = NSMenuItem(title: "New File…", action: #selector(menuNewFile), keyEquivalent: String(UnicodeScalar(NSF4FunctionKey)!))
-        newFileItem.keyEquivalentModifierMask = [.shift, .function]
+        newFileItem.keyEquivalentModifierMask = [.shift]   // .function is rejected for custom items (macOS adds it for F-keys automatically)
         fileMenu.addItem(newFileItem)
         fileMenu.addItem(NSMenuItem(title: "Change Permissions…", action: #selector(menuChangeAttributes), keyEquivalent: ""))
         let packItem = NSMenuItem(title: "Pack to Other Panel…", action: #selector(menuPack), keyEquivalent: String(UnicodeScalar(NSF5FunctionKey)!))
-        packItem.keyEquivalentModifierMask = [.option, .function]
+        packItem.keyEquivalentModifierMask = [.option]
         fileMenu.addItem(packItem)
         let extractItem = NSMenuItem(title: "Extract to Other Panel", action: #selector(menuExtract), keyEquivalent: String(UnicodeScalar(NSF6FunctionKey)!))
-        extractItem.keyEquivalentModifierMask = [.option, .function]
+        extractItem.keyEquivalentModifierMask = [.option]
         fileMenu.addItem(extractItem)
         fileMenu.addItem(.separator())
         fileMenu.addItem(NSMenuItem(title: "New SFTP Connection...", action: #selector(menuNewSFTP), keyEquivalent: "n"))

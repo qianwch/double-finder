@@ -42,6 +42,8 @@ enum LibArchive {
         let openR = archive_read_open_filename(a, archivePath, 10240)
         out += "open_filename -> \(openR)" + (openR != OK ? " err='\(errString(a))'" : "") + "\n"
         if openR != OK { return out }
+        let enc = detectArchiveEncoding(archivePath: archivePath, password: nil)
+        out += "detected name charset -> \(enc.map { "\($0)" } ?? "UTF-8/none")\n"
         var entry: OpaquePointer?
         var count = 0
         while true {
@@ -52,8 +54,8 @@ enum LibArchive {
                 break
             }
             count += 1
-            if r != OK, let e = entry { out += "  [warn r=\(r)] \(entryName(e))\n" }
-            else if let e = entry, count <= 5 { out += "  [\(count)] \(entryName(e))\n" }
+            if r != OK, let e = entry { out += "  [warn r=\(r)] \(entryName(e, encoding: enc))\n" }
+            else if let e = entry, count <= 5 { out += "  [\(count)] \(entryName(e, encoding: enc))\n" }
             if count > 200 { out += "  …(\(count)+ entries)\n"; break }
             archive_read_data_skip(a)
         }
@@ -66,10 +68,72 @@ enum LibArchive {
         archive_error_string(a).map { String(cString: $0) } ?? "unknown libarchive error"
     }
 
-    private static func entryName(_ e: OpaquePointer) -> String {
-        if let u = archive_entry_pathname_utf8(e) { return String(cString: u) }
-        if let p = archive_entry_pathname(e) { return String(cString: p) }
+    /// The entry's name and, when libarchive couldn't give a UTF-8 form, its raw
+    /// stored bytes. Windows-made zips that DON'T set the UTF-8 flag store the
+    /// name in a legacy codepage (GBK / Shift-JIS / Big5 / …): `pathname_utf8` is
+    /// nil and `pathname` returns those bytes verbatim — which we must decode
+    /// with the archive's detected charset, not blindly as UTF-8 (→ mojibake).
+    private static func rawName(_ e: OpaquePointer) -> (utf8: String?, bytes: Data?) {
+        if let u = archive_entry_pathname_utf8(e) { return (String(cString: u), nil) }
+        if let p = archive_entry_pathname(e) { return (nil, Data(bytes: p, count: strlen(p))) }
+        return (nil, nil)
+    }
+
+    /// An entry's display name, decoding legacy bytes with `encoding` (the value
+    /// detected once for the whole archive by `detectArchiveEncoding`).
+    private static func entryName(_ e: OpaquePointer, encoding: String.Encoding?) -> String {
+        let (utf8, bytes) = rawName(e)
+        if let utf8 = utf8 { return utf8 }
+        if let bytes = bytes { return decodeName(bytes, encoding: encoding) }
         return ""
+    }
+
+    /// Decodes one raw filename: valid UTF-8 always wins (covers ASCII names and
+    /// properly-flagged archives); otherwise use the archive's detected legacy
+    /// `encoding`; lossy UTF-8 as a last resort.
+    static func decodeName(_ data: Data, encoding: String.Encoding?) -> String {
+        if let s = String(data: data, encoding: .utf8) { return s }
+        if let enc = encoding, let s = String(data: data, encoding: enc), !s.isEmpty { return s }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Guesses the charset used for an archive's non-UTF-8 entry names by running
+    /// the system's charset detector (ICU under the hood) over ALL such names
+    /// combined — more bytes ⇒ a more reliable guess than per-name detection,
+    /// and it adapts per archive (GBK, Shift-JIS, Big5, EUC-KR, …) rather than
+    /// assuming one codepage. Returns nil when every name is already UTF-8/ASCII
+    /// (nothing to re-decode) or detection is inconclusive.
+    static func detectLegacyEncoding(_ rawNames: [Data]) -> String.Encoding? {
+        var combined = Data()
+        for d in rawNames where d.contains(where: { $0 >= 0x80 }) {   // skip pure-ASCII names
+            combined.append(d); combined.append(0x0a)                 // newline-separate for the detector
+        }
+        guard !combined.isEmpty else { return nil }
+        var lossy: ObjCBool = false
+        let raw = NSString.stringEncoding(for: combined, encodingOptions: [:],
+                                          convertedString: nil, usedLossyConversion: &lossy)
+        guard raw != 0, !lossy.boolValue else { return nil }
+        let enc = String.Encoding(rawValue: raw)
+        // Ignore a UTF-8 verdict: those names already round-trip via decodeName's
+        // UTF-8 path, and a legacy codepage is what we actually need here.
+        return enc == .utf8 ? nil : enc
+    }
+
+    /// Pre-scans an archive's headers (no data decompression) to detect the
+    /// charset of its legacy entry names, so a streaming extract/rewrite can
+    /// decode names consistently. Cheap: reads only the header/central-directory.
+    private static func detectArchiveEncoding(archivePath: String, password: String?) -> String.Encoding? {
+        guard let a = try? openReader(archivePath, password: password) else { return nil }
+        defer { archive_read_free(a) }
+        var entry: OpaquePointer?
+        var raws: [Data] = []
+        while true {
+            let r = archive_read_next_header(a, &entry)
+            if r == EOFR || r < WARN { break }
+            if let e = entry, let bytes = rawName(e).bytes { raws.append(bytes) }
+            archive_read_data_skip(a)
+        }
+        return detectLegacyEncoding(raws)
     }
 
     private static func normalize(_ s: String) -> String {
@@ -127,29 +191,36 @@ enum LibArchive {
     static func listEntries(archivePath: String, password: String?) throws -> [Entry] {
         let a = try openReader(archivePath, password: password)
         defer { archive_read_free(a) }
-        var result: [Entry] = []
+        // Collect raw names + metadata in one pass, detect the archive's name
+        // charset from the legacy-byte names, then decode them all consistently.
+        struct Raw { let utf8: String?; let bytes: Data?; let size: Int64; let mtime: Date?; let isDir: Bool }
+        var raws: [Raw] = []
         var entry: OpaquePointer?
         while true {
             let r = archive_read_next_header(a, &entry)
             if r == EOFR { break }
             if r < WARN { try throwClassified(a, archivePath: archivePath) }
             if let e = entry {
-                // The raw-format reader names a bare stream "data"; skip that
-                // synthetic name (bare single-file archives aren't browsable).
-                let raw = entryName(e)
-                if raw != "data" {
-                    let n = normalize(raw)
-                    if !n.isEmpty {
-                        let mt = archive_entry_mtime(e)
-                        let isDir = (archive_entry_filetype(e) & AE_IFMT) == AE_IFDIR
-                        result.append(Entry(path: n,
-                                            size: archive_entry_size(e),
-                                            mtime: mt > 0 ? Date(timeIntervalSince1970: TimeInterval(mt)) : nil,
-                                            isDir: isDir))
-                    }
-                }
+                let (u, b) = rawName(e)
+                let mt = archive_entry_mtime(e)
+                raws.append(Raw(utf8: u, bytes: b,
+                                size: archive_entry_size(e),
+                                mtime: mt > 0 ? Date(timeIntervalSince1970: TimeInterval(mt)) : nil,
+                                isDir: (archive_entry_filetype(e) & AE_IFMT) == AE_IFDIR))
             }
             archive_read_data_skip(a)
+        }
+        let enc = detectLegacyEncoding(raws.compactMap { $0.bytes })
+        var result: [Entry] = []
+        for raw in raws {
+            let name = raw.utf8 ?? decodeName(raw.bytes ?? Data(), encoding: enc)
+            // The raw-format reader names a bare stream "data"; skip that
+            // synthetic name (bare single-file archives aren't browsable).
+            if name == "data" { continue }
+            let n = normalize(name)
+            if !n.isEmpty {
+                result.append(Entry(path: n, size: raw.size, mtime: raw.mtime, isDir: raw.isDir))
+            }
         }
         return result
     }
@@ -166,6 +237,9 @@ enum LibArchive {
     /// absolute destination path, or nil to skip the entry.
     private static func extract(archivePath: String, password: String?,
                                 outputPath: (String) -> String?) throws {
+        // Detect the name charset up front so entries decode to the same names
+        // shown in the panel (and land on disk with correct UTF-8 names).
+        let enc = detectArchiveEncoding(archivePath: archivePath, password: password)
         let a = try openReader(archivePath, password: password)
         defer { archive_read_free(a) }
         guard let disk = archive_write_disk_new() else { throw Failure(message: "write_disk_new failed") }
@@ -181,7 +255,7 @@ enum LibArchive {
             if r == EOFR { break }
             if r < WARN { try throwClassified(a, archivePath: archivePath) }
             guard let e = entry else { continue }
-            let name = normalize(entryName(e))
+            let name = normalize(entryName(e, encoding: enc))
             guard let out = outputPath(name) else { archive_read_data_skip(a); continue }
             // Redirect this entry to the chosen destination (keep type/perm/symlink).
             archive_entry_set_pathname(e, out)
@@ -285,6 +359,7 @@ enum LibArchive {
     /// zip/tar*/7z (non-encrypted). Used to rename an entry inside an archive.
     static func rewriteRenaming(archivePath: String, password: String?,
                                 rename: (String) -> String?) throws {
+        let enc = detectArchiveEncoding(archivePath: archivePath, password: password)
         let a = try openReader(archivePath, password: password)
         defer { archive_read_free(a) }
         guard let w = archive_write_new() else { throw Failure(message: "archive_write_new failed") }
@@ -316,7 +391,7 @@ enum LibArchive {
         while r != EOFR {
             if r < WARN { try? FileManager.default.removeItem(atPath: tmp); try throwClassified(a, archivePath: archivePath) }
             if let e = entry {
-                if let newName = rename(normalize(entryName(e))) {
+                if let newName = rename(normalize(entryName(e, encoding: enc))) {
                     archive_entry_set_pathname(e, newName)
                     archive_entry_set_pathname_utf8(e, newName)
                 }

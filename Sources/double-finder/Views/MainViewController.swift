@@ -1296,9 +1296,34 @@ class MainViewController: NSViewController {
 
     func actionExtractArchive() {
         let items = activePanelVC.selectedOrCurrent.filter { $0.isArchive }
-        guard !items.isEmpty else { return }
-        let dest = inactivePanelVC.panelState.currentPath
-        extractArchives(items, to: dest, password: nil)
+        guard !items.isEmpty, let window = view.window else { return }
+
+        // Confirm before extracting, letting the user edit the destination path
+        // (TC-style unpack dialog). Defaults to the other panel's directory.
+        let alert = NSAlert()
+        alert.messageText = items.count == 1
+            ? "Extract “\(items[0].name)”"
+            : "Extract \(items.count) archives"
+        alert.informativeText = "Extract to:"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Extract")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.bezelStyle = .roundedBezel
+        field.stringValue = inactivePanelVC.panelState.currentPath
+        alert.accessoryView = field
+
+        beginSheet(alert, focusing: field, on: window) { [weak self] response in
+            guard let self = self, response == .alertFirstButtonReturn else { return }
+            var dest = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !dest.isEmpty else { return }
+            dest = (dest as NSString).expandingTildeInPath
+            // The user may have typed a path that doesn't exist yet — create it.
+            try? FileManager.default.createDirectory(
+                atPath: dest, withIntermediateDirectories: true)
+            self.extractArchives(items, to: dest, password: nil)
+        }
     }
 
     /// Extracts archives; whatever fails (typically encrypted) prompts for a
@@ -1315,7 +1340,10 @@ class MainViewController: NSViewController {
                 }
             }
             await MainActor.run {
+                // The destination may be either panel (the user can edit it), so
+                // refresh both to reveal the extracted files wherever they landed.
                 self.inactivePanelVC.panelState.refresh()
+                self.activePanelVC.panelState.refresh()
                 guard !failed.isEmpty else { return }
                 let msg = failed.count == 1
                     ? "“\(failed[0].name)” is encrypted or could not be extracted. Enter password:"
