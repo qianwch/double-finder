@@ -133,16 +133,29 @@ final class HelpWindowController: NSWindowController, NSTableViewDataSource, NST
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
+        textView.textColor = .labelColor
         textView.textContainerInset = NSSize(width: 16, height: 16)
         let md = HelpContent.overviewMarkdown()
-        if let attr = try? NSAttributedString(
+        let attr: NSMutableAttributedString
+        if let parsed = try? NSAttributedString(
             markdown: md,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-            textView.textStorage?.setAttributedString(attr)
+            attr = NSMutableAttributedString(attributedString: parsed)
         } else {
-            textView.string = md
+            attr = NSMutableAttributedString(string: md)
         }
-        textView.font = NSFont.systemFont(ofSize: 13)
+        let full = NSRange(location: 0, length: attr.length)
+        // High-contrast adaptive text (the dark window needs labelColor, not the
+        // markdown default). Normalize size to 13 while PRESERVING bold traits on
+        // the **section labels** — do NOT set textView.font afterwards, which
+        // would flatten every run back to regular weight.
+        attr.addAttribute(.foregroundColor, value: NSColor.labelColor, range: full)
+        attr.enumerateAttribute(.font, in: full) { value, range, _ in
+            let base = (value as? NSFont) ?? NSFont.systemFont(ofSize: 13)
+            attr.addAttribute(.font, value: NSFontManager.shared.convert(base, toSize: 13),
+                              range: range)
+        }
+        textView.textStorage?.setAttributedString(attr)
         scroll.documentView = textView
         return scroll
     }
