@@ -88,6 +88,16 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         popup.selectItem(at: AppSettings.viewMode.rawValue)
         popup.target = self; popup.action = #selector(changeViewMode(_:))
         v.addSubview(popup)
+
+        v.addSubview(label("Language:", x: 24, y: 92))
+        let langPopup = NSPopUpButton(frame: NSRect(x: 130, y: 87, width: 200, height: 26))
+        let langs = Language.allCases   // system, zhHans, ja, en, ko, de, fr
+        langPopup.addItems(withTitles: langs.map { $0.displayName })
+        if let idx = langs.firstIndex(of: Localizer.shared.storedSelection) {
+            langPopup.selectItem(at: idx)
+        }
+        langPopup.target = self; langPopup.action = #selector(changeLanguage(_:))
+        v.addSubview(langPopup)
         return v
     }
 
@@ -97,6 +107,13 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     @objc private func toggleConfirmTrash(_ s: NSButton) { AppSettings.confirmTrash = (s.state == .on) }
     @objc private func changeViewMode(_ s: NSPopUpButton) {
         AppSettings.viewMode = FileViewMode(rawValue: s.indexOfSelectedItem) ?? .full
+        onChange?()
+    }
+
+    @objc private func changeLanguage(_ s: NSPopUpButton) {
+        let langs = Language.allCases
+        let chosen = langs[s.indexOfSelectedItem]
+        Localizer.shared.setLanguage(chosen)
         onChange?()
     }
 

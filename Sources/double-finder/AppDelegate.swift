@@ -17,11 +17,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(appBecameActive),
             name: NSApplication.didBecomeActiveNotification, object: nil)
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(languageDidChange),
+            name: .localizerDidChange, object: nil)
     }
 
     @MainActor @objc private func appBecameActive() {
         appState?.leftPanel.refresh()
         appState?.rightPanel.refresh()
+    }
+
+    @MainActor @objc private func languageDidChange() {
+        setupMenus()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
