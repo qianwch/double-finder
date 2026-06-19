@@ -104,6 +104,7 @@
   "Default": "Standard",
   "Default view:": "Standardansicht:",
   "Delete": "Löschen",
+  "Delete %@ from S3?": "%@ aus S3 löschen?",
   "Delete %@ from the server?": "%@ vom Server löschen?",
   "Delete (F8)": "Löschen (F8)",
   "Delete Permanently…": "Endgültig löschen…",
@@ -111,6 +112,7 @@
   "Deselect All": "Auswahl aufheben",
   "Detected:": "Erkannt:",
   "Directory Tree": "Verzeichnisbaum",
+  "Discard": "Verwerfen",
   "Discovered Servers": "Gefundene Server",
   "Done": "Fertig",
   "Double Finder Help": "Double Finder Hilfe",
@@ -338,6 +340,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "„%@“ ist verschlüsselt oder konnte nicht entpackt werden. Passwort eingeben:",
   "“%@” is encrypted. Enter password to browse:": "„%@“ ist verschlüsselt. Passwort zum Durchsuchen eingeben:",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "„%@“ ist keine ausführbare Datei. Wählen Sie die 7z-/7zz-/7za-Binärdatei oder lassen Sie das Feld leer zur automatischen Erkennung.",
-  "… and %d more": "… und %d weitere",
-  "Delete %@ from S3?": "%@ aus S3 löschen?"
+  "“%@” was changed. Upload it back to %@?": "„%@“ wurde geändert. Zurück zu %@ hochladen?",
+  "… and %d more": "… und %d weitere"
 }

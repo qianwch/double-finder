@@ -24,6 +24,8 @@ class MainViewController: NSViewController {
     private var activeFindSheet: FindFilesSheet?
     private var activeGoToSheet: GoToFolderSheet?
     private var activePackSheet: PackSheet?
+    private let remoteEditWatcher = RemoteEditWatcher()
+    private var isHandlingEditWriteBack = false
 
     override func loadView() {
         view = KeyView()
@@ -41,6 +43,9 @@ class MainViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(languageDidChange),
             name: .localizerDidChange, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleEditWriteBack),
+            name: NSApplication.didBecomeActiveNotification, object: nil)
     }
 
     @MainActor @objc private func languageDidChange() {
@@ -747,14 +752,88 @@ class MainViewController: NSViewController {
             return
         }
         // Remote / inside-archive: download/extract a temp copy, then open it.
-        // (Edits to the temp copy aren't uploaded back automatically.)
         let fs = panel.fs
+        let s3 = panel.s3
+        let sftpConn = panel.sftp
         Task {
             let urls = await self.materialize([item], using: fs)
             await MainActor.run {
-                if let u = urls.first { self.openInEditor(u) } else { NSSound.beep() }
+                guard let u = urls.first else { NSSound.beep(); return }
+                self.registerEditWriteBack(localURL: u, remotePath: item.path,
+                                           fs: fs, s3: s3, sftpConn: sftpConn)
+                self.openInEditor(u)
             }
         }
+    }
+
+    /// If the edited file came from S3/SFTP, track it so a later change can be
+    /// uploaded back. Captures the connection now (independent of later nav).
+    private func registerEditWriteBack(localURL: URL, remotePath: String,
+                                       fs: VirtualFS, s3: S3Connection?, sftpConn: SFTPConnection?) {
+        let tempPath = localURL.path
+        guard let a = try? FileManager.default.attributesOfItem(atPath: tempPath),
+              let mod = a[.modificationDate] as? Date,
+              let size = (a[.size] as? NSNumber)?.int64Value else { return }
+
+        let upload: (String, String) async throws -> Void
+        let label: String
+        if let s3 = s3 {
+            label = parseS3Path(remotePath).bucket ?? s3.endpointHost
+            upload = { temp, remote in
+                try await fs.copy(from: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
+            }
+        } else if let conn = sftpConn {
+            label = conn.host
+            upload = { temp, remote in
+                try await SFTPFS(connection: conn).upload(
+                    localPath: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
+            }
+        } else {
+            return   // archive or other read-only remote → no write-back
+        }
+        remoteEditWatcher.track(RemoteEditSession(
+            tempPath: tempPath, remotePath: remotePath, serverLabel: label,
+            baselineModified: mod, baselineSize: size, upload: upload))
+    }
+
+    /// On app reactivation, offer to upload any remote-edit temp copy that changed.
+    @objc private func handleEditWriteBack() {
+        guard !isHandlingEditWriteBack else { return }
+        let changed = remoteEditWatcher.pendingChanges()
+        guard !changed.isEmpty, let window = view.window else { return }
+        isHandlingEditWriteBack = true
+        Task { @MainActor in
+            defer { self.isHandlingEditWriteBack = false }
+            for session in changed {
+                let name = (session.remotePath as NSString).lastPathComponent
+                let alert = NSAlert()
+                alert.messageText = tr("\u{201C}%@\u{201D} was changed. Upload it back to %@?", name, session.serverLabel)
+                alert.addButton(withTitle: tr("Upload"))
+                alert.addButton(withTitle: tr("Discard"))
+                let upload = alert.runModal() == .alertFirstButtonReturn
+                if upload {
+                    do {
+                        try await session.upload(session.tempPath, session.remotePath)
+                        self.rebaseline(session.tempPath)   // don't re-prompt this save
+                        self.activePanelVC.panelState.refresh()
+                        self.inactivePanelVC.panelState.refresh()
+                    } catch {
+                        self.presentLocalizedError(error, in: window)
+                        // keep old baseline → re-prompt next time (don't lose the edit)
+                    }
+                } else {
+                    self.rebaseline(session.tempPath)        // discard: mark handled
+                }
+            }
+        }
+    }
+
+    /// Reset a session's baseline to the temp file's current state.
+    private func rebaseline(_ tempPath: String) {
+        guard let a = try? FileManager.default.attributesOfItem(atPath: tempPath),
+              let mod = a[.modificationDate] as? Date,
+              let size = (a[.size] as? NSNumber)?.int64Value else { return }
+        remoteEditWatcher.updateBaseline(tempPath: tempPath, modified: mod, size: size)
     }
 
     private func openInEditor(_ url: URL) {

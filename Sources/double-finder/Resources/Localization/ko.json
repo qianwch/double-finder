@@ -104,6 +104,7 @@
   "Default": "기본",
   "Default view:": "기본 보기：",
   "Delete": "삭제",
+  "Delete %@ from S3?": "S3에서 %@을(를) 삭제하시겠습니까?",
   "Delete %@ from the server?": "서버에서 %@을(를) 삭제하시겠습니까?",
   "Delete (F8)": "삭제 (F8)",
   "Delete Permanently…": "영구 삭제…",
@@ -111,6 +112,7 @@
   "Deselect All": "전체 선택 해제",
   "Detected:": "감지됨：",
   "Directory Tree": "디렉터리 트리",
+  "Discard": "버리기",
   "Discovered Servers": "발견된 서버",
   "Done": "완료",
   "Double Finder Help": "Double Finder 도움말",
@@ -338,6 +340,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "\"%@\"이(가) 암호화되었거나 압축을 풀 수 없습니다. 암호를 입력하세요:",
   "“%@” is encrypted. Enter password to browse:": "\"%@\"이(가) 암호화되어 있습니다. 탐색하려면 암호를 입력하세요:",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "“%@”은(는) 실행 가능한 파일이 아닙니다. 7z / 7zz / 7za 실행 파일을 선택하거나 필드를 비워 자동 감지하십시오.",
-  "… and %d more": "… 외 %d개",
-  "Delete %@ from S3?": "S3에서 %@을(를) 삭제하시겠습니까?"
+  "“%@” was changed. Upload it back to %@?": "“%@”이(가) 변경되었습니다. %@(으)로 다시 업로드할까요?",
+  "… and %d more": "… 외 %d개"
 }
