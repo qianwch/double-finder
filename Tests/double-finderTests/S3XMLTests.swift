@@ -43,6 +43,29 @@ final class S3XMLTests: XCTestCase {
         XCTAssertEqual(r.nextToken, "TOKEN123")
     }
 
+    func testParseListObjectsFractionalSeconds() {
+        let xml = """
+        <?xml version="1.0"?>
+        <ListBucketResult>
+          <Contents><Key>file.txt</Key><Size>42</Size><LastModified>2021-03-04T05:06:07.123Z</LastModified></Contents>
+        </ListBucketResult>
+        """
+        let r = S3XML.listObjects(Data(xml.utf8))
+        XCTAssertEqual(r.objects.count, 1)
+        let date = r.objects[0].modified
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        XCTAssertEqual(cal.component(.year, from: date), 2021)
+        XCTAssertEqual(cal.component(.month, from: date), 3)
+        XCTAssertEqual(cal.component(.day, from: date), 4)
+        XCTAssertEqual(cal.component(.hour, from: date), 5)
+        XCTAssertEqual(cal.component(.minute, from: date), 6)
+        XCTAssertEqual(cal.component(.second, from: date), 7)
+        // Verify it did NOT fall back to Date() — nanosecond component confirms fractional parse
+        let ns = cal.component(.nanosecond, from: date)
+        XCTAssertTrue(ns >= 100_000_000 && ns < 200_000_000, "Expected ~123ms, got \(ns)ns")
+    }
+
     func testParseError() {
         let xml = "<Error><Code>SignatureDoesNotMatch</Code><Message>bad sig</Message></Error>"
         XCTAssertEqual(S3XML.errorMessage(Data(xml.utf8)), "bad sig")
