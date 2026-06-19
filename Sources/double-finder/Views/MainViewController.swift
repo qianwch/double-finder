@@ -717,7 +717,7 @@ class MainViewController: NSViewController {
     }
 
     private func isLocalPanel(_ panel: PanelState) -> Bool {
-        panel.sftp == nil && panel.remoteArchive == nil
+        panel.sftp == nil && panel.remoteArchive == nil && panel.s3 == nil
             && PanelState.archiveRoot(in: panel.currentPath) == nil
     }
 
