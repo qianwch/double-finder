@@ -8,8 +8,8 @@ final class MultiRenameSheet: NSWindowController {
 
     private let searchField = NSTextField()
     private let replaceField = NSTextField()
-    private let regexCheck = NSButton(checkboxWithTitle: "Regular expression", target: nil, action: nil)
-    private let counterCheck = NSButton(checkboxWithTitle: "Append counter", target: nil, action: nil)
+    private let regexCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let counterCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let counterStartField = NSTextField()
     private let table = NSTableView()
     private var preview: [(old: String, new: String)] = []
@@ -18,7 +18,7 @@ final class MultiRenameSheet: NSWindowController {
         self.names = names
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 440),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Multi-Rename Tool"
+        window.title = tr("Multi-Rename Tool")
         super.init(window: window)
         setupUI()
         recomputePreview()
@@ -32,9 +32,11 @@ final class MultiRenameSheet: NSWindowController {
         func label(_ s: String) -> NSTextField {
             let l = NSTextField(labelWithString: s); l.font = .systemFont(ofSize: 11); return l
         }
-        let searchLbl = label("Search for:")
-        let replaceLbl = label("Replace with:")
-        let startLbl = label("Counter start:")
+        let searchLbl = label(tr("Search for:"))
+        let replaceLbl = label(tr("Replace with:"))
+        let startLbl = label(tr("Counter start:"))
+        regexCheck.title = tr("Regular expression")
+        counterCheck.title = tr("Append counter")
         counterStartField.stringValue = "1"
         [searchField, replaceField, counterStartField].forEach {
             $0.bezelStyle = .roundedBezel; $0.font = .systemFont(ofSize: 12); $0.delegate = self
@@ -46,16 +48,16 @@ final class MultiRenameSheet: NSWindowController {
         table.headerView = NSTableHeaderView()
         table.rowHeight = 18
         table.usesAlternatingRowBackgroundColors = true
-        let oldCol = NSTableColumn(identifier: .init("old")); oldCol.title = "Old name"; oldCol.width = 250
-        let newCol = NSTableColumn(identifier: .init("new")); newCol.title = "New name"; newCol.width = 250
+        let oldCol = NSTableColumn(identifier: .init("old")); oldCol.title = tr("Old name"); oldCol.width = 250
+        let newCol = NSTableColumn(identifier: .init("new")); newCol.title = tr("New name"); newCol.width = 250
         table.addTableColumn(oldCol); table.addTableColumn(newCol)
         table.dataSource = self; table.delegate = self
         let scroll = NSScrollView(); scroll.documentView = table
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
 
-        let renameBtn = NSButton(title: "Rename", target: self, action: #selector(applyClicked))
+        let renameBtn = NSButton(title: tr("Rename"), target: self, action: #selector(applyClicked))
         renameBtn.bezelStyle = .rounded; renameBtn.keyEquivalent = "\r"
-        let cancelBtn = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        let cancelBtn = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancelBtn.bezelStyle = .rounded
 
         let views = [searchLbl, searchField, replaceLbl, replaceField, regexCheck,

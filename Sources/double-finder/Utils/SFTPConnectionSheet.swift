@@ -71,7 +71,7 @@ class SFTPConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableVie
             backing: .buffered,
             defer: false
         )
-        window.title = "SFTP Connections"
+        window.title = tr("SFTP Connections")
         super.init(window: window)
         setupUI()
         bookmarks = SFTPBookmarkStore.load()
@@ -85,7 +85,7 @@ class SFTPConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableVie
         guard let contentView = window?.contentView else { return }
 
         // ---- Left: saved-connection list ----
-        let listLabel = NSTextField(labelWithString: "Saved")
+        let listLabel = NSTextField(labelWithString: tr("Saved"))
         listLabel.frame = NSRect(x: 20, y: 288, width: 170, height: 18)
         listLabel.textColor = .secondaryLabelColor
         listLabel.font = .systemFont(ofSize: 11)
@@ -109,7 +109,7 @@ class SFTPConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableVie
         tableView = table
 
         // ---- Right: editor form ----
-        let labels = ["Name:", "Host:", "Port:", "Username:", "Key File:", "Remote Path:"]
+        let labels = [tr("Name:"), tr("Host:"), tr("Port:"), tr("Username:"), tr("Key File:"), tr("Remote Path:")]
         var fields: [NSTextField] = []
         var yOffset: CGFloat = 262
         let formX: CGFloat = 220
@@ -141,27 +141,27 @@ class SFTPConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableVie
         remotePathField.stringValue = "~"
 
         // ---- Bottom buttons ----
-        let newButton = NSButton(title: "New", target: self, action: #selector(newClicked))
+        let newButton = NSButton(title: tr("New"), target: self, action: #selector(newClicked))
         newButton.bezelStyle = .rounded
         newButton.frame = NSRect(x: 220, y: 18, width: 70, height: 30)
         contentView.addSubview(newButton)
 
-        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveClicked))
+        let saveButton = NSButton(title: tr("Save"), target: self, action: #selector(saveClicked))
         saveButton.bezelStyle = .rounded
         saveButton.frame = NSRect(x: 294, y: 18, width: 70, height: 30)
         contentView.addSubview(saveButton)
 
-        deleteButton = NSButton(title: "Delete", target: self, action: #selector(deleteClicked))
+        deleteButton = NSButton(title: tr("Delete"), target: self, action: #selector(deleteClicked))
         deleteButton.bezelStyle = .rounded
         deleteButton.frame = NSRect(x: 20, y: 18, width: 80, height: 30)
         contentView.addSubview(deleteButton)
 
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        let cancelButton = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancelButton.bezelStyle = .rounded
         cancelButton.frame = NSRect(x: 378, y: 18, width: 80, height: 30)
         contentView.addSubview(cancelButton)
 
-        let connectButton = NSButton(title: "Connect", target: self, action: #selector(connectClicked))
+        let connectButton = NSButton(title: tr("Connect"), target: self, action: #selector(connectClicked))
         connectButton.bezelStyle = .rounded
         connectButton.keyEquivalent = "\r"
         connectButton.frame = NSRect(x: 466, y: 18, width: 94, height: 30)
@@ -202,7 +202,7 @@ class SFTPConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableVie
     private func currentBookmark() -> SFTPBookmark {
         let host = hostField.stringValue.trimmingCharacters(in: .whitespaces)
         var name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
-        if name.isEmpty { name = host.isEmpty ? "New connection" : host }
+        if name.isEmpty { name = host.isEmpty ? tr("New connection") : host }
         return SFTPBookmark(
             name: name, host: host,
             port: Int(portField.stringValue) ?? 22,

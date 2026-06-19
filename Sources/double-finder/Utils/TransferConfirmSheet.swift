@@ -26,10 +26,12 @@ final class TransferConfirmSheet: NSWindowController {
 
         let countText: String
         if items.count == 1 {
-            countText = "\(verb) “\(items[0].name)” to:"
+            // `verb` is already translated by the caller — slot it in as display text.
+            countText = tr("%1$@ “%2$@” to:", verb, items[0].name)
         } else {
             let preview = items.prefix(4).map { $0.name }.joined(separator: ", ")
-            countText = "\(verb) \(items.count) items (\(preview)\(items.count > 4 ? ", …" : "")) to:"
+            let list = "\(preview)\(items.count > 4 ? ", …" : "")"
+            countText = tr("%1$@ %2$d items (%3$@) to:", verb, items.count, list)
         }
         let titleLabel = NSTextField(wrappingLabelWithString: countText)
         titleLabel.font = .systemFont(ofSize: 12)
@@ -44,12 +46,12 @@ final class TransferConfirmSheet: NSWindowController {
 
         let okBtn = NSButton(title: verb, target: self, action: #selector(confirmClicked))
         okBtn.bezelStyle = .rounded; okBtn.keyEquivalent = "\r"
-        let queueBtn = NSButton(title: "Add to Queue (F2)", target: self, action: #selector(queueClicked))
+        let queueBtn = NSButton(title: tr("Add to Queue (F2)"), target: self, action: #selector(queueClicked))
         queueBtn.bezelStyle = .rounded
         // F2 enqueues, mirroring Total Commander's confirm dialog.
         queueBtn.keyEquivalent = String(UnicodeScalar(NSF2FunctionKey)!)
         queueBtn.keyEquivalentModifierMask = []
-        let cancelBtn = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        let cancelBtn = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancelBtn.bezelStyle = .rounded; cancelBtn.keyEquivalent = "\u{1b}"
         [okBtn, queueBtn, cancelBtn].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
 

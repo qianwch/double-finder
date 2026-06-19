@@ -11,7 +11,7 @@ final class ShortcutsSheet: NSWindowController {
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 460),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Customize Shortcuts"
+        window.title = tr("Customize Shortcuts")
         super.init(window: window)
         setupUI()
     }
@@ -22,7 +22,7 @@ final class ShortcutsSheet: NSWindowController {
         guard let content = window?.contentView else { return }
 
         let label = NSTextField(wrappingLabelWithString:
-            "Select a command, then Record to assign a shortcut. Custom shortcuts work in addition to the built-in defaults.")
+            tr("Select a command, then Record to assign a shortcut. Custom shortcuts work in addition to the built-in defaults."))
         label.font = .systemFont(ofSize: 11); label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(label)
@@ -31,11 +31,11 @@ final class ShortcutsSheet: NSWindowController {
         scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
         let cmdCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("cmd"))
-        cmdCol.title = "Command"; cmdCol.width = 200
+        cmdCol.title = tr("Command"); cmdCol.width = 200
         let dflCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("default"))
-        dflCol.title = "Default"; dflCol.width = 80
+        dflCol.title = tr("Default"); dflCol.width = 80
         let curCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("custom"))
-        curCol.title = "Custom"; curCol.width = 120
+        curCol.title = tr("Custom"); curCol.width = 120
         tableView.addTableColumn(cmdCol); tableView.addTableColumn(dflCol); tableView.addTableColumn(curCol)
         tableView.rowHeight = 22
         tableView.usesAlternatingRowBackgroundColors = true
@@ -44,11 +44,11 @@ final class ShortcutsSheet: NSWindowController {
         scroll.documentView = tableView
         content.addSubview(scroll)
 
-        let record = NSButton(title: "Record", target: self, action: #selector(startRecording))
+        let record = NSButton(title: tr("Record"), target: self, action: #selector(startRecording))
         record.bezelStyle = .rounded
-        let clear = NSButton(title: "Clear", target: self, action: #selector(clearBinding))
+        let clear = NSButton(title: tr("Clear"), target: self, action: #selector(clearBinding))
         clear.bezelStyle = .rounded
-        let done = NSButton(title: "Done", target: self, action: #selector(closeSheet))
+        let done = NSButton(title: tr("Done"), target: self, action: #selector(closeSheet))
         done.bezelStyle = .rounded; done.keyEquivalent = "\r"
         [record, clear, done].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0)
@@ -127,9 +127,9 @@ extension ShortcutsSheet: NSTableViewDataSource, NSTableViewDelegate {
         switch id {
         case "default": text = command.defaultHint
         case "custom":
-            if recordingRow == row { text = "Press keys…" }
+            if recordingRow == row { text = tr("Press keys…") }
             else { text = KeyBindings.combo(for: command)?.displayString ?? "—" }
-        default: text = command.label
+        default: text = tr(command.label)
         }
         let cellId = NSUserInterfaceItemIdentifier("c_\(id)")
         let cell = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTextField ?? {

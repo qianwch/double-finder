@@ -21,7 +21,7 @@ final class GoToFolderSheet: NSWindowController, NSTextFieldDelegate {
         self.startDir = startDir
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 110),
                              styleMask: [.titled], backing: .buffered, defer: false)
-        window.title = "Go to Folder"
+        window.title = tr("Go to Folder")
         super.init(window: window)
         setupUI()
     }
@@ -30,24 +30,24 @@ final class GoToFolderSheet: NSWindowController, NSTextFieldDelegate {
 
     private func setupUI() {
         guard let content = window?.contentView else { return }
-        let label = NSTextField(labelWithString: "Go to the folder:")
+        let label = NSTextField(labelWithString: tr("Go to the folder:"))
         label.frame = NSRect(x: 20, y: 70, width: 440, height: 18)
         content.addSubview(label)
 
         field.frame = NSRect(x: 20, y: 42, width: 440, height: 24)
         field.bezelStyle = .roundedBezel
         field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        field.placeholderString = "/path · ~/path · subfolder (Tab completes; hidden folders included)"
+        field.placeholderString = tr("/path · ~/path · subfolder (Tab completes; hidden folders included)")
         field.delegate = self
         field.target = self
         field.action = #selector(goClicked)
         content.addSubview(field)
 
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        let cancel = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancel.bezelStyle = .rounded
         cancel.frame = NSRect(x: 280, y: 8, width: 88, height: 30)
         content.addSubview(cancel)
-        let go = NSButton(title: "Go", target: self, action: #selector(goClicked))
+        let go = NSButton(title: tr("Go"), target: self, action: #selector(goClicked))
         go.bezelStyle = .rounded
         go.keyEquivalent = "\r"
         go.frame = NSRect(x: 372, y: 8, width: 88, height: 30)

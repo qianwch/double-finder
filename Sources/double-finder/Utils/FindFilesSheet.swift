@@ -11,9 +11,9 @@ final class FindFilesSheet: NSWindowController {
 
     private let nameField = NSTextField()
     private let contentField = NSTextField()
-    private let subfoldersCheck = NSButton(checkboxWithTitle: "Search subfolders", target: nil, action: nil)
-    private let regexCheck = NSButton(checkboxWithTitle: "Regex name", target: nil, action: nil)
-    private let spotlightCheck = NSButton(checkboxWithTitle: "Use Spotlight index (fast; also searches inside PDF / Office files)", target: nil, action: nil)
+    private let subfoldersCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let regexCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let spotlightCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
     private let table = ResultsTableView()
     private var results: [String] = []
@@ -22,7 +22,7 @@ final class FindFilesSheet: NSWindowController {
         self.startDir = startDir
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 480),
                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "Find Files — \(startDir)"
+        window.title = "\(tr("Find Files")) — \(startDir)"
         super.init(window: window)
         setupUI()
     }
@@ -34,8 +34,11 @@ final class FindFilesSheet: NSWindowController {
         func label(_ s: String) -> NSTextField {
             let l = NSTextField(labelWithString: s); l.font = .systemFont(ofSize: 11); return l
         }
-        let nameLbl = label("Name pattern:")
-        let contentLbl = label("Containing text:")
+        let nameLbl = label(tr("Name pattern:"))
+        let contentLbl = label(tr("Containing text:"))
+        subfoldersCheck.title = tr("Search subfolders")
+        regexCheck.title = tr("Regex name")
+        spotlightCheck.title = tr("Use Spotlight index (fast; also searches inside PDF / Office files)")
         nameField.stringValue = "*"
         [nameField, contentField].forEach { $0.bezelStyle = .roundedBezel; $0.font = .systemFont(ofSize: 12) }
         subfoldersCheck.state = .on
@@ -43,7 +46,7 @@ final class FindFilesSheet: NSWindowController {
 
         table.headerView = NSTableHeaderView(); table.rowHeight = 18
         table.usesAlternatingRowBackgroundColors = true
-        let col = NSTableColumn(identifier: .init("path")); col.title = "Results"; col.width = 580
+        let col = NSTableColumn(identifier: .init("path")); col.title = tr("Results"); col.width = 580
         table.addTableColumn(col)
         table.dataSource = self; table.delegate = self
         table.allowsMultipleSelection = true
@@ -52,14 +55,14 @@ final class FindFilesSheet: NSWindowController {
         let scroll = NSScrollView(); scroll.documentView = table
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
 
-        let searchBtn = NSButton(title: "Search", target: self, action: #selector(searchClicked))
+        let searchBtn = NSButton(title: tr("Search"), target: self, action: #selector(searchClicked))
         searchBtn.bezelStyle = .rounded; searchBtn.keyEquivalent = "\r"
-        let feedBtn = NSButton(title: "Feed to Panel", target: self, action: #selector(feedClicked))
+        let feedBtn = NSButton(title: tr("Feed to Panel"), target: self, action: #selector(feedClicked))
         feedBtn.bezelStyle = .rounded
-        feedBtn.toolTip = "Show these results in the active panel as a list you can copy/move/delete"
-        let goBtn = NSButton(title: "Go to File", target: self, action: #selector(goToSelected))
+        feedBtn.toolTip = tr("Show these results in the active panel as a list you can copy/move/delete")
+        let goBtn = NSButton(title: tr("Go to File"), target: self, action: #selector(goToSelected))
         goBtn.bezelStyle = .rounded
-        let closeBtn = NSButton(title: "Close", target: self, action: #selector(closeClicked))
+        let closeBtn = NSButton(title: tr("Close"), target: self, action: #selector(closeClicked))
         closeBtn.bezelStyle = .rounded
 
         let views: [NSView] = [nameLbl, nameField, contentLbl, contentField, subfoldersCheck,
@@ -111,7 +114,7 @@ final class FindFilesSheet: NSWindowController {
         let sub = subfoldersCheck.state == .on
         let regex = regexCheck.state == .on
         let spotlight = spotlightCheck.state == .on
-        statusLabel.stringValue = "Searching…"
+        statusLabel.stringValue = tr("Searching…")
         let start = startDir
         Task {
             let found = spotlight
@@ -120,7 +123,9 @@ final class FindFilesSheet: NSWindowController {
             await MainActor.run {
                 self.results = found
                 self.table.reloadData()
-                self.statusLabel.stringValue = "\(found.count) match\(found.count == 1 ? "" : "es")"
+                self.statusLabel.stringValue = found.count == 1
+                    ? tr("1 match")
+                    : tr("%d matches", found.count)
             }
         }
     }

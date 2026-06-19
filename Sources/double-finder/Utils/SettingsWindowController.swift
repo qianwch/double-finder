@@ -21,14 +21,14 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false
         )
-        window.title = "Settings"
+        window.title = tr("Settings")
         super.init(window: window)
 
         let tabView = NSTabView(frame: NSRect(x: 0, y: 0, width: 500, height: 340))
         tabView.translatesAutoresizingMaskIntoConstraints = false
-        tabView.addTabViewItem(makeTab("General", view: buildGeneral()))
-        tabView.addTabViewItem(makeTab("Appearance", view: buildAppearance()))
-        tabView.addTabViewItem(makeTab("Tools", view: buildTools()))
+        tabView.addTabViewItem(makeTab("General", tr("General"), view: buildGeneral()))
+        tabView.addTabViewItem(makeTab("Appearance", tr("Appearance"), view: buildAppearance()))
+        tabView.addTabViewItem(makeTab("Tools", tr("Tools"), view: buildTools()))
         window.contentView = tabView
     }
 
@@ -47,8 +47,8 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
 
     // MARK: - Tab plumbing
 
-    private func makeTab(_ label: String, view: NSView) -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: label)
+    private func makeTab(_ id: String, _ label: String, view: NSView) -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: id)
         item.label = label
         item.view = view
         return item
@@ -77,19 +77,19 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
 
     private func buildGeneral() -> NSView {
         let v = page()
-        v.addSubview(checkbox("Show folders before files", AppSettings.foldersFirst, #selector(toggleFoldersFirst), y: 256))
-        v.addSubview(checkbox("Show drive dropdown (disk button on the path bar)", AppSettings.showDriveDropdown, #selector(toggleDriveDropdown), y: 226))
-        v.addSubview(checkbox("Show drive buttons (volume bar above each panel)", AppSettings.showDriveBar, #selector(toggleDriveBar), y: 196))
-        v.addSubview(checkbox("Confirm before moving to Trash (⌘⌫)", AppSettings.confirmTrash, #selector(toggleConfirmTrash), y: 166))
+        v.addSubview(checkbox(tr("Show folders before files"), AppSettings.foldersFirst, #selector(toggleFoldersFirst), y: 256))
+        v.addSubview(checkbox(tr("Show drive dropdown (disk button on the path bar)"), AppSettings.showDriveDropdown, #selector(toggleDriveDropdown), y: 226))
+        v.addSubview(checkbox(tr("Show drive buttons (volume bar above each panel)"), AppSettings.showDriveBar, #selector(toggleDriveBar), y: 196))
+        v.addSubview(checkbox(tr("Confirm before moving to Trash (⌘⌫)"), AppSettings.confirmTrash, #selector(toggleConfirmTrash), y: 166))
 
-        v.addSubview(label("Default view:", x: 24, y: 128))
+        v.addSubview(label(tr("Default view:"), x: 24, y: 128))
         let popup = NSPopUpButton(frame: NSRect(x: 130, y: 123, width: 200, height: 26))
-        popup.addItems(withTitles: ["Full Details", "Brief", "Thumbnails"])
+        popup.addItems(withTitles: [tr("Full Details"), tr("Brief"), tr("Thumbnails")])
         popup.selectItem(at: AppSettings.viewMode.rawValue)
         popup.target = self; popup.action = #selector(changeViewMode(_:))
         v.addSubview(popup)
 
-        v.addSubview(label("Language:", x: 24, y: 92))
+        v.addSubview(label(tr("Language:"), x: 24, y: 92))
         let langPopup = NSPopUpButton(frame: NSRect(x: 130, y: 87, width: 200, height: 26))
         let langs = Language.allCases   // system, zhHans, ja, en, ko, de, fr
         langPopup.addItems(withTitles: langs.map { $0.displayName })
@@ -123,21 +123,21 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
 
     private func buildAppearance() -> NSView {
         let v = page()
-        v.addSubview(checkbox("Color file names by type", AppSettings.colorByType, #selector(toggleColor), y: 262))
+        v.addSubview(checkbox(tr("Color file names by type"), AppSettings.colorByType, #selector(toggleColor), y: 262))
 
-        v.addSubview(label("Icon size:", x: 24, y: 230))
+        v.addSubview(label(tr("Icon size:"), x: 24, y: 230))
         let iconPop = NSPopUpButton(frame: NSRect(x: 130, y: 225, width: 170, height: 26))
-        iconPop.addItems(withTitles: iconSizes.map { $0.0 })
+        iconPop.addItems(withTitles: iconSizes.map { tr($0.0) })
         iconPop.selectItem(at: iconSizes.firstIndex { $0.1 == AppSettings.iconSize } ?? 1)
         iconPop.target = self; iconPop.action = #selector(changeIconSize(_:))
         v.addSubview(iconPop)
 
-        v.addSubview(label("Columns (Full view):", x: 24, y: 190))
+        v.addSubview(label(tr("Columns (Full view):"), x: 24, y: 190))
         let visible = Set(AppSettings.visibleColumns)
         var y: CGFloat = 162
         var x: CGFloat = 44
         for (i, col) in FileTableView.optionalColumns.enumerated() {
-            let b = NSButton(checkboxWithTitle: col.title, target: self, action: #selector(toggleColumn(_:)))
+            let b = NSButton(checkboxWithTitle: tr(col.title), target: self, action: #selector(toggleColumn(_:)))
             b.state = visible.contains(col.id) ? .on : .off
             b.identifier = NSUserInterfaceItemIdentifier(col.id)
             b.frame = NSRect(x: x, y: y, width: 200, height: 20)
@@ -166,7 +166,7 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     private func buildTools() -> NSView {
         let v = page()
         // Terminal app
-        v.addSubview(label("Terminal app:", x: 24, y: 264))
+        v.addSubview(label(tr("Terminal app:"), x: 24, y: 264))
         let term = NSPopUpButton(frame: NSRect(x: 130, y: 259, width: 200, height: 26))
         term.addItems(withTitles: terminals)
         term.selectItem(withTitle: AppSettings.terminalApp)
@@ -175,22 +175,22 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         v.addSubview(term)
 
         // 7-Zip
-        v.addSubview(label("7-Zip (only used for encrypted .7z):", x: 24, y: 222, w: 320, secondary: true))
-        v.addSubview(label("Auto-detected:", x: 24, y: 198, w: 110))
-        sevenZipDetected = label(SevenZip.autoDetect() ?? "Not found", x: 130, y: 198, w: 340)
+        v.addSubview(label(tr("7-Zip (only used for encrypted .7z):"), x: 24, y: 222, w: 320, secondary: true))
+        v.addSubview(label(tr("Auto-detected:"), x: 24, y: 198, w: 110))
+        sevenZipDetected = label(SevenZip.autoDetect() ?? tr("Not found"), x: 130, y: 198, w: 340)
         sevenZipDetected.lineBreakMode = .byTruncatingMiddle
         if SevenZip.autoDetect() == nil { sevenZipDetected.textColor = .systemRed }
         v.addSubview(sevenZipDetected)
 
-        v.addSubview(label("Custom path:", x: 24, y: 168, w: 110))
+        v.addSubview(label(tr("Custom path:"), x: 24, y: 168, w: 110))
         sevenZipField = NSTextField(frame: NSRect(x: 130, y: 166, width: 250, height: 22))
         sevenZipField.bezelStyle = .roundedBezel
-        sevenZipField.placeholderString = "(empty → auto-detect)"
+        sevenZipField.placeholderString = tr("(empty → auto-detect)")
         sevenZipField.stringValue = SevenZip.configuredPath ?? ""
         sevenZipField.target = self; sevenZipField.action = #selector(applySevenZip)
         sevenZipField.delegate = self
         v.addSubview(sevenZipField)
-        let browse = NSButton(title: "Browse…", target: self, action: #selector(browseSevenZip))
+        let browse = NSButton(title: tr("Browse…"), target: self, action: #selector(browseSevenZip))
         browse.bezelStyle = .rounded
         browse.frame = NSRect(x: 386, y: 164, width: 86, height: 26)
         v.addSubview(browse)
@@ -199,11 +199,11 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         let sep = NSBox(frame: NSRect(x: 24, y: 120, width: 448, height: 1))
         sep.boxType = .separator
         v.addSubview(sep)
-        v.addSubview(label("Customize:", x: 24, y: 92, w: 110))
+        v.addSubview(label(tr("Customize:"), x: 24, y: 92, w: 110))
         let actions: [(String, Selector)] = [
-            ("Toolbar…", #selector(openToolbar)),
-            ("Shortcuts…", #selector(openShortcuts)),
-            ("Favorites…", #selector(openFavorites)),
+            (tr("Toolbar…"), #selector(openToolbar)),
+            (tr("Shortcuts…"), #selector(openShortcuts)),
+            (tr("Favorites…"), #selector(openFavorites)),
         ]
         var x: CGFloat = 130
         for (title, sel) in actions {

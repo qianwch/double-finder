@@ -25,10 +25,10 @@ final class SyncDirsSheet: NSWindowController {
     private var rows: [Int] = []            // indices into entries that are shown
 
     private let tableView = NSTableView()
-    private let statusLabel = NSTextField(labelWithString: "Comparing…")
-    private let hideEqual = NSButton(checkboxWithTitle: "Hide identical", target: nil, action: nil)
-    private let recurse = NSButton(checkboxWithTitle: "Include subfolders", target: nil, action: nil)
-    private let syncButton = NSButton(title: "Synchronize", target: nil, action: nil)
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let hideEqual = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let recurse = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let syncButton = NSButton(title: "", target: nil, action: nil)
 
     var onClosed: (() -> Void)?
 
@@ -37,7 +37,7 @@ final class SyncDirsSheet: NSWindowController {
         self.rightBase = rightBase
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 460),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "Synchronize Directories"
+        window.title = tr("Synchronize Directories")
         window.minSize = NSSize(width: 560, height: 320)
         super.init(window: window)
         setupUI()
@@ -58,6 +58,10 @@ final class SyncDirsSheet: NSWindowController {
             content.addSubview(lbl)
         }
 
+        statusLabel.stringValue = tr("Comparing…")
+        hideEqual.title = tr("Hide identical")
+        recurse.title = tr("Include subfolders")
+        syncButton.title = tr("Synchronize")
         hideEqual.state = .on
         recurse.state = .on
         hideEqual.target = self; hideEqual.action = #selector(optionsChanged)
@@ -68,7 +72,7 @@ final class SyncDirsSheet: NSWindowController {
         scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
         let cols: [(String, String, CGFloat)] = [
-            ("name", "Name", 300), ("left", "Left", 150), ("dir", "", 50), ("right", "Right", 150)
+            ("name", tr("Name"), 300), ("left", tr("Left"), 150), ("dir", "", 50), ("right", tr("Right"), 150)
         ]
         for (id, title, w) in cols {
             let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
@@ -90,7 +94,7 @@ final class SyncDirsSheet: NSWindowController {
 
         syncButton.bezelStyle = .rounded; syncButton.keyEquivalent = "\r"
         syncButton.target = self; syncButton.action = #selector(synchronize)
-        let close = NSButton(title: "Close", target: self, action: #selector(closeWin))
+        let close = NSButton(title: tr("Close"), target: self, action: #selector(closeWin))
         close.bezelStyle = .rounded; close.keyEquivalent = "\u{1b}"
         [syncButton, close].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
 
@@ -125,7 +129,7 @@ final class SyncDirsSheet: NSWindowController {
     @objc private func optionsChanged() { recompare() }
 
     private func recompare() {
-        statusLabel.stringValue = "Comparing…"
+        statusLabel.stringValue = tr("Comparing…")
         let left = leftBase, right = rightBase, deep = recurse.state == .on
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = SyncDirsSheet.compare(left: left, right: right, recurse: deep)
@@ -198,7 +202,7 @@ final class SyncDirsSheet: NSWindowController {
         let toR = entries.filter { $0.direction == .toRight }.count
         let toL = entries.filter { $0.direction == .toLeft }.count
         let eq = entries.filter { $0.comparison == .equal }.count
-        statusLabel.stringValue = "\(entries.count) compared · → \(toR)  ← \(toL)  = \(eq)"
+        statusLabel.stringValue = tr("%1$d compared · → %2$d  ← %3$d  = %4$d", entries.count, toR, toL, eq)
         syncButton.isEnabled = (toR + toL) > 0
     }
 
@@ -229,7 +233,7 @@ final class SyncDirsSheet: NSWindowController {
         let jobs = entries.filter { $0.direction != .skip }
         guard !jobs.isEmpty, let window = window else { return }
         syncButton.isEnabled = false
-        statusLabel.stringValue = "Synchronizing \(jobs.count)…"
+        statusLabel.stringValue = tr("Synchronizing %d…", jobs.count)
         let leftBase = self.leftBase, rightBase = self.rightBase
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fm = FileManager.default
@@ -251,8 +255,8 @@ final class SyncDirsSheet: NSWindowController {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 let a = NSAlert()
-                a.messageText = "Synchronized \(done) file\(done == 1 ? "" : "s")"
-                if failed > 0 { a.informativeText = "\(failed) failed." }
+                a.messageText = done == 1 ? tr("Synchronized 1 file") : tr("Synchronized %d files", done)
+                if failed > 0 { a.informativeText = tr("%d failed.", failed) }
                 a.beginSheetModal(for: window) { _ in self.recompare() }
             }
         }
