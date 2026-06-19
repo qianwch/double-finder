@@ -38,7 +38,6 @@ enum HelpContent {
             Shortcut(nameKey: "Quick Filter", keys: "⌘F"),
         ]),
         ShortcutGroup(titleKey: "File Operations", shortcuts: [
-            Shortcut(nameKey: "Rename", keys: "F2"),
             Shortcut(nameKey: "Quick Look", keys: "F3"),
             Shortcut(nameKey: "Edit", keys: "F4"),
             Shortcut(nameKey: "Copy", keys: "F5"),
