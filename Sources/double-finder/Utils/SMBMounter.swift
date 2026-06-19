@@ -52,33 +52,114 @@ enum SMBMounter {
     static func mount(_ url: URL, user: String?, password: String?, guest: Bool,
                       onResult: @escaping (Result<String, SMBMountError>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let openOptions = NSMutableDictionary()
-            openOptions[kNAUIOptionKey as String] = kNAUIOptionNoUI
-            if guest { openOptions[kNetFSUseGuestKey as String] = true }
+            let (status, paths) = rawMount(url, user: user, password: password, guest: guest)
 
-            var mountpoints: Unmanaged<CFArray>?
-            let status = NetFSMountURLSync(
-                url as CFURL,
-                nil,                                   // mountpath: system picks /Volumes/<share>
-                guest ? nil : (user as CFString?),
-                guest ? nil : (password as CFString?),
-                openOptions as CFMutableDictionary,
-                nil,
-                &mountpoints)
-            let paths = (mountpoints?.takeRetainedValue() as? [String]) ?? []
-            FileHandle.standardError.write(Data(
-                "[SMB] NetFSMountURLSync \(url.absoluteString) guest=\(guest) -> status=\(status) paths=\(paths)\n".utf8))
+            // Success with a concrete share already mounted.
+            if status == 0, let path = paths.first {
+                DispatchQueue.main.async { onResult(.success(path)) }
+                return
+            }
 
+            // Host-only URL (no share path): NetFS+NoUI can't pick a share and
+            // reports "no shares available" (-6003 / -5998) or success-with-no-
+            // mount. Enumerate the server's shares and mount each one, like
+            // Finder does — keeping auth fully in-process (no system UI).
+            let hasShare = !(url.path.isEmpty || url.path == "/")
+            let noSharePicked = (status == -6003 || status == -5998 || (status == 0 && paths.isEmpty))
+            if !hasShare, noSharePicked, let host = url.host {
+                let shares = enumerateShares(host: host, user: user, password: password, guest: guest)
+                var mounted: [String] = []
+                for share in shares {
+                    guard let enc = share.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+                          let shareURL = URL(string: "smb://\(host)/\(enc)") else { continue }
+                    let (st, p) = rawMount(shareURL, user: user, password: password, guest: guest)
+                    if st == 0 { mounted.append(contentsOf: p) }
+                }
+                if let first = mounted.sorted().first {
+                    DispatchQueue.main.async { onResult(.success(first)) }
+                    return
+                }
+            }
+
+            // Otherwise report the original status.
             DispatchQueue.main.async {
                 if let err = SMBMountError.classify(status) {
                     onResult(.failure(err))
                 } else if let path = paths.first {
                     onResult(.success(path))
                 } else {
-                    onResult(.failure(.other(0)))
+                    onResult(.failure(.other(status)))
                 }
             }
         }
+    }
+
+    /// One NetFSMountURLSync call (kNAUIOptionNoUI). Returns (status, mountPaths).
+    private static func rawMount(_ url: URL, user: String?, password: String?,
+                                 guest: Bool) -> (Int32, [String]) {
+        let openOptions = NSMutableDictionary()
+        openOptions[kNAUIOptionKey as String] = kNAUIOptionNoUI
+        if guest { openOptions[kNetFSUseGuestKey as String] = true }
+        var mountpoints: Unmanaged<CFArray>?
+        let status = NetFSMountURLSync(
+            url as CFURL, nil,
+            guest ? nil : (user as CFString?),
+            guest ? nil : (password as CFString?),
+            openOptions as CFMutableDictionary, nil, &mountpoints)
+        let paths = (mountpoints?.takeRetainedValue() as? [String]) ?? []
+        FileHandle.standardError.write(Data(
+            "[SMB] mount \(url.absoluteString) guest=\(guest) -> status=\(status) paths=\(paths)\n".utf8))
+        return (status, paths)
+    }
+
+    /// List the server's mountable (disk) share names via `smbutil view`.
+    private static func enumerateShares(host: String, user: String?, password: String?,
+                                        guest: Bool) -> [String] {
+        var target = "//"
+        if !guest, let user = user, !user.isEmpty {
+            let u = user.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? user
+            if let pw = password, !pw.isEmpty {
+                let p = pw.addingPercentEncoding(withAllowedCharacters: .urlPasswordAllowed) ?? pw
+                target += "\(u):\(p)@\(host)"
+            } else {
+                target += "\(u)@\(host)"
+            }
+        } else {
+            target += host
+        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/smbutil")
+        // -N: never block on a password prompt (we pass credentials in the URL).
+        proc.arguments = guest ? ["view", "-N", "-g", target] : ["view", "-N", target]
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = Pipe()
+        do { try proc.run() } catch { return [] }
+        proc.waitUntilExit()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let raw = String(data: data, encoding: .utf8) ?? ""
+        let shares = parseShareNames(from: raw)
+        FileHandle.standardError.write(Data(
+            "[SMB] smbutil view \(host) exit=\(proc.terminationStatus) shares=\(shares)\n".utf8))
+        return shares
+    }
+
+    /// Parse `smbutil view` output into mountable disk share names (excludes the
+    /// header/separator, non-disk types, and hidden admin shares ending in `$`).
+    static func parseShareNames(from output: String) -> [String] {
+        var shares: [String] = []
+        for raw in output.split(separator: "\n") {
+            let cols = raw.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard cols.count >= 2 else { continue }
+            let name = cols[0]
+            let type = cols[1].lowercased()
+            guard type == "disk" else { continue }
+            if name == "Share" { continue }                    // header
+            if name.allSatisfy({ $0 == "-" }) { continue }     // separator
+            if name.hasSuffix("$") { continue }                // hidden admin share
+            shares.append(name)
+        }
+        return shares
     }
 }
 
