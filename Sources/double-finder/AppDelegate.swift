@@ -79,6 +79,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileMenu.addItem(NSMenuItem(title: tr("New SFTP Connection..."), action: #selector(menuNewSFTP), keyEquivalent: "n"))
         fileMenu.addItem(NSMenuItem(title: tr("Connect to Server…"),
                                     action: #selector(menuConnectServer), keyEquivalent: "k"))
+        fileMenu.addItem(NSMenuItem(title: tr("New S3 Connection…"),
+                                    action: #selector(menuNewS3), keyEquivalent: ""))
 
         // Edit menu
         let editMenuItem = NSMenuItem(title: tr("Edit"), action: nil, keyEquivalent: "")
@@ -289,6 +291,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func menuConnectServer() {
         mainVC()?.perform(#selector(MainViewController.actionConnectServer_menu))
+    }
+    @objc private func menuNewS3() {
+        mainVC()?.perform(#selector(MainViewController.actionNewS3Connection_menu))
     }
     @objc private func menuCopyPath() {
         mainVC()?.perform(#selector(MainViewController.actionCopyPath_menu))

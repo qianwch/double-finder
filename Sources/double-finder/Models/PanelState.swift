@@ -44,6 +44,10 @@ class PanelState: ObservableObject {
     /// When set, the panel is browsing a remote host over SFTP.
     var sftp: SFTPConnection?
 
+    /// When set, the panel is browsing an S3-compatible store.
+    var s3: S3Connection?
+    private var s3Secret: String = ""
+
     /// Branch view: show all files under the current folder, flattened (TC Ctrl+B).
     var branchView = false
 
@@ -120,11 +124,17 @@ class PanelState: ObservableObject {
         return items
     }
 
-    /// The filesystem backing the current path: SFTP when connected, else ZipFS
-    /// for archive paths, else LocalFS.
+    /// The filesystem backing the current path: SFTP when connected, S3 when
+    /// connected, else ZipFS for archive paths, else LocalFS.
     var fs: VirtualFS {
         if let ra = remoteArchive { return ra }
         if let conn = sftp { return SFTPFS(connection: conn) }
+        if let conn = s3 {
+            let ep = S3Endpoint(base: URL(string: conn.endpoint) ?? URL(string: "https://s3.amazonaws.com")!,
+                                region: conn.region, pathStyle: conn.pathStyle)
+            let signer = S3Signer(accessKey: conn.accessKey, secretKey: s3Secret, region: conn.region)
+            return S3FS(client: S3Client(endpoint: ep, signer: signer), currentPath: currentPath)
+        }
         return Self.fileSystem(for: currentPath)
     }
 
@@ -148,12 +158,29 @@ class PanelState: ObservableObject {
         navigate(to: path)
     }
 
+    func connectS3(_ conn: S3Connection, secret: String, initialPath: String) {
+        remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
+        sftp = nil
+        s3 = conn; s3Secret = secret
+        currentPath = initialPath
+        cursorMemory = [:]; history = [initialPath]; historyIndex = 0
+        filter = ""; selectedItems.removeAll(); cursorIndex = 0
+        loadDirectory()
+    }
+
+    func disconnectS3(toLocal path: String) {
+        s3 = nil; s3Secret = ""
+        navigate(to: path)
+    }
+
     /// Navigate to a *local* location (Favorites, directory-tree sidebar). If a
     /// remote session is active, leave it first — otherwise the local path would
     /// be listed against the remote host and come back empty.
     func navigateLocal(to path: String) {
         if sftp != nil || remoteArchive != nil {
             disconnectSFTP(toLocal: path)
+        } else if s3 != nil {
+            disconnectS3(toLocal: path)
         } else {
             navigate(to: path)
         }
