@@ -15,6 +15,7 @@ Package.resolved
 # AI assistant support files (not part of the public project)
 /CLAUDE.md
 /spec/
+/docs/superpowers/
 
 # Bundled third-party binary — fetched at package time, not committed.
 # (its README.md and License.txt ARE tracked, see vendor/sevenzip/)
