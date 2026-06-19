@@ -19,6 +19,15 @@ cp "$BIN" "$APPDIR/Contents/MacOS/$APP"
 chmod +x "$APPDIR/Contents/MacOS/$APP"
 echo "    binary archs: $(lipo -archs "$APPDIR/Contents/MacOS/$APP")"
 
+echo "==> Bundle Localization resource pack"
+RESBUNDLE="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/double-finder_double-finder.bundle"
+if [ -d "$RESBUNDLE" ]; then
+    cp -R "$RESBUNDLE" "$APPDIR/Contents/Resources/"
+    echo "    bundled $(basename "$RESBUNDLE") ($(find "$RESBUNDLE" -name '*.json' | wc -l | tr -d ' ') json packs)"
+else
+    echo "    !! resource bundle not found at $RESBUNDLE"
+fi
+
 echo "==> Bundle 7zz (for encrypted 7z; libarchive can't decrypt those)"
 SEVENZIP="vendor/sevenzip/7zz"
 # Not committed to git — fetch the official universal build on first package.
