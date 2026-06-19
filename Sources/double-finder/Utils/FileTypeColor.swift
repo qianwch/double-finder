@@ -16,6 +16,22 @@ enum FileViewMode: Int {
     }
 }
 
+/// App-wide light/dark appearance choice. Empty raw value = follow the system.
+enum AppAppearance: String, CaseIterable {
+    case system = ""
+    case light = "light"
+    case dark = "dark"
+
+    /// The AppKit appearance to force, or nil to follow the system.
+    var appKitName: NSAppearance.Name? {
+        switch self {
+        case .system: return nil
+        case .light:  return .aqua
+        case .dark:   return .darkAqua
+        }
+    }
+}
+
 /// Persistent app-level toggles.
 enum AppSettings {
     static var colorByType: Bool {
@@ -69,6 +85,21 @@ enum AppSettings {
     static var iconSize: Int {
         get { let v = UserDefaults.standard.integer(forKey: "IconSize"); return v == 0 ? 24 : v }
         set { UserDefaults.standard.set(newValue, forKey: "IconSize") }
+    }
+
+    /// Light/dark appearance. Empty/absent = follow the system.
+    static var appearance: AppAppearance {
+        get { AppAppearance(rawValue: UserDefaults.standard.string(forKey: "Appearance") ?? "") ?? .system }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "Appearance") }
+    }
+
+    /// Apply the stored appearance to the whole app. nil = follow system.
+    @MainActor static func applyAppearance() {
+        if let name = appearance.appKitName {
+            NSApp.appearance = NSAppearance(named: name)
+        } else {
+            NSApp.appearance = nil
+        }
     }
 
     /// Active UI language. Empty string = follow system. Stored as Language.rawValue.
