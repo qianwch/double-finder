@@ -319,5 +319,13 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "「%@」は暗号化されているか展開できませんでした。パスワードを入力してください：",
   "“%@” is encrypted. Enter password to browse:": "「%@」は暗号化されています。閲覧するにはパスワードを入力してください：",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "「%@」は実行可能ファイルではありません。7z / 7zz / 7za のバイナリを選ぶか、欄を空にして自動検出してください。",
-  "… and %d more": "…他 %d 件"
+  "… and %d more": "…他 %d 件",
+  "Connect to Server…": "サーバへ接続…",
+  "Connect to Server": "サーバへ接続",
+  "Discovered Servers": "検出されたサーバ",
+  "Address:": "アドレス：",
+  "Recent…": "最近…",
+  "Unsupported address.": "サポートされていないアドレスです。",
+  "Use an smb:// or sftp:// address.": "smb:// または sftp:// アドレスを使用してください。",
+  "Mount requested — check the drive bar.": "マウントを要求しました — ドライブバーを確認してください。"
 }

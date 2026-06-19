@@ -319,5 +319,13 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "„%@“ ist verschlüsselt oder konnte nicht entpackt werden. Passwort eingeben:",
   "“%@” is encrypted. Enter password to browse:": "„%@“ ist verschlüsselt. Passwort zum Durchsuchen eingeben:",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "„%@“ ist keine ausführbare Datei. Wählen Sie die 7z-/7zz-/7za-Binärdatei oder lassen Sie das Feld leer zur automatischen Erkennung.",
-  "… and %d more": "… und %d weitere"
+  "… and %d more": "… und %d weitere",
+  "Connect to Server…": "Mit Server verbinden…",
+  "Connect to Server": "Mit Server verbinden",
+  "Discovered Servers": "Gefundene Server",
+  "Address:": "Adresse:",
+  "Recent…": "Zuletzt…",
+  "Unsupported address.": "Nicht unterstützte Adresse.",
+  "Use an smb:// or sftp:// address.": "Verwenden Sie eine smb://- oder sftp://-Adresse.",
+  "Mount requested — check the drive bar.": "Mounten angefordert – siehe Laufwerksleiste."
 }
