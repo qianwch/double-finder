@@ -327,5 +327,6 @@
   "Recent…": "최근…",
   "Unsupported address.": "지원되지 않는 주소입니다.",
   "Use an smb:// or sftp:// address.": "smb:// 또는 sftp:// 주소를 사용하세요.",
-  "Mount requested — check the drive bar.": "마운트를 요청했습니다 — 드라이브 막대를 확인하세요."
+  "Mount requested — check the drive bar.": "마운트를 요청했습니다 — 드라이브 막대를 확인하세요.",
+  "Still resolving this server — try again in a moment.": "이 서버를 확인하는 중입니다 — 잠시 후 다시 시도하세요."
 }

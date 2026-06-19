@@ -327,5 +327,6 @@
   "Recent…": "最近…",
   "Unsupported address.": "サポートされていないアドレスです。",
   "Use an smb:// or sftp:// address.": "smb:// または sftp:// アドレスを使用してください。",
-  "Mount requested — check the drive bar.": "マウントを要求しました — ドライブバーを確認してください。"
+  "Mount requested — check the drive bar.": "マウントを要求しました — ドライブバーを確認してください。",
+  "Still resolving this server — try again in a moment.": "このサーバを解決中です — 少し待ってからもう一度お試しください。"
 }
