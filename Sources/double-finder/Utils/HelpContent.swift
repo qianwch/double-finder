@@ -27,8 +27,8 @@ enum HelpContent {
             Shortcut(nameKey: "Refresh", keys: "⌘R"),
             Shortcut(nameKey: "Go to Folder…", keys: "⌘⇧G"),
             Shortcut(nameKey: "Focus Command Line", keys: "⌘L"),
-            Shortcut(nameKey: "Swap Panels", keys: "⌃U"),
-            Shortcut(nameKey: "Open Terminal Here", keys: "⌃O"),
+            Shortcut(nameKey: "Swap Panels", keys: "⌘U"),
+            Shortcut(nameKey: "Open in Terminal", keys: "⌘⇧T"),
         ]),
         ShortcutGroup(titleKey: "Selection", shortcuts: [
             Shortcut(nameKey: "Select All", keys: "⌘A"),
@@ -48,8 +48,8 @@ enum HelpContent {
             Shortcut(nameKey: "Move to Trash", keys: "⌘⌫"),
         ]),
         ShortcutGroup(titleKey: "Panels & Tabs", shortcuts: [
-            Shortcut(nameKey: "New Tab", keys: "⌃T"),
-            Shortcut(nameKey: "Close Tab", keys: "⌃W"),
+            Shortcut(nameKey: "New Tab", keys: "⌘T"),
+            Shortcut(nameKey: "Close Tab", keys: "⌘W"),
             Shortcut(nameKey: "Directory Tree", keys: "⌘⇧D"),
             Shortcut(nameKey: "Branch View", keys: "⌘⇧B"),
         ]),
@@ -65,7 +65,7 @@ enum HelpContent {
         ]),
         ShortcutGroup(titleKey: "Search", shortcuts: [
             Shortcut(nameKey: "Find Files", keys: "⌘⇧F"),
-            Shortcut(nameKey: "Multi-Rename", keys: "⌃M"),
+            Shortcut(nameKey: "Multi-Rename", keys: "⌘M"),
             Shortcut(nameKey: "SFTP Connection", keys: "⌘N"),
         ]),
     ]
