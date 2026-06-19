@@ -316,7 +316,7 @@ class PanelViewController: NSViewController {
         guard let window = view.window else { return }
         let alert = NSAlert()
         alert.messageText = tr("Can’t Open Archive")
-        alert.informativeText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        alert.informativeText = tr((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         alert.alertStyle = .warning
         alert.beginSheetModal(for: window) { [weak self] _ in
             if wasInArchive { self?.panelState.goUp() }   // leave the archive we couldn't read

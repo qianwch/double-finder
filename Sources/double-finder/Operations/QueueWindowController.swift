@@ -21,7 +21,7 @@ final class QueueWindowController: NSWindowController {
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 150),
                              styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel],
                              backing: .buffered, defer: false)
-        window.title = "Transfer Queue"
+        window.title = tr("Transfer Queue")
         window.isFloatingPanel = true
         window.hidesOnDeactivate = false
         super.init(window: window)
@@ -40,9 +40,9 @@ final class QueueWindowController: NSWindowController {
         progressBar.isIndeterminate = false          // start determinate; update() flips as needed
         progressBar.usesThreadedAnimation = true     // keep spinning even if the main thread is busy
 
-        let cancelCur = NSButton(title: "Skip Current", target: self, action: #selector(cancelCurrent))
+        let cancelCur = NSButton(title: tr("Skip Current"), target: self, action: #selector(cancelCurrent))
         cancelCur.bezelStyle = .rounded
-        let cancelAll = NSButton(title: "Cancel All", target: self, action: #selector(cancelAll))
+        let cancelAll = NSButton(title: tr("Cancel All"), target: self, action: #selector(cancelAll))
         cancelAll.bezelStyle = .rounded
 
         let views = [titleLabel, detailLabel, progressBar, pendingLabel, cancelCur, cancelAll]
@@ -103,7 +103,9 @@ final class QueueWindowController: NSWindowController {
             detailLabel.stringValue = op.currentFile
         }
         let pending = queue.pendingCount
-        pendingLabel.stringValue = pending == 0 ? "No more tasks queued" : "\(pending) more task\(pending == 1 ? "" : "s") queued"
+        pendingLabel.stringValue = pending == 0
+            ? tr("No more tasks queued")
+            : (pending == 1 ? tr("1 more task queued") : tr("%d more tasks queued", pending))
     }
 
     /// Reset the speed sampler (and animation state) when the running job changes.

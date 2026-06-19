@@ -48,7 +48,7 @@ class ProgressSheet: NSWindowController {
         progressBar.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(progressBar)
 
-        cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        cancelButton = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancelButton.bezelStyle = .rounded
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(cancelButton)

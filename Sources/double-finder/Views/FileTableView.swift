@@ -110,7 +110,7 @@ class FileTableView: NSScrollView {
         // Name column (also hosts the disclosure triangle + icon, so the triangle
         // sits before the icon and the whole group indents together — Finder-style).
         nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        nameColumn.title = "Name"
+        nameColumn.title = tr("Name")
         nameColumn.width = 330
         nameColumn.minWidth = 120
         nameColumn.isEditable = false
@@ -121,7 +121,7 @@ class FileTableView: NSScrollView {
         let visible = Set(AppSettings.visibleColumns)
         for spec in Self.optionalColumns {
             let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.id))
-            col.title = spec.title
+            col.title = tr(spec.title)
             col.width = spec.width
             col.minWidth = 50
             col.isEditable = false
@@ -441,7 +441,7 @@ extension FileTableView: NSMenuDelegate {
         menu.removeAllItems()
         let visible = Set(AppSettings.visibleColumns)
         for spec in Self.optionalColumns {
-            let item = NSMenuItem(title: spec.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: tr(spec.title), action: #selector(toggleColumn(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = spec.id
             item.state = visible.contains(spec.id) ? .on : .off
