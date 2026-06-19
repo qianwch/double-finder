@@ -338,5 +338,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "« %@ » est chiffré ou n’a pas pu être extrait. Saisissez le mot de passe :",
   "“%@” is encrypted. Enter password to browse:": "« %@ » est chiffré. Saisissez le mot de passe pour parcourir :",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "« %@ » n'est pas un fichier exécutable. Choisissez le binaire 7z / 7zz / 7za, ou laissez le champ vide pour la détection automatique.",
-  "… and %d more": "… et %d de plus"
+  "… and %d more": "… et %d de plus",
+  "Delete %@ from S3?": "Supprimer %@ de S3 ?"
 }

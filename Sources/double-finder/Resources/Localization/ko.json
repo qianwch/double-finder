@@ -338,5 +338,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "\"%@\"이(가) 암호화되었거나 압축을 풀 수 없습니다. 암호를 입력하세요:",
   "“%@” is encrypted. Enter password to browse:": "\"%@\"이(가) 암호화되어 있습니다. 탐색하려면 암호를 입력하세요:",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "“%@”은(는) 실행 가능한 파일이 아닙니다. 7z / 7zz / 7za 실행 파일을 선택하거나 필드를 비워 자동 감지하십시오.",
-  "… and %d more": "… 외 %d개"
+  "… and %d more": "… 외 %d개",
+  "Delete %@ from S3?": "S3에서 %@을(를) 삭제하시겠습니까?"
 }
