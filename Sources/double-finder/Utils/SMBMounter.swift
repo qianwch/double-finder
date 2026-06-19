@@ -66,6 +66,8 @@ enum SMBMounter {
                 nil,
                 &mountpoints)
             let paths = (mountpoints?.takeRetainedValue() as? [String]) ?? []
+            FileHandle.standardError.write(Data(
+                "[SMB] NetFSMountURLSync \(url.absoluteString) guest=\(guest) -> status=\(status) paths=\(paths)\n".utf8))
 
             DispatchQueue.main.async {
                 if let err = SMBMountError.classify(status) {
