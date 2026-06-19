@@ -19,6 +19,7 @@ class MainViewController: NSViewController {
     private let transferQueue = TransferQueue()
     private var queueWindow: QueueWindowController?
     private var activeSFTPSheet: SFTPConnectionSheet?
+    private var s3Sheet: S3ConnectionSheet?
     private var activeRenameSheet: MultiRenameSheet?
     private var activeFindSheet: FindFilesSheet?
     private var activeGoToSheet: GoToFolderSheet?
@@ -1809,6 +1810,16 @@ class MainViewController: NSViewController {
 extension MainViewController {
     @objc func actionNewDirectory_menu() { actionNewDirectory() }
     @objc func actionNewSFTP_menu() { actionNewSFTPConnection() }
+    @objc func actionNewS3Connection_menu() {
+        let sheet = S3ConnectionSheet()
+        s3Sheet = sheet
+        sheet.onConnect = { [weak self] conn, secret in
+            guard let self = self else { return }
+            let initial = conn.bucket.isEmpty ? "/" : "/" + conn.bucket
+            self.activePanelVC.panelState.connectS3(conn, secret: secret, initialPath: initial)
+        }
+        sheet.show(on: view.window)
+    }
     @objc func actionCopyPath_menu() { copyPathsToClipboard() }
     @objc func ctxCopyFiles() { copyFilesToClipboard() }
     @objc func ctxPasteFiles() { pasteFilesFromClipboard() }
