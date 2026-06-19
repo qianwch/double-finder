@@ -7,6 +7,11 @@ final class TabBarView: NSView {
 
     private let stack = NSStackView()
 
+    // Last configuration, so the tabs can be rebuilt (re-resolving their
+    // appearance-dependent pill colors) when the effective appearance changes.
+    private var lastTitles: [String] = []
+    private var lastActive = 0
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -29,6 +34,11 @@ final class TabBarView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyAppearanceColors()
+        // Rebuild the tab pills so their snapshotted cgColor backgrounds
+        // re-resolve against the new appearance.
+        if !lastTitles.isEmpty {
+            configure(titles: lastTitles, active: lastActive)
+        }
     }
 
     private func applyAppearanceColors() {
@@ -38,6 +48,8 @@ final class TabBarView: NSView {
     }
 
     func configure(titles: [String], active: Int) {
+        lastTitles = titles
+        lastActive = active
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, title) in titles.enumerated() {
             stack.addArrangedSubview(makeTab(title: title, index: i, active: i == active))
@@ -48,9 +60,11 @@ final class TabBarView: NSView {
         let tab = NSView()
         tab.wantsLayer = true
         tab.layer?.cornerRadius = 4
-        tab.layer?.backgroundColor = (active
-            ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.30)
-            : NSColor.controlColor).cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            tab.layer?.backgroundColor = (active
+                ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.30)
+                : NSColor.controlColor).cgColor
+        }
         tab.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSButton(title: title, target: self, action: #selector(tabClicked(_:)))
