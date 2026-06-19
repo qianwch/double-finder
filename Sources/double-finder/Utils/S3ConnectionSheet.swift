@@ -89,8 +89,11 @@ final class S3ConnectionSheet: NSWindowController, NSTableViewDataSource, NSTabl
     }
 
     private func currentConnection() -> S3Connection {
-        S3Connection(name: nameField.stringValue.isEmpty ? endpointField.stringValue : nameField.stringValue,
-                     endpoint: endpointField.stringValue.trimmingCharacters(in: .whitespaces),
+        var endpoint = endpointField.stringValue.trimmingCharacters(in: .whitespaces)
+        // Default to https:// when the user types a bare host (e.g. "obs.example.com").
+        if !endpoint.isEmpty, !endpoint.contains("://") { endpoint = "https://\(endpoint)" }
+        return S3Connection(name: nameField.stringValue.isEmpty ? endpointField.stringValue : nameField.stringValue,
+                     endpoint: endpoint,
                      region: regionField.stringValue.trimmingCharacters(in: .whitespaces),
                      bucket: bucketField.stringValue.trimmingCharacters(in: .whitespaces),
                      accessKey: accessField.stringValue.trimmingCharacters(in: .whitespaces),

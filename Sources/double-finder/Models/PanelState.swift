@@ -130,7 +130,10 @@ class PanelState: ObservableObject {
         if let ra = remoteArchive { return ra }
         if let conn = sftp { return SFTPFS(connection: conn) }
         if let conn = s3 {
-            let ep = S3Endpoint(base: URL(string: conn.endpoint) ?? URL(string: "https://s3.amazonaws.com")!,
+            // Tolerate an endpoint typed without a scheme (e.g. "obs.example.com"):
+            // a scheme-less string parses to a URL with no host, breaking requests.
+            let raw = conn.endpoint.contains("://") ? conn.endpoint : "https://\(conn.endpoint)"
+            let ep = S3Endpoint(base: URL(string: raw) ?? URL(string: "https://s3.amazonaws.com")!,
                                 region: conn.region, pathStyle: conn.pathStyle)
             let signer = S3Signer(accessKey: conn.accessKey, secretKey: s3Secret, region: conn.region)
             return S3FS(client: S3Client(endpoint: ep, signer: signer), currentPath: currentPath)
