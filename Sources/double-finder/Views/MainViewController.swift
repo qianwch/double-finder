@@ -1060,6 +1060,7 @@ class MainViewController: NSViewController {
         }
 
         let isSFTP = panel.sftp != nil
+        let isS3 = panel.s3 != nil
         let n = items.count
         let countText = n == 1 ? tr("1 item") : tr("%d items", n)
 
@@ -1070,6 +1071,10 @@ class MainViewController: NSViewController {
             if isSFTP, let conn = panel.sftp {
                 op.indeterminate = true
                 op.perItemOperation = { path in try await SFTPFS(connection: conn).delete(path) }
+            } else if isS3 {
+                op.indeterminate = true
+                let fs = panel.fs
+                op.perItemOperation = { path in try await fs.delete(path) }
             } else if permanent {
                 op.indeterminate = true
                 op.perItemOperation = { path in try await LocalFS().deletePermanently(path) }
@@ -1082,13 +1087,17 @@ class MainViewController: NSViewController {
         }
 
         // Remote delete is irreversible regardless of which key was pressed.
-        guard confirm || isSFTP else { run(); return }
+        guard confirm || isSFTP || isS3 else { run(); return }
 
         let alert = NSAlert()
         alert.alertStyle = .warning
         if isSFTP {
             alert.messageText = tr("Delete %@ from the server?", countText)
             alert.informativeText = tr("This permanently removes them on the remote host and cannot be undone.")
+            alert.addButton(withTitle: tr("Delete"))
+        } else if isS3 {
+            alert.messageText = tr("Delete %@ from S3?", countText)
+            alert.informativeText = tr("This permanently removes them from the bucket and cannot be undone.")
             alert.addButton(withTitle: tr("Delete"))
         } else if permanent {
             alert.messageText = tr("Permanently delete %@?", countText)

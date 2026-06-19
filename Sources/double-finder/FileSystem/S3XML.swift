@@ -95,6 +95,10 @@ private final class ListObjectsCollector: NSObject, XMLParserDelegate {
     private var stack: [String] = []
     private var buffer = ""
     private var curKey = "", curSize: Int64 = 0, curDate = Date()
+    private static let dfFractional: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"; return f
+    }()
     private static let df: DateFormatter = {
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"; return f
@@ -112,7 +116,7 @@ private final class ListObjectsCollector: NSObject, XMLParserDelegate {
         case "Prefix" where stack.dropLast().last == "CommonPrefixes": prefixes.append(text)
         case "Key": curKey = text
         case "Size": curSize = Int64(text) ?? 0
-        case "LastModified": curDate = Self.df.date(from: text) ?? Date()
+        case "LastModified": curDate = Self.dfFractional.date(from: text) ?? Self.df.date(from: text) ?? Date()
         case "Contents": objects.append(S3ObjectInfo(key: curKey, size: curSize, modified: curDate))
         case "NextContinuationToken": nextToken = text
         default: break
