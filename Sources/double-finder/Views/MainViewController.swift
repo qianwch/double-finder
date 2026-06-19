@@ -1679,63 +1679,22 @@ class MainViewController: NSViewController {
         connectServerWindow?.show(on: view.window)
     }
 
-    private var smbAuthSheet: SMBAuthSheet?
-
+    /// Connect to an SMB server via the native macOS UI (auth + share selection)
+    /// without opening a Finder window, then navigate to the mounted share.
     private func connectSMB(_ url: URL) {
-        guard let host = url.host else { return }
-        // Saved credential → mount silently. Otherwise prompt in-app.
-        if let cred = SMBCredentialStore.load(host: host) {
-            attemptSMBMount(url, host: host, user: cred.user, password: cred.password,
-                            guest: false, remember: false, fromSaved: true)
-        } else {
-            promptSMBAuth(url, host: host, errorMessage: nil)
-        }
-    }
-
-    private func promptSMBAuth(_ url: URL, host: String, errorMessage: String?) {
-        if smbAuthSheet == nil { smbAuthSheet = SMBAuthSheet() }
-        guard let sheet = smbAuthSheet else { return }
-        sheet.onSubmit = { [weak self] user, password, guest, remember in
-            self?.attemptSMBMount(url, host: host,
-                                  user: guest ? "" : user,
-                                  password: guest ? "" : password,
-                                  guest: guest, remember: remember, fromSaved: false)
-        }
-        sheet.onCancel = { /* user cancelled — do nothing */ }
-        sheet.show(on: view.window, host: host, errorMessage: errorMessage)
-    }
-
-    private func attemptSMBMount(_ url: URL, host: String, user: String, password: String,
-                                 guest: Bool, remember: Bool, fromSaved: Bool) {
-        SMBMounter.mount(url, user: guest ? nil : user, password: guest ? nil : password,
-                         guest: guest) { [weak self] result in
+        SMBMounter.mount(url) { [weak self] outcome in
             guard let self = self else { return }
-            switch result {
-            case .success(let mountPath):
-                self.activePanelVC.panelState.navigateLocal(to: mountPath)
-                // Bookmark the bare server URL — strip any user-info from a
-                // manually typed smb://user@host so no name leaks into the plist.
-                var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
-                comps?.user = nil
-                comps?.password = nil
-                SMBBookmarkStore.add(comps?.url?.absoluteString ?? url.absoluteString)
-                if remember && !guest {
-                    SMBCredentialStore.save(host: host, user: user, password: password)
+            switch outcome {
+            case .mounted(let path):
+                if !path.isEmpty {
+                    self.activePanelVC.panelState.navigateLocal(to: path)
                 }
-            case .failure(let error) where error.isAuthIssue:
-                // Wrong password, guest rejected, or an account/auth-method issue —
-                // drop any stale saved credential and re-prompt with the reason.
-                if fromSaved { SMBCredentialStore.delete(host: host, account: nil) }
-                self.promptSMBAuth(url, host: host,
-                                   errorMessage: error.errorDescription.map { tr($0) })
-            case .failure(let error):
+                SMBBookmarkStore.add(url.absoluteString)
+            case .cancelled:
+                break   // user dismissed the native auth dialog
+            case .failed(let error):
                 if let window = self.view.window {
-                    var text = (error.errorDescription).map { tr($0) }
-                        ?? tr("Could not connect to the server.")
-                    if case .other(let status) = error { text += " (\(status))" }
-                    let alert = NSAlert()
-                    alert.messageText = text
-                    alert.beginSheetModal(for: window, completionHandler: nil)
+                    self.presentLocalizedError(error, in: window)
                 }
             }
         }

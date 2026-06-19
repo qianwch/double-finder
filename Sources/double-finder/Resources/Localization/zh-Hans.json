@@ -329,12 +329,5 @@
   "Use an smb:// or sftp:// address.": "请使用 smb:// 或 sftp:// 地址。",
   "Mount requested — check the drive bar.": "已请求挂载——请查看驱动器栏。",
   "Still resolving this server — try again in a moment.": "正在解析该服务器，请稍后重试。",
-  "Enter credentials for %@": "为 %@ 输入凭据",
-  "User name:": "用户名：",
-  "Password:": "密码：",
-  "Connect as guest": "以访客连接",
-  "Remember in Keychain": "记住到钥匙串",
-  "Incorrect user name or password.": "用户名或密码错误。",
-  "Could not connect to the server.": "无法连接到服务器。",
-  "This server requires a user name and password.": "此服务器需要用户名和密码。"
+  "Could not connect to the server.": "无法连接到服务器。"
 }

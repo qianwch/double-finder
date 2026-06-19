@@ -329,12 +329,5 @@
   "Use an smb:// or sftp:// address.": "smb:// 또는 sftp:// 주소를 사용하세요.",
   "Mount requested — check the drive bar.": "마운트를 요청했습니다 — 드라이브 막대를 확인하세요.",
   "Still resolving this server — try again in a moment.": "이 서버를 확인하는 중입니다 — 잠시 후 다시 시도하세요.",
-  "Enter credentials for %@": "%@의 자격 증명 입력",
-  "User name:": "사용자 이름:",
-  "Password:": "암호:",
-  "Connect as guest": "게스트로 연결",
-  "Remember in Keychain": "키체인에 저장",
-  "Incorrect user name or password.": "사용자 이름 또는 암호가 올바르지 않습니다.",
-  "Could not connect to the server.": "서버에 연결할 수 없습니다.",
-  "This server requires a user name and password.": "이 서버는 사용자 이름과 암호가 필요합니다."
+  "Could not connect to the server.": "서버에 연결할 수 없습니다."
 }
