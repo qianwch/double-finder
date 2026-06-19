@@ -335,5 +335,6 @@
   "Connect as guest": "Als Gast verbinden",
   "Remember in Keychain": "Im Schlüsselbund merken",
   "Incorrect user name or password.": "Benutzername oder Passwort ist falsch.",
-  "Could not connect to the server.": "Verbindung zum Server fehlgeschlagen."
+  "Could not connect to the server.": "Verbindung zum Server fehlgeschlagen.",
+  "This server requires a user name and password.": "Dieser Server erfordert Benutzername und Passwort."
 }
