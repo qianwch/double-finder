@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowController = MainWindowController(appState: appState)
         windowController.showWindow()
         setupMenus()
+        AppSettings.applyAppearance()
 
         // Catch external changes made while the app was in the background.
         NotificationCenter.default.addObserver(
