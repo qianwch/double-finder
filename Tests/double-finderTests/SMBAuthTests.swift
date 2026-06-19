@@ -12,9 +12,28 @@ final class SMBAuthTests: XCTestCase {
         XCTAssertEqual(SMBMountError.classify(13), .authFailed)   // EACCES
     }
 
+    /// Guest/account/auth-mechanism NetFS codes mean "you need (real) credentials"
+    /// — they must re-prompt, not dead-end as a generic failure.
+    func testClassifyNeedsCredentials() {
+        XCTAssertEqual(SMBMountError.classify(-6004), .needsCredentials)  // guest not supported
+        XCTAssertEqual(SMBMountError.classify(-5997), .needsCredentials)  // no auth mech
+        XCTAssertEqual(SMBMountError.classify(-5999), .needsCredentials)  // account restricted (guest)
+        XCTAssertEqual(SMBMountError.classify(-5045), .needsCredentials)  // pwd needs change
+        XCTAssertEqual(SMBMountError.classify(-5046), .needsCredentials)  // pwd policy
+    }
+
     func testClassifyOther() {
-        XCTAssertEqual(SMBMountError.classify(2), .other(2))      // ENOENT-ish
-        XCTAssertEqual(SMBMountError.classify(64), .other(64))    // EHOSTDOWN-ish
+        XCTAssertEqual(SMBMountError.classify(2), .other(2))         // ENOENT-ish
+        XCTAssertEqual(SMBMountError.classify(64), .other(64))       // EHOSTDOWN-ish
+        XCTAssertEqual(SMBMountError.classify(-6003), .other(-6003)) // no shares available
+        XCTAssertEqual(SMBMountError.classify(-6602), .other(-6602)) // mount failed
+    }
+
+    /// The auth-ish errors must report as "should re-prompt".
+    func testIsAuthIssue() {
+        XCTAssertTrue(SMBMountError.authFailed.isAuthIssue)
+        XCTAssertTrue(SMBMountError.needsCredentials.isAuthIssue)
+        XCTAssertFalse(SMBMountError.other(2).isAuthIssue)
     }
 
     func testQueryIncludesServerAndProtocolNoAccount() {

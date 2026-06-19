@@ -4,24 +4,43 @@ import NetFS
 /// Why an SMB mount failed. App LocalizedError types return BARE English keys
 /// (presentLocalizedError translates).
 enum SMBMountError: Error, Equatable, LocalizedError {
-    case authFailed
+    case authFailed         // wrong user name / password
+    case needsCredentials   // guest / current method rejected — enter a real account
     case other(Int32)
 
     /// Map a NetFSMountURLSync status to an error, or nil for success.
-    /// EAUTH(80)/EACCES(13) mean bad credentials → re-prompt; everything else
-    /// non-zero is a generic failure.
+    /// NetFS reports auth problems with several codes (errno EAUTH/EACCES *and*
+    /// negative NetFS/NetAuth codes); all of these must re-prompt rather than
+    /// dead-end as a generic failure. Non-auth failures stay `.other`.
     static func classify(_ status: Int32) -> SMBMountError? {
         switch status {
-        case 0: return nil
-        case 80, 13: return .authFailed
-        default: return .other(status)
+        case 0:
+            return nil
+        case 80, 13:                        // EAUTH, EACCES
+            return .authFailed
+        case -6004,                         // kNetAuthErrorGuestNotSupported
+             -5997,                         // ENETFSNOAUTHMECHSUPP
+             -5999,                         // ENETFSACCOUNTRESTRICTED (e.g. guest)
+             -5045, -5046:                  // ENETFSPWDNEEDSCHANGE / ENETFSPWDPOLICY
+            return .needsCredentials
+        default:
+            return .other(status)
+        }
+    }
+
+    /// True when the user should be re-prompted for (different) credentials.
+    var isAuthIssue: Bool {
+        switch self {
+        case .authFailed, .needsCredentials: return true
+        case .other: return false
         }
     }
 
     var errorDescription: String? {
         switch self {
-        case .authFailed: return "Incorrect user name or password."
-        case .other:      return "Could not connect to the server."
+        case .authFailed:       return "Incorrect user name or password."
+        case .needsCredentials: return "This server requires a user name and password."
+        case .other:            return "Could not connect to the server."
         }
     }
 }

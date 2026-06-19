@@ -335,5 +335,6 @@
   "Connect as guest": "ゲストとして接続",
   "Remember in Keychain": "キーチェーンに保存",
   "Incorrect user name or password.": "ユーザ名またはパスワードが正しくありません。",
-  "Could not connect to the server.": "サーバに接続できませんでした。"
+  "Could not connect to the server.": "サーバに接続できませんでした。",
+  "This server requires a user name and password.": "このサーバにはユーザ名とパスワードが必要です。"
 }

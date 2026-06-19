@@ -1722,11 +1722,12 @@ class MainViewController: NSViewController {
                 if remember && !guest {
                     SMBCredentialStore.save(host: host, user: user, password: password)
                 }
-            case .failure(.authFailed):
-                // A stale saved credential failed — drop it and prompt afresh.
+            case .failure(let error) where error.isAuthIssue:
+                // Wrong password, guest rejected, or an account/auth-method issue —
+                // drop any stale saved credential and re-prompt with the reason.
                 if fromSaved { SMBCredentialStore.delete(host: host, account: nil) }
                 self.promptSMBAuth(url, host: host,
-                                   errorMessage: tr("Incorrect user name or password."))
+                                   errorMessage: error.errorDescription.map { tr($0) })
             case .failure(let error):
                 if let window = self.view.window {
                     self.presentLocalizedError(error, in: window)
