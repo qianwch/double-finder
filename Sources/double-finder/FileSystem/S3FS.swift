@@ -22,14 +22,19 @@ final class S3FS: VirtualFS {
                          isSymlink: false, permissions: "drwxr-xr-x")
             }
         }
-        let prefix = key   // already "" or "sub/"
+        // A folder path arrives without a trailing slash (e.g. "/bucket/sub");
+        // S3 listing needs the prefix to end in "/" or it returns the folder
+        // itself as a single CommonPrefix instead of its contents.
+        let prefix = (key.isEmpty || key.hasSuffix("/")) ? key : key + "/"
         let (prefixes, objects) = try await client.listObjects(bucket: bucket, prefix: prefix)
         var items: [FileItem] = []
         let basePath = path.hasSuffix("/") ? path : path + "/"
         for p in prefixes {
             let name = p.dropFirst(prefix.count).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             guard !name.isEmpty else { continue }
-            items.append(FileItem(id: UUID(), name: String(name), path: basePath + name,
+            // Folder paths keep the trailing slash so delete/rename/move detect
+            // them as folders (recursive) — the breadcrumb filters empty segments.
+            items.append(FileItem(id: UUID(), name: String(name), path: basePath + name + "/",
                                   isDirectory: true, isArchive: false, size: 0, modified: Date(),
                                   isHidden: name.hasPrefix("."), isSymlink: false,
                                   permissions: "drwxr-xr-x"))
