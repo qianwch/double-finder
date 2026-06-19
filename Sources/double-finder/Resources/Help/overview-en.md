@@ -3,13 +3,13 @@
 Double Finder is a dual-pane file manager for macOS, modeled on Total Commander.
 
 ## Panels
-Two independent panels sit side by side. The **active** panel has the focus; press **Tab** to switch sides. File operations (copy, move) go from the active panel to the other one. Press **⌃U** to swap the two panels.
+Two independent panels sit side by side. The **active** panel has the focus; press **Tab** to switch sides. File operations (copy, move) go from the active panel to the other one. Press **⌘U** to swap the two panels.
 
 ## Navigating
-Double-click a folder or press **Return** to enter it; **Backspace** goes to the parent. Use the path bar or **⌘⇧G** (Go to Folder) to jump anywhere. **⌘L** focuses the command line; **⌃O** opens a terminal in the current folder.
+Double-click a folder or press **Return** to enter it; **Backspace** goes to the parent. Use the path bar or **⌘⇧G** (Go to Folder) to jump anywhere. **⌘L** focuses the command line; **⌘⇧T** opens a terminal in the current folder.
 
 ## Tabs
-Each panel has folder tabs: **⌃T** opens a new tab, **⌃W** closes it, click a tab to switch.
+Each panel has folder tabs: **⌘T** opens a new tab, **⌘W** closes it, click a tab to switch.
 
 ## Selecting & Filtering
 **⌘A** selects all. Type **+ / - / \*** to select, unselect, or invert by wildcard pattern. **⌘F** opens a quick filter to narrow the list as you type.
