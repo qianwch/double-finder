@@ -13,7 +13,7 @@ final class FavoritesSheet: NSWindowController {
         self.items = favorites
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 380),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Organize Favorites"
+        window.title = tr("Organize Favorites")
         super.init(window: window)
         setupUI()
     }
@@ -23,7 +23,7 @@ final class FavoritesSheet: NSWindowController {
     private func setupUI() {
         guard let content = window?.contentView else { return }
 
-        let label = NSTextField(labelWithString: "Drag to reorder, or use the arrows. Sort A→Z for alphabetical order.")
+        let label = NSTextField(labelWithString: tr("Drag to reorder, or use the arrows. Sort A→Z for alphabetical order."))
         label.font = .systemFont(ofSize: 11); label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(label)
@@ -47,13 +47,13 @@ final class FavoritesSheet: NSWindowController {
         up.bezelStyle = .rounded
         let down = NSButton(title: "▼", target: self, action: #selector(moveFavDown))
         down.bezelStyle = .rounded
-        let sort = NSButton(title: "Sort A→Z", target: self, action: #selector(sortAZ))
+        let sort = NSButton(title: tr("Sort A→Z"), target: self, action: #selector(sortAZ))
         sort.bezelStyle = .rounded
-        let remove = NSButton(title: "Remove", target: self, action: #selector(removeFav))
+        let remove = NSButton(title: tr("Remove"), target: self, action: #selector(removeFav))
         remove.bezelStyle = .rounded
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        let cancel = NSButton(title: tr("Cancel"), target: self, action: #selector(cancel))
         cancel.bezelStyle = .rounded; cancel.keyEquivalent = "\u{1b}"
-        let save = NSButton(title: "Save", target: self, action: #selector(save))
+        let save = NSButton(title: tr("Save"), target: self, action: #selector(save))
         save.bezelStyle = .rounded; save.keyEquivalent = "\r"
         [up, down, sort, remove, cancel, save].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0)

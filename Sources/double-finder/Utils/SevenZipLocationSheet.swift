@@ -12,7 +12,7 @@ class SevenZipLocationSheet: NSWindowController {
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false
         )
-        window.title = "7-Zip Location"
+        window.title = tr("7-Zip Location")
         super.init(window: window)
         setupUI()
     }
@@ -23,13 +23,13 @@ class SevenZipLocationSheet: NSWindowController {
         guard let cv = window?.contentView else { return }
 
         let info = NSTextField(wrappingLabelWithString:
-            "Most archives are handled internally by libarchive. An external 7-Zip is only needed for ENCRYPTED .7z archives — to read or create them. Leave the custom path empty to auto-detect 7z / 7zz / 7za.")
+            tr("Most archives are handled internally by libarchive. An external 7-Zip is only needed for ENCRYPTED .7z archives — to read or create them. Leave the custom path empty to auto-detect 7z / 7zz / 7za."))
         info.frame = NSRect(x: 20, y: 176, width: 462, height: 56)
         info.font = .systemFont(ofSize: 11)
         info.textColor = .secondaryLabelColor
         cv.addSubview(info)
 
-        let detTitle = NSTextField(labelWithString: "Detected:")
+        let detTitle = NSTextField(labelWithString: tr("Detected:"))
         detTitle.frame = NSRect(x: 12, y: 146, width: 110, height: 20)
         detTitle.alignment = .right
         cv.addSubview(detTitle)
@@ -38,28 +38,28 @@ class SevenZipLocationSheet: NSWindowController {
         detectedLabel.lineBreakMode = .byTruncatingMiddle
         cv.addSubview(detectedLabel)
 
-        let custTitle = NSTextField(labelWithString: "Custom path:")
+        let custTitle = NSTextField(labelWithString: tr("Custom path:"))
         custTitle.frame = NSRect(x: 12, y: 106, width: 110, height: 22)
         custTitle.alignment = .right
         cv.addSubview(custTitle)
         pathField = NSTextField(frame: NSRect(x: 128, y: 106, width: 266, height: 22))
         pathField.bezelStyle = .roundedBezel
-        pathField.placeholderString = "(empty → use auto-detect)"
+        pathField.placeholderString = tr("(empty → use auto-detect)")
         cv.addSubview(pathField)
-        let browse = NSButton(title: "Browse…", target: self, action: #selector(browseClicked))
+        let browse = NSButton(title: tr("Browse…"), target: self, action: #selector(browseClicked))
         browse.bezelStyle = .rounded
         browse.frame = NSRect(x: 398, y: 104, width: 86, height: 26)
         cv.addSubview(browse)
 
-        let auto = NSButton(title: "Use Auto-detect", target: self, action: #selector(autoClicked))
+        let auto = NSButton(title: tr("Use Auto-detect"), target: self, action: #selector(autoClicked))
         auto.bezelStyle = .rounded
         auto.frame = NSRect(x: 16, y: 18, width: 150, height: 30)
         cv.addSubview(auto)
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        let cancel = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancel.bezelStyle = .rounded
         cancel.frame = NSRect(x: 304, y: 18, width: 88, height: 30)
         cv.addSubview(cancel)
-        let save = NSButton(title: "Save", target: self, action: #selector(saveClicked))
+        let save = NSButton(title: tr("Save"), target: self, action: #selector(saveClicked))
         save.bezelStyle = .rounded
         save.keyEquivalent = "\r"
         save.frame = NSRect(x: 398, y: 18, width: 86, height: 30)
@@ -70,13 +70,13 @@ class SevenZipLocationSheet: NSWindowController {
 
     private func refresh() {
         if let bundled = SevenZip.bundledPath() {
-            detectedLabel.stringValue = "Bundled (built-in): \(bundled)"
+            detectedLabel.stringValue = tr("Bundled (built-in): %@", bundled)
             detectedLabel.textColor = .labelColor
         } else if let det = SevenZip.autoDetect() {
             detectedLabel.stringValue = det
             detectedLabel.textColor = .labelColor
         } else {
-            detectedLabel.stringValue = "Not found — install with: brew install sevenzip"
+            detectedLabel.stringValue = tr("Not found — install with: brew install sevenzip")
             detectedLabel.textColor = .systemRed
         }
         pathField.stringValue = SevenZip.configuredPath ?? ""
@@ -107,8 +107,8 @@ class SevenZipLocationSheet: NSWindowController {
         let p = pathField.stringValue.trimmingCharacters(in: .whitespaces)
         if !p.isEmpty && !FileManager.default.isExecutableFile(atPath: p) {
             let a = NSAlert()
-            a.messageText = "Not an Executable"
-            a.informativeText = "“\(p)” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect."
+            a.messageText = tr("Not an Executable")
+            a.informativeText = tr("“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.", p)
             a.alertStyle = .warning
             a.beginSheetModal(for: window)
             return

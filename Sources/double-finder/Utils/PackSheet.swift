@@ -15,17 +15,18 @@ final class PackSheet: NSWindowController {
     private let nameField = NSTextField()
     private let formatPopup = NSPopUpButton()
     private let levelPopup = NSPopUpButton()
-    private let encryptCheck = NSButton(checkboxWithTitle: "Encrypt with password", target: nil, action: nil)
+    private let encryptCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let passwordField = NSSecureTextField()
 
-    // Level menu → numeric (0=store … 9=max)
+    // Level menu → numeric (0=store … 9=max). Titles are English source strings,
+    // translated at display time in setupUI.
     private let levels = [("Store (no compression)", 0), ("Fast", 2), ("Normal", 6), ("Maximum", 9)]
 
     init(defaultBaseName: String, destDir: String) {
         self.destDir = destDir
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 250),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Pack to Archive"
+        window.title = tr("Pack to Archive")
         super.init(window: window)
         setupUI(defaultBaseName: defaultBaseName)
         updateEncryptionAvailability()
@@ -38,10 +39,10 @@ final class PackSheet: NSWindowController {
         func label(_ s: String) -> NSTextField {
             let l = NSTextField(labelWithString: s); l.font = .systemFont(ofSize: 11); l.alignment = .right; return l
         }
-        let nameLbl = label("Name:")
-        let fmtLbl = label("Format:")
-        let lvlLbl = label("Compression:")
-        let destLbl = NSTextField(labelWithString: "Into: \(destDir)")
+        let nameLbl = label(tr("Name:"))
+        let fmtLbl = label(tr("Format:"))
+        let lvlLbl = label(tr("Compression:"))
+        let destLbl = NSTextField(labelWithString: tr("Into: %@", destDir))
         destLbl.font = .systemFont(ofSize: 10); destLbl.textColor = .secondaryLabelColor
         destLbl.lineBreakMode = .byTruncatingMiddle
 
@@ -49,16 +50,17 @@ final class PackSheet: NSWindowController {
         nameField.bezelStyle = .roundedBezel
         formatPopup.addItems(withTitles: ArchiveFormat.allCases.map { $0.displayName })
         formatPopup.target = self; formatPopup.action = #selector(formatChanged)
-        levelPopup.addItems(withTitles: levels.map { $0.0 })
+        levelPopup.addItems(withTitles: levels.map { tr($0.0) })
         levelPopup.selectItem(at: 2)   // Normal
+        encryptCheck.title = tr("Encrypt with password")
         encryptCheck.target = self; encryptCheck.action = #selector(encryptToggled)
         passwordField.bezelStyle = .roundedBezel
-        passwordField.placeholderString = "Password"
+        passwordField.placeholderString = tr("Password")
         passwordField.isEnabled = false
 
-        let packBtn = NSButton(title: "Pack", target: self, action: #selector(packClicked))
+        let packBtn = NSButton(title: tr("Pack"), target: self, action: #selector(packClicked))
         packBtn.bezelStyle = .rounded; packBtn.keyEquivalent = "\r"
-        let cancelBtn = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        let cancelBtn = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancelBtn.bezelStyle = .rounded
 
         let views: [NSView] = [nameLbl, nameField, fmtLbl, formatPopup, lvlLbl, levelPopup,

@@ -24,7 +24,7 @@ final class ToolbarCustomizeSheet: NSWindowController {
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 380),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Customize Toolbar"
+        window.title = tr("Customize Toolbar")
         super.init(window: window)
         setupUI()
     }
@@ -34,7 +34,7 @@ final class ToolbarCustomizeSheet: NSWindowController {
     private func setupUI() {
         guard let content = window?.contentView else { return }
 
-        let label = NSTextField(labelWithString: "Check the buttons to show; reorder with the arrows.")
+        let label = NSTextField(labelWithString: tr("Check the buttons to show; reorder with the arrows."))
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -57,11 +57,11 @@ final class ToolbarCustomizeSheet: NSWindowController {
         up.bezelStyle = .rounded
         let down = NSButton(title: "▼", target: self, action: #selector(moveItemDown))
         down.bezelStyle = .rounded
-        let reset = NSButton(title: "Reset", target: self, action: #selector(resetDefaults))
+        let reset = NSButton(title: tr("Reset"), target: self, action: #selector(resetDefaults))
         reset.bezelStyle = .rounded
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        let cancel = NSButton(title: tr("Cancel"), target: self, action: #selector(cancel))
         cancel.bezelStyle = .rounded; cancel.keyEquivalent = "\u{1b}"
-        let ok = NSButton(title: "Save", target: self, action: #selector(save))
+        let ok = NSButton(title: tr("Save"), target: self, action: #selector(save))
         ok.bezelStyle = .rounded; ok.keyEquivalent = "\r"
         [up, down, reset, cancel, ok].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0)
@@ -144,7 +144,7 @@ extension ToolbarCustomizeSheet: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = order[row]
-        let cell = NSButton(checkboxWithTitle: label(for: id), target: self, action: #selector(toggleRow(_:)))
+        let cell = NSButton(checkboxWithTitle: tr(label(for: id)), target: self, action: #selector(toggleRow(_:)))
         cell.tag = row
         cell.state = enabled.contains(id) ? .on : .off
         cell.font = .systemFont(ofSize: 12)
