@@ -218,6 +218,14 @@ class SFTPConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableVie
 
     // MARK: - Actions
 
+    /// Pre-fills the host/port/user fields (used when launched from the
+    /// Connect-to-Server sheet for a discovered SFTP service).
+    func prefill(host: String, port: Int, user: String) {
+        hostField.stringValue = host
+        if port > 0 { portField.stringValue = "\(port)" }
+        if !user.isEmpty { userField.stringValue = user }
+    }
+
     @objc private func newClicked() {
         tableView.deselectAll(nil)
         nameField.stringValue = ""

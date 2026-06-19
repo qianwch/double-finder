@@ -1543,11 +1543,12 @@ class MainViewController: NSViewController {
         NSPasteboard.general.setString(paths, forType: .string)
     }
 
-    func actionNewSFTPConnection() {
+    func actionNewSFTPConnection(prefill: (host: String, port: Int, user: String)? = nil) {
         guard let window = view.window else { return }
         let sheet = SFTPConnectionSheet()
         // Retain for the sheet's lifetime (same reason as the progress sheet).
         activeSFTPSheet = sheet
+        if let p = prefill { sheet.prefill(host: p.host, port: p.port, user: p.user) }
         sheet.onConnect = { [weak self] conn in
             guard let self = self else { return }
             let panel = self.activePanelVC.panelState
@@ -1663,6 +1664,35 @@ class MainViewController: NSViewController {
             helpWindow = HelpWindowController()
         }
         helpWindow?.show(on: view.window)
+    }
+
+    private var connectServerWindow: ConnectServerSheet?
+    @objc func actionConnectServer_menu() {
+        if connectServerWindow == nil {
+            let win = ConnectServerSheet()
+            win.onConnectSMB = { [weak self] url in self?.connectSMB(url) }
+            win.onConnectSFTP = { [weak self] host, port, user in
+                self?.actionNewSFTPConnection(prefill: (host: host, port: port, user: user))
+            }
+            connectServerWindow = win
+        }
+        connectServerWindow?.show(on: view.window)
+    }
+
+    private func connectSMB(_ url: URL) {
+        SMBMounter.mount(url) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let mountPath):
+                self.activePanelVC.panelState.navigateLocal(to: mountPath)
+                SMBBookmarkStore.add(url.absoluteString)
+            case .failure(let error):
+                SMBBookmarkStore.add(url.absoluteString)
+                if let window = self.view.window {
+                    self.presentLocalizedError(error, in: window)
+                }
+            }
+        }
     }
 
     private var settingsWindow: SettingsWindowController?
