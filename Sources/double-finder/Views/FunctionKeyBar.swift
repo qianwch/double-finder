@@ -22,10 +22,21 @@ class FunctionKeyBar: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        applyAppearanceColors()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
+    private func applyAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        }
+    }
 
     private func setupButtons() {
         buttons.forEach { $0.removeFromSuperview() }
@@ -78,15 +89,26 @@ class NCFKeyButton: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlColor.cgColor
-        layer?.borderColor = NSColor.separatorColor.cgColor
         layer?.borderWidth = 0.5
+        applyAppearanceColors()
 
         addSubview(keyLabel)
         addSubview(textLabel)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
+    private func applyAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlColor.cgColor
+            layer?.borderColor = NSColor.separatorColor.cgColor
+        }
+    }
 
     /// Re-applies the active language to this button's caption.
     @MainActor func relocalize() {

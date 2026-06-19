@@ -11,7 +11,7 @@ class PanelViewController: NSViewController {
 
     private var driveButton: NSButton!
     private var driveButtonWidth: NSLayoutConstraint!
-    private var driveBar: NSView!
+    private var driveBar: AppearanceAwareView!
     private var driveStack: NSStackView!
     private var driveBarHeight: NSLayoutConstraint!
     private var pathBar: PathBar!
@@ -24,7 +24,7 @@ class PanelViewController: NSViewController {
     private var activeTab = 0
     var fileTableView: FileTableView!
     private var statusBar: NSTextField!
-    private var headerView: NSView!
+    private var headerView: AppearanceAwareView!
 
     weak var panelDelegate: PanelViewControllerDelegate?
 
@@ -52,9 +52,8 @@ class PanelViewController: NSViewController {
 
         // Drive (volume) buttons bar — TC-style row of mounted volumes, above the
         // header. Scrolls horizontally if there are more volumes than fit.
-        driveBar = NSView()
-        driveBar.wantsLayer = true
-        driveBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        driveBar = AppearanceAwareView()
+        driveBar.backgroundColor = .controlBackgroundColor
         driveBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(driveBar)
         let driveScroll = NSScrollView()
@@ -70,9 +69,8 @@ class PanelViewController: NSViewController {
         driveScroll.documentView = driveStack
 
         // Header
-        headerView = NSView()
-        headerView.wantsLayer = true
-        headerView.layer?.backgroundColor = NSColor.controlColor.cgColor
+        headerView = AppearanceAwareView()
+        headerView.backgroundColor = .controlColor
         headerView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(headerView)
 
@@ -396,9 +394,9 @@ class PanelViewController: NSViewController {
     private func updateActiveState() {
         guard headerView != nil else { return }
         if isActive {
-            headerView.layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.3).cgColor
+            headerView.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.3)
         } else {
-            headerView.layer?.backgroundColor = NSColor.controlColor.cgColor
+            headerView.backgroundColor = .controlColor
         }
     }
 

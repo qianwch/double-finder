@@ -43,7 +43,7 @@ final class ToolbarBar: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        applyAppearanceColors()
 
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -59,6 +59,17 @@ final class ToolbarBar: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
+    private func applyAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        }
+    }
 
     func configure(_ items: [Item]) {
         self.items = items
