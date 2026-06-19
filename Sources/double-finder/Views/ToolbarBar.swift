@@ -25,7 +25,7 @@ final class ToolbarBar: NSView {
     struct Item {
         let id: String
         let symbol: String      // SF Symbol name
-        let tooltip: String
+        let tooltip: String     // English source string; translated at display time
         let action: () -> Void
     }
 
@@ -33,6 +33,12 @@ final class ToolbarBar: NSView {
     var onCustomize: (() -> Void)?
 
     private let stack = NSStackView()
+
+    /// Remembers the last-configured set so `relocalize()` can re-apply tooltips.
+    private var items: [Item] = []
+    /// Buttons in `items` order (the trailing gear is excluded).
+    private var itemButtons: [NSButton] = []
+    private var gearButton: NSButton?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -55,10 +61,14 @@ final class ToolbarBar: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(_ items: [Item]) {
+        self.items = items
+        itemButtons.removeAll()
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
         for item in items {
-            stack.addArrangedSubview(makeButton(symbol: item.symbol, tooltip: item.tooltip, action: item.action))
+            let btn = makeButton(symbol: item.symbol, tooltip: tr(item.tooltip), action: item.action)
+            itemButtons.append(btn)
+            stack.addArrangedSubview(btn)
         }
 
         // Trailing gear to customize which buttons appear.
@@ -66,10 +76,19 @@ final class ToolbarBar: NSView {
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.widthAnchor.constraint(equalToConstant: 8).isActive = true
         stack.addArrangedSubview(spacer)
-        let gear = makeButton(symbol: "gearshape", tooltip: "Customize Toolbar…") { [weak self] in
+        let gear = makeButton(symbol: "gearshape", tooltip: tr("Customize Toolbar…")) { [weak self] in
             self?.onCustomize?()
         }
+        gearButton = gear
         stack.addArrangedSubview(gear)
+    }
+
+    /// Re-applies the active language to every button tooltip in place.
+    @MainActor func relocalize() {
+        for (item, btn) in zip(items, itemButtons) {
+            btn.toolTip = tr(item.tooltip)
+        }
+        gearButton?.toolTip = tr("Customize Toolbar…")
     }
 
     private func makeButton(symbol: String, tooltip: String, action: @escaping () -> Void) -> NSButton {

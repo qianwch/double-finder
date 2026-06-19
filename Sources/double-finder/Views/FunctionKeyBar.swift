@@ -2,6 +2,7 @@ import AppKit
 
 class FunctionKeyBar: NSView {
     struct KeyAction {
+        /// English source string for the button caption; translated at display time.
         let label: String
         let key: String
         let action: () -> Void
@@ -10,6 +11,12 @@ class FunctionKeyBar: NSView {
     private var buttons: [NCFKeyButton] = []
     var actions: [KeyAction] = [] {
         didSet { setupButtons() }
+    }
+
+    /// Re-applies the active language to every function-key caption.
+    @MainActor func relocalize() {
+        buttons.forEach { $0.relocalize() }
+        needsLayout = true
     }
 
     override init(frame: NSRect) {
@@ -61,7 +68,7 @@ class NCFKeyButton: NSView {
         keyLabel.maximumNumberOfLines = 1
         keyLabel.lineBreakMode = .byClipping
 
-        textLabel = NSTextField(labelWithString: keyAction.label)
+        textLabel = NSTextField(labelWithString: tr(keyAction.label))
         textLabel.font = NSFont.systemFont(ofSize: 11)
         textLabel.textColor = .labelColor
         textLabel.alignment = .left
@@ -80,6 +87,12 @@ class NCFKeyButton: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Re-applies the active language to this button's caption.
+    @MainActor func relocalize() {
+        textLabel.stringValue = tr(keyAction.label)
+        needsLayout = true
+    }
 
     override func layout() {
         super.layout()
