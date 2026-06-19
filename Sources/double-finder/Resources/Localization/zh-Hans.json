@@ -338,5 +338,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "“%@”已加密或无法解压。请输入密码：",
   "“%@” is encrypted. Enter password to browse:": "“%@”已加密。请输入密码以浏览：",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "“%@”不是可执行文件。请选择 7z / 7zz / 7za 可执行文件，或将该字段留空以自动检测。",
-  "… and %d more": "…还有 %d 项"
+  "… and %d more": "…还有 %d 项",
+  "Delete %@ from S3?": "从 S3 删除 %@？"
 }
