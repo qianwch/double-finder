@@ -1657,6 +1657,14 @@ class MainViewController: NSViewController {
         sheet.beginSheet(on: window) { [weak self] in self?.activeSevenZipSheet = nil }
     }
 
+    private var helpWindow: HelpWindowController?
+    @objc func actionShowHelp_menu() {
+        if helpWindow == nil {
+            helpWindow = HelpWindowController()
+        }
+        helpWindow?.show(on: view.window)
+    }
+
     private var settingsWindow: SettingsWindowController?
     @objc func openSettings_menu() {
         if settingsWindow == nil {
