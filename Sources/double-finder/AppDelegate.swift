@@ -9,10 +9,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = AppIconRenderer.image(pixels: 512)
         appState = AppState()
+        // Apply the stored light/dark preference BEFORE showing the window, so a
+        // forced appearance opposite to the system doesn't flash the system look
+        // for one frame at launch.
+        AppSettings.applyAppearance()
         windowController = MainWindowController(appState: appState)
         windowController.showWindow()
         setupMenus()
-        AppSettings.applyAppearance()
 
         // Catch external changes made while the app was in the background.
         NotificationCenter.default.addObserver(
