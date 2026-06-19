@@ -328,5 +328,12 @@
   "Unsupported address.": "Nicht unterstützte Adresse.",
   "Use an smb:// or sftp:// address.": "Verwenden Sie eine smb://- oder sftp://-Adresse.",
   "Mount requested — check the drive bar.": "Mounten angefordert – siehe Laufwerksleiste.",
-  "Still resolving this server — try again in a moment.": "Server wird noch aufgelöst – bitte gleich erneut versuchen."
+  "Still resolving this server — try again in a moment.": "Server wird noch aufgelöst – bitte gleich erneut versuchen.",
+  "Enter credentials for %@": "Anmeldedaten für %@ eingeben",
+  "User name:": "Benutzername:",
+  "Password:": "Passwort:",
+  "Connect as guest": "Als Gast verbinden",
+  "Remember in Keychain": "Im Schlüsselbund merken",
+  "Incorrect user name or password.": "Benutzername oder Passwort ist falsch.",
+  "Could not connect to the server.": "Verbindung zum Server fehlgeschlagen."
 }

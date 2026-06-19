@@ -328,5 +328,12 @@
   "Unsupported address.": "Adresse non prise en charge.",
   "Use an smb:// or sftp:// address.": "Utilisez une adresse smb:// ou sftp://.",
   "Mount requested — check the drive bar.": "Montage demandé — voir la barre de disques.",
-  "Still resolving this server — try again in a moment.": "Résolution du serveur en cours — réessayez dans un instant."
+  "Still resolving this server — try again in a moment.": "Résolution du serveur en cours — réessayez dans un instant.",
+  "Enter credentials for %@": "Saisir les identifiants pour %@",
+  "User name:": "Nom d'utilisateur :",
+  "Password:": "Mot de passe :",
+  "Connect as guest": "Se connecter en invité",
+  "Remember in Keychain": "Mémoriser dans le trousseau",
+  "Incorrect user name or password.": "Nom d'utilisateur ou mot de passe incorrect.",
+  "Could not connect to the server.": "Impossible de se connecter au serveur."
 }
