@@ -206,11 +206,12 @@ class PanelViewController: NSViewController {
     }
 
     /// Re-applies the active language to this panel's always-visible chrome
-    /// (button tooltips, filter placeholder) and refreshes the status bar text.
+    /// (button tooltips, filter placeholder, column headers) and refreshes the status bar text.
     func relocalize() {
         driveButton?.toolTip = tr("Drives")
         favoritesButton?.toolTip = tr("Favorites")
         filterField?.placeholderString = tr("Filter — type to narrow, Esc to clear")
+        fileTableView?.relocalize()
         updateDisplay()   // re-read PanelState.statusText in the new language
     }
 
