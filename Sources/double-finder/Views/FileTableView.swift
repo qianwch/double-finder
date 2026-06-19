@@ -305,6 +305,21 @@ class FileTableView: NSScrollView {
             }
         }
     }
+
+    /// Re-applies the active language to column header titles.
+    /// Called from PanelViewController.relocalize() on a live language switch.
+    func relocalize() {
+        // Name column is always present.
+        if let col = tableView.tableColumns.first(where: { $0.identifier.rawValue == "name" }) {
+            col.title = tr("Name")
+        }
+        // Optional columns: match by identifier and re-apply the translated title.
+        for spec in Self.optionalColumns {
+            if let col = tableView.tableColumns.first(where: { $0.identifier.rawValue == spec.id }) {
+                col.title = tr(spec.title)
+            }
+        }
+    }
 }
 
 // NCTableView: custom NSTableView to intercept key events
