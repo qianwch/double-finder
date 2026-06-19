@@ -22,6 +22,9 @@ let package = Package(
             name: "double-finder",
             dependencies: ["Clibarchive"],
             path: "Sources/double-finder",
+            resources: [
+                .copy("Resources/Localization")
+            ],
             linkerSettings: [
                 .linkedLibrary("archive"),
                 // Embed Info.plist into the Mach-O so the bare executable carries
