@@ -784,7 +784,7 @@ class MainViewController: NSViewController {
         let downloading = activePanelVC.panelState.sftp != nil
         let uploading = inactivePanelVC.panelState.sftp != nil
         let isSFTP = downloading || uploading
-        let verb = downloading ? "Download" : (uploading ? "Upload" : "Copy")
+        let verb = downloading ? tr("Download") : (uploading ? tr("Upload") : tr("Copy"))
         // Confirm (TC-style) before any transfer, including SFTP.
         confirmTransfer(verb: verb, items: items, defaultDest: destPath) { [weak self] dest, queued in
             guard let self = self else { return }
@@ -952,7 +952,7 @@ class MainViewController: NSViewController {
         let items = pruneSelectedAncestors(activePanelVC.selectedOrCurrent)
         guard !items.isEmpty else { return }
         let destPath = inactivePanelVC.panelState.currentPath
-        confirmTransfer(verb: "Move", items: items, defaultDest: destPath) { [weak self] dest, queued in
+        confirmTransfer(verb: tr("Move"), items: items, defaultDest: destPath) { [weak self] dest, queued in
             guard let self = self else { return }
             self.resolveConflicts(for: items, destination: dest) { [weak self] policy in
                 guard let self = self, let policy = policy else { return }
@@ -985,15 +985,17 @@ class MainViewController: NSViewController {
             return
         }
         let alert = NSAlert()
-        alert.messageText = "\(conflicts.count) item\(conflicts.count == 1 ? "" : "s") already exist in the destination"
+        alert.messageText = conflicts.count == 1
+            ? tr("1 item already exists in the destination")
+            : tr("%d items already exist in the destination", conflicts.count)
         alert.informativeText = conflicts.count == 1
             ? conflicts[0].name
             : conflicts.prefix(5).map { $0.name }.joined(separator: ", ")
                 + (conflicts.count > 5 ? "…" : "")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Overwrite")
-        alert.addButton(withTitle: "Skip Existing")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("Overwrite"))
+        alert.addButton(withTitle: tr("Skip Existing"))
+        alert.addButton(withTitle: tr("Cancel"))
         alert.beginSheetModal(for: window) { response in
             switch response {
             case .alertFirstButtonReturn: completion(.overwrite)
@@ -1020,15 +1022,15 @@ class MainViewController: NSViewController {
         // Archive contents can't be modified in place.
         if PanelState.archiveRoot(in: panel.currentPath) != nil {
             let a = NSAlert()
-            a.messageText = "Can’t delete inside an archive"
-            a.informativeText = "Extract the files first, then delete them."
+            a.messageText = tr("Can’t delete inside an archive")
+            a.informativeText = tr("Extract the files first, then delete them.")
             a.beginSheetModal(for: window)
             return
         }
 
         let isSFTP = panel.sftp != nil
         let n = items.count
-        let countText = "\(n) item\(n == 1 ? "" : "s")"
+        let countText = n == 1 ? tr("1 item") : tr("%d items", n)
 
         // Build the operation once; reused on both the confirm and no-confirm paths.
         let run: () -> Void = { [weak self] in
@@ -1054,19 +1056,20 @@ class MainViewController: NSViewController {
         let alert = NSAlert()
         alert.alertStyle = .warning
         if isSFTP {
-            alert.messageText = "Delete \(countText) from the server?"
-            alert.informativeText = "This permanently removes them on the remote host and cannot be undone."
-            alert.addButton(withTitle: "Delete")
+            alert.messageText = tr("Delete %@ from the server?", countText)
+            alert.informativeText = tr("This permanently removes them on the remote host and cannot be undone.")
+            alert.addButton(withTitle: tr("Delete"))
         } else if permanent {
-            alert.messageText = "Permanently delete \(countText)?"
-            alert.informativeText = (n == 1 ? "“\(items[0].name)” " : "These items ") + "cannot be recovered — this does not use the Trash."
-            alert.addButton(withTitle: "Delete")
+            alert.messageText = tr("Permanently delete %@?", countText)
+            alert.informativeText = (n == 1 ? "“\(items[0].name)” " + tr("cannot be recovered — this does not use the Trash.")
+                                            : tr("These items cannot be recovered — this does not use the Trash."))
+            alert.addButton(withTitle: tr("Delete"))
         } else {
-            alert.messageText = "Move \(countText) to Trash?"
+            alert.messageText = tr("Move %@ to Trash?", countText)
             alert.informativeText = n == 1 ? items[0].name : countText
-            alert.addButton(withTitle: "Move to Trash")
+            alert.addButton(withTitle: tr("Move to Trash"))
         }
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("Cancel"))
         alert.beginSheetModal(for: window) { response in
             if response == .alertFirstButtonReturn { run() }
         }
@@ -1082,10 +1085,10 @@ class MainViewController: NSViewController {
     func actionNewFile() {
         guard let window = view.window else { return }
         let alert = NSAlert()
-        alert.messageText = "New File"
-        alert.informativeText = "Enter a name for the new file:"
-        alert.addButton(withTitle: "Create")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = tr("New File")
+        alert.informativeText = tr("Enter a name for the new file:")
+        alert.addButton(withTitle: tr("Create"))
+        alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.bezelStyle = .roundedBezel
         alert.accessoryView = field
@@ -1110,10 +1113,11 @@ class MainViewController: NSViewController {
         let items = activePanelVC.selectedOrCurrent
         guard !items.isEmpty else { return }
         let alert = NSAlert()
-        alert.messageText = "Change Permissions"
-        alert.informativeText = "POSIX octal mode (e.g. 755, 644) for \(items.count) item\(items.count == 1 ? "" : "s"):"
-        alert.addButton(withTitle: "Apply")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = tr("Change Permissions")
+        let permCount = items.count == 1 ? tr("1 item") : tr("%d items", items.count)
+        alert.informativeText = tr("POSIX octal mode (e.g. 755, 644) for %@:", permCount)
+        alert.addButton(withTitle: tr("Apply"))
+        alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
         field.bezelStyle = .roundedBezel
         if let attrs = try? FileManager.default.attributesOfItem(atPath: items[0].path),
@@ -1250,11 +1254,11 @@ class MainViewController: NSViewController {
             return
         }
         let alert = NSAlert()
-        alert.messageText = "Archive Already Exists"
-        alert.informativeText = "“\((archivePath as NSString).lastPathComponent)” already exists in the destination folder. Overwrite it, or save under a different name?"
-        alert.addButton(withTitle: "Overwrite")
-        alert.addButton(withTitle: "Rename…")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = tr("Archive Already Exists")
+        alert.informativeText = tr("“%@” already exists in the destination folder. Overwrite it, or save under a different name?", (archivePath as NSString).lastPathComponent)
+        alert.addButton(withTitle: tr("Overwrite"))
+        alert.addButton(withTitle: tr("Rename…"))
+        alert.addButton(withTitle: tr("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] resp in
             guard let self = self else { return }
             switch resp {
@@ -1274,10 +1278,10 @@ class MainViewController: NSViewController {
         let dir = (archivePath as NSString).deletingLastPathComponent
         let ext = "." + opts.format.fileExtension
         let alert = NSAlert()
-        alert.messageText = "Save Archive As"
-        alert.informativeText = "Enter a new name for the archive (\(ext)):"
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = tr("Save Archive As")
+        alert.informativeText = tr("Enter a new name for the archive (%@):", ext)
+        alert.addButton(withTitle: tr("OK"))
+        alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         field.bezelStyle = .roundedBezel
         // Suggest "name 2" as a non-colliding default.
@@ -1322,12 +1326,12 @@ class MainViewController: NSViewController {
         // (TC-style unpack dialog). Defaults to the other panel's directory.
         let alert = NSAlert()
         alert.messageText = items.count == 1
-            ? "Extract “\(items[0].name)”"
-            : "Extract \(items.count) archives"
-        alert.informativeText = "Extract to:"
+            ? tr("Extract “%@”", items[0].name)
+            : tr("Extract %d archives", items.count)
+        alert.informativeText = tr("Extract to:")
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Extract")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("Extract"))
+        alert.addButton(withTitle: tr("Cancel"))
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.bezelStyle = .roundedBezel
@@ -1366,8 +1370,8 @@ class MainViewController: NSViewController {
                 self.activePanelVC.panelState.refresh()
                 guard !failed.isEmpty else { return }
                 let msg = failed.count == 1
-                    ? "“\(failed[0].name)” is encrypted or could not be extracted. Enter password:"
-                    : "\(failed.count) archives could not be extracted. Enter password:"
+                    ? tr("“%@” is encrypted or could not be extracted. Enter password:", failed[0].name)
+                    : tr("%d archives could not be extracted. Enter password:", failed.count)
                 self.promptForPassword(message: msg) { pw in
                     guard let pw = pw, !pw.isEmpty else { return }
                     self.extractArchives(failed, to: dest, password: pw)
@@ -1389,10 +1393,10 @@ class MainViewController: NSViewController {
     private func promptForPassword(message: String, completion: @escaping (String?) -> Void) {
         guard let window = view.window else { completion(nil); return }
         let alert = NSAlert()
-        alert.messageText = "Password Required"
+        alert.messageText = tr("Password Required")
         alert.informativeText = message
-        alert.addButton(withTitle: "Extract")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("Extract"))
+        alert.addButton(withTitle: tr("Cancel"))
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.bezelStyle = .roundedBezel
         alert.accessoryView = field
@@ -1405,11 +1409,11 @@ class MainViewController: NSViewController {
         guard let window = view.window else { return }
 
         let alert = NSAlert()
-        alert.messageText = "New Directory"
-        alert.informativeText = "Enter name for the new directory:"
+        alert.messageText = tr("New Directory")
+        alert.informativeText = tr("Enter name for the new directory:")
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Create")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("Create"))
+        alert.addButton(withTitle: tr("Cancel"))
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.bezelStyle = .roundedBezel
@@ -1513,11 +1517,13 @@ class MainViewController: NSViewController {
         guard !conflicts.isEmpty, let window = view.window else { run(.overwrite); return }
 
         let alert = NSAlert()
-        alert.messageText = "\(conflicts.count) item\(conflicts.count == 1 ? "" : "s") already exist in the destination"
-        alert.informativeText = "Overwrite them, or skip the existing items?"
-        alert.addButton(withTitle: "Overwrite")
-        alert.addButton(withTitle: "Skip Existing")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = conflicts.count == 1
+            ? tr("1 item already exists in the destination")
+            : tr("%d items already exist in the destination", conflicts.count)
+        alert.informativeText = tr("Overwrite them, or skip the existing items?")
+        alert.addButton(withTitle: tr("Overwrite"))
+        alert.addButton(withTitle: tr("Skip Existing"))
+        alert.addButton(withTitle: tr("Cancel"))
         alert.beginSheetModal(for: window) { resp in
             switch resp {
             case .alertFirstButtonReturn: run(.overwrite)
@@ -1683,10 +1689,10 @@ class MainViewController: NSViewController {
     func actionSelectByPattern(select: Bool) {
         guard let window = view.window else { return }
         let alert = NSAlert()
-        alert.messageText = select ? "Select Files by Pattern" : "Unselect Files by Pattern"
-        alert.informativeText = "Wildcard pattern, e.g. *.txt or report?.pdf"
-        alert.addButton(withTitle: select ? "Select" : "Unselect")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = select ? tr("Select Files by Pattern") : tr("Unselect Files by Pattern")
+        alert.informativeText = tr("Wildcard pattern, e.g. *.txt or report?.pdf")
+        alert.addButton(withTitle: select ? tr("Select") : tr("Unselect"))
+        alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.stringValue = "*.*"
         field.bezelStyle = .roundedBezel
@@ -1726,12 +1732,16 @@ class MainViewController: NSViewController {
         let n = op.failures.count
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "\(n) item\(n == 1 ? "" : "s") could not be \(op.type.pastTense)"
+        switch op.type {
+        case .copy:   alert.messageText = tr("%d items could not be copied", n)
+        case .move:   alert.messageText = tr("%d items could not be moved", n)
+        case .delete: alert.messageText = tr("%d items could not be deleted", n)
+        }
         let lines = op.failures.prefix(10).map {
             "• \(($0.path as NSString).lastPathComponent): \($0.error.localizedDescription)"
         }
         var info = lines.joined(separator: "\n")
-        if n > 10 { info += "\n… and \(n - 10) more" }
+        if n > 10 { info += "\n" + tr("… and %d more", n - 10) }
         alert.informativeText = info
         alert.beginSheetModal(for: window)
     }
@@ -1847,7 +1857,7 @@ extension MainViewController {
             var name = FileManager.default.displayName(atPath: app.path)
             if name.hasSuffix(".app") { name = String(name.dropLast(4)) }
             let isDefault = app.path == defaultApp?.path
-            let item = NSMenuItem(title: isDefault ? "\(name) (default)" : name,
+            let item = NSMenuItem(title: isDefault ? tr("%@ (default)", name) : name,
                                   action: #selector(ctxOpenWithApp(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = app.path
@@ -1856,12 +1866,12 @@ extension MainViewController {
             menu.addItem(item)
         }
         if menu.items.isEmpty {
-            let none = NSMenuItem(title: "No Applications", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: tr("No Applications"), action: nil, keyEquivalent: "")
             none.isEnabled = false
             menu.addItem(none)
         }
         menu.addItem(.separator())
-        let other = NSMenuItem(title: "Other…", action: #selector(ctxOpenWithOther), keyEquivalent: "")
+        let other = NSMenuItem(title: tr("Other…"), action: #selector(ctxOpenWithOther), keyEquivalent: "")
         other.target = self
         menu.addItem(other)
     }
@@ -1895,7 +1905,7 @@ extension MainViewController {
         let files = openWithTargets
         guard !files.isEmpty else { return }
         let panel = NSOpenPanel()
-        panel.title = "Choose Application"
+        panel.title = tr("Choose Application")
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.allowedContentTypes = [.application]
         panel.allowsMultipleSelection = false
@@ -1959,7 +1969,7 @@ extension MainViewController: PanelViewControllerDelegate {
     func panelViewController(_ vc: PanelViewController, requestPasswordFor archivePath: String,
                              completion: @escaping (String?) -> Void) {
         let name = (archivePath as NSString).lastPathComponent
-        promptForPassword(message: "“\(name)” is encrypted. Enter password to browse:", completion: completion)
+        promptForPassword(message: tr("“%@” is encrypted. Enter password to browse:", name), completion: completion)
     }
 
     func panelViewController(_ vc: PanelViewController, populateContextMenu menu: NSMenu, forRow row: Int) {
@@ -1983,12 +1993,12 @@ extension MainViewController: PanelViewControllerDelegate {
         let onItem = row >= 0 && !targets.isEmpty
 
         if onItem {
-            add("Open", #selector(ctxOpen))
+            add(tr("Open"), #selector(ctxOpen))
             // Open With submenu (Finder-style): apps that can open this item.
             // Populated lazily so the context menu pops instantly.
             if let first = targets.first(where: { $0.name != ".." }),
                FileManager.default.fileExists(atPath: first.path) {
-                let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+                let owItem = NSMenuItem(title: tr("Open With"), action: nil, keyEquivalent: "")
                 let sub = NSMenu()
                 let del = OpenWithMenuDelegate(fileURL: URL(fileURLWithPath: first.path), owner: self)
                 sub.delegate = del
@@ -1996,33 +2006,33 @@ extension MainViewController: PanelViewControllerDelegate {
                 owItem.submenu = sub
                 menu.addItem(owItem)
             }
-            add("Quick Look", #selector(actionQuickLook_menu))
-            add("Edit", #selector(actionOpenInEditor_menu))
+            add(tr("Quick Look"), #selector(actionQuickLook_menu))
+            add(tr("Edit"), #selector(actionOpenInEditor_menu))
             menu.addItem(.separator())
-            add("Copy", #selector(ctxCopyFiles), key: "c", mask: [.command])
-            add("Paste", #selector(ctxPasteFiles), key: "v", mask: [.command])
-            add("Copy to Other Panel", #selector(actionCopy_menu))
-            add("Move to Other Panel", #selector(actionMove_menu))
-            add("Rename…", #selector(actionRename_menu))
-            add("Move to Trash", #selector(actionMoveToTrash_menu))
-            add("Delete Permanently…", #selector(actionDelete_menu))
+            add(tr("Copy"), #selector(ctxCopyFiles), key: "c", mask: [.command])
+            add(tr("Paste"), #selector(ctxPasteFiles), key: "v", mask: [.command])
+            add(tr("Copy to Other Panel"), #selector(actionCopy_menu))
+            add(tr("Move to Other Panel"), #selector(actionMove_menu))
+            add(tr("Rename…"), #selector(actionRename_menu))
+            add(tr("Move to Trash"), #selector(actionMoveToTrash_menu))
+            add(tr("Delete Permanently…"), #selector(actionDelete_menu))
             menu.addItem(.separator())
-            add("Calculate Size", #selector(ctxCalculateSize))
-            add("Copy Path", #selector(actionCopyPath_menu), key: "c", mask: [.command, .shift])
-            add("Open in Terminal", #selector(actionOpenTerminal))
+            add(tr("Calculate Size"), #selector(ctxCalculateSize))
+            add(tr("Copy Path"), #selector(actionCopyPath_menu), key: "c", mask: [.command, .shift])
+            add(tr("Open in Terminal"), #selector(actionOpenTerminal))
             if targets.count == 1 && targets[0].isDirectory {
-                add("Add to Favorites", #selector(ctxAddItemToFavorites))
+                add(tr("Add to Favorites"), #selector(ctxAddItemToFavorites))
             }
         } else {
-            add("Paste", #selector(ctxPasteFiles), key: "v", mask: [.command])
-            add("Copy Path", #selector(actionCopyPath_menu), key: "c", mask: [.command, .shift])
-            add("Open in Terminal", #selector(actionOpenTerminal))
+            add(tr("Paste"), #selector(ctxPasteFiles), key: "v", mask: [.command])
+            add(tr("Copy Path"), #selector(actionCopyPath_menu), key: "c", mask: [.command, .shift])
+            add(tr("Open in Terminal"), #selector(actionOpenTerminal))
             menu.addItem(.separator())
-            add("New Folder…", #selector(actionNewDirectory_menu))
-            add("Add Current Folder to Favorites", #selector(ctxAddCurrentToFavorites))
-            add("Show Hidden Files", #selector(actionToggleHidden_menu))
+            add(tr("New Folder…"), #selector(actionNewDirectory_menu))
+            add(tr("Add Current Folder to Favorites"), #selector(ctxAddCurrentToFavorites))
+            add(tr("Show Hidden Files"), #selector(actionToggleHidden_menu))
             menu.addItem(.separator())
-            add("Refresh", #selector(actionRefresh_menu))
+            add(tr("Refresh"), #selector(actionRefresh_menu))
         }
     }
 }
