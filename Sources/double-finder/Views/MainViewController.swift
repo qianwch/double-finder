@@ -1733,9 +1733,15 @@ class MainViewController: NSViewController {
         let alert = NSAlert()
         alert.alertStyle = .warning
         switch op.type {
-        case .copy:   alert.messageText = tr("%d items could not be copied", n)
-        case .move:   alert.messageText = tr("%d items could not be moved", n)
-        case .delete: alert.messageText = tr("%d items could not be deleted", n)
+        case .copy:
+            alert.messageText = n == 1 ? tr("1 item could not be copied")
+                                       : tr("%d items could not be copied", n)
+        case .move:
+            alert.messageText = n == 1 ? tr("1 item could not be moved")
+                                       : tr("%d items could not be moved", n)
+        case .delete:
+            alert.messageText = n == 1 ? tr("1 item could not be deleted")
+                                       : tr("%d items could not be deleted", n)
         }
         let lines = op.failures.prefix(10).map {
             "• \(($0.path as NSString).lastPathComponent): \($0.error.localizedDescription)"
