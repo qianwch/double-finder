@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import QuickLookUI
 
 class MainViewController: NSViewController {
@@ -728,19 +729,31 @@ class MainViewController: NSViewController {
 
     /// Downloads (SFTP) or extracts (archive) the given items into a temp folder
     /// so they can be Quick-Looked / opened locally. Returns the local URLs.
+    /// Each item gets its OWN subfolder keyed by its full remote path, so two
+    /// different files that share a basename don't collide (which would clobber a
+    /// pending edit / drop a write-back session). The filename itself is kept
+    /// intact — write-back reconstructs the remote key from `lastPathComponent`.
     private func materialize(_ items: [FileItem], using fs: VirtualFS) async -> [URL] {
-        let tmp = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-View")
-        try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-View")
         var out: [URL] = []
         for item in items {
-            let dest = (tmp as NSString).appendingPathComponent(item.name)
+            let dir = (root as NSString).appendingPathComponent(Self.tempSlug(for: item.path))
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let dest = (dir as NSString).appendingPathComponent(item.name)
             try? FileManager.default.removeItem(atPath: dest)
             do {
-                try await fs.copy(from: item.path, to: tmp)   // scp download / archive extract
+                try await fs.copy(from: item.path, to: dir)   // scp download / archive extract
                 if FileManager.default.fileExists(atPath: dest) { out.append(URL(fileURLWithPath: dest)) }
             } catch { }
         }
         return out
+    }
+
+    /// Stable short hex digest of a remote path — used to give each materialized
+    /// file a collision-free temp subfolder.
+    private static func tempSlug(for remotePath: String) -> String {
+        SHA256.hash(data: Data(remotePath.utf8)).prefix(8)
+            .map { String(format: "%02x", $0) }.joined()
     }
 
     func actionOpenInEditor() {
