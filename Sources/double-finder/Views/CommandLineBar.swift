@@ -29,7 +29,7 @@ final class CommandLineBar: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        applyAppearanceColors()
 
         promptLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         promptLabel.textColor = .secondaryLabelColor
@@ -62,6 +62,17 @@ final class CommandLineBar: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
+    private func applyAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        }
+    }
 
     @objc private func execute() {
         let cmd = input.stringValue

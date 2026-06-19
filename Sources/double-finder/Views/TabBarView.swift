@@ -10,7 +10,7 @@ final class TabBarView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        applyAppearanceColors()
         stack.orientation = .horizontal
         stack.spacing = 2
         stack.edgeInsets = NSEdgeInsets(top: 2, left: 4, bottom: 2, right: 4)
@@ -25,6 +25,17 @@ final class TabBarView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
+    private func applyAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        }
+    }
 
     func configure(titles: [String], active: Int) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
