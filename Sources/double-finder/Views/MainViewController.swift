@@ -1713,7 +1713,12 @@ class MainViewController: NSViewController {
             switch result {
             case .success(let mountPath):
                 self.activePanelVC.panelState.navigateLocal(to: mountPath)
-                SMBBookmarkStore.add(url.absoluteString)
+                // Bookmark the bare server URL — strip any user-info from a
+                // manually typed smb://user@host so no name leaks into the plist.
+                var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                comps?.user = nil
+                comps?.password = nil
+                SMBBookmarkStore.add(comps?.url?.absoluteString ?? url.absoluteString)
                 if remember && !guest {
                     SMBCredentialStore.save(host: host, user: user, password: password)
                 }
