@@ -11,14 +11,7 @@ enum OperationType {
         }
     }
 
-    /// Past participle for failure summaries ("3 items could not be deleted").
-    var pastTense: String {
-        switch self {
-        case .copy: return "copied"
-        case .move: return "moved"
-        case .delete: return "deleted"
-        }
-    }
+
 }
 
 /// How to handle a destination that already exists during copy/move.

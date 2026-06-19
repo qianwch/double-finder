@@ -1722,6 +1722,8 @@ class MainViewController: NSViewController {
 
     /// Shows an error alert whose message is run through `tr()` so localized
     /// filesystem error strings (which carry bare English keys) get translated.
+    /// Intentionally maps only `errorDescription` — app's own LocalizedError types don't set
+    /// `failureReason`; if a future error type sets `localizedFailureReason`, it won't be shown.
     @MainActor
     func presentLocalizedError(_ error: Error, in window: NSWindow) {
         let alert = NSAlert()

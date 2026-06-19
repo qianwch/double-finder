@@ -25,7 +25,8 @@ if [ -d "$RESBUNDLE" ]; then
     cp -R "$RESBUNDLE" "$APPDIR/Contents/Resources/"
     echo "    bundled $(basename "$RESBUNDLE") ($(find "$RESBUNDLE" -name '*.json' | wc -l | tr -d ' ') json packs)"
 else
-    echo "    !! resource bundle not found at $RESBUNDLE"
+    echo "ERROR: resource bundle not found at $RESBUNDLE — localization pack missing, aborting packaging"
+    exit 1
 fi
 
 echo "==> Bundle 7zz (for encrypted 7z; libarchive can't decrypt those)"
