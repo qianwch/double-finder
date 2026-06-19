@@ -23,7 +23,8 @@ let package = Package(
             dependencies: ["Clibarchive"],
             path: "Sources/double-finder",
             resources: [
-                .copy("Resources/Localization")
+                .copy("Resources/Localization"),
+                .copy("Resources/Help")
             ],
             linkerSettings: [
                 .linkedLibrary("archive"),
