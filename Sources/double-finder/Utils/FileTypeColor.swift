@@ -70,6 +70,12 @@ enum AppSettings {
         get { let v = UserDefaults.standard.integer(forKey: "IconSize"); return v == 0 ? 24 : v }
         set { UserDefaults.standard.set(newValue, forKey: "IconSize") }
     }
+
+    /// Active UI language. Empty string = follow system. Stored as Language.rawValue.
+    static var language: Language {
+        get { Language(rawValue: UserDefaults.standard.string(forKey: "Language") ?? "") ?? .system }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "Language") }
+    }
 }
 
 /// Total Commander-style coloring of file names by type.
