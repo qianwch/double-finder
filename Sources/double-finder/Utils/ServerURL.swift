@@ -28,11 +28,3 @@ struct ServerURL: Equatable {
         self.share = body.isEmpty ? nil : body.removingPercentEncoding ?? body
     }
 }
-
-/// The `/Volumes/*` mount paths present in `after` but not `before` — used to
-/// detect the volume macOS just mounted for an smb:// open.
-func newMountPaths(before: Set<String>, after: Set<String>) -> [String] {
-    after.subtracting(before)
-        .filter { $0.hasPrefix("/Volumes/") }
-        .sorted()
-}
