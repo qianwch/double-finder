@@ -123,18 +123,28 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
 
     private func buildAppearance() -> NSView {
         let v = page()
-        v.addSubview(checkbox(tr("Color file names by type"), AppSettings.colorByType, #selector(toggleColor), y: 262))
 
-        v.addSubview(label(tr("Icon size:"), x: 24, y: 230))
-        let iconPop = NSPopUpButton(frame: NSRect(x: 130, y: 225, width: 170, height: 26))
+        v.addSubview(label(tr("Appearance:"), x: 24, y: 262))
+        let appPop = NSPopUpButton(frame: NSRect(x: 130, y: 257, width: 170, height: 26))
+        appPop.addItems(withTitles: [tr("Follow System"), tr("Light"), tr("Dark")])
+        if let idx = AppAppearance.allCases.firstIndex(of: AppSettings.appearance) {
+            appPop.selectItem(at: idx)
+        }
+        appPop.target = self; appPop.action = #selector(changeAppearance(_:))
+        v.addSubview(appPop)
+
+        v.addSubview(checkbox(tr("Color file names by type"), AppSettings.colorByType, #selector(toggleColor), y: 224))
+
+        v.addSubview(label(tr("Icon size:"), x: 24, y: 192))
+        let iconPop = NSPopUpButton(frame: NSRect(x: 130, y: 187, width: 170, height: 26))
         iconPop.addItems(withTitles: iconSizes.map { tr($0.0) })
         iconPop.selectItem(at: iconSizes.firstIndex { $0.1 == AppSettings.iconSize } ?? 1)
         iconPop.target = self; iconPop.action = #selector(changeIconSize(_:))
         v.addSubview(iconPop)
 
-        v.addSubview(label(tr("Columns (Full view):"), x: 24, y: 190))
+        v.addSubview(label(tr("Columns (Full view):"), x: 24, y: 152))
         let visible = Set(AppSettings.visibleColumns)
-        var y: CGFloat = 162
+        var y: CGFloat = 124
         var x: CGFloat = 44
         for (i, col) in FileTableView.optionalColumns.enumerated() {
             let b = NSButton(checkboxWithTitle: tr(col.title), target: self, action: #selector(toggleColumn(_:)))
@@ -147,6 +157,10 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         return v
     }
 
+    @objc private func changeAppearance(_ s: NSPopUpButton) {
+        AppSettings.appearance = AppAppearance.allCases[s.indexOfSelectedItem]
+        AppSettings.applyAppearance()
+    }
     @objc private func toggleColor(_ s: NSButton) { AppSettings.colorByType = (s.state == .on); onChange?() }
     @objc private func changeIconSize(_ s: NSPopUpButton) {
         AppSettings.iconSize = iconSizes[s.indexOfSelectedItem].1
