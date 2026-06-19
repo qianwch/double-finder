@@ -1680,16 +1680,13 @@ class MainViewController: NSViewController {
     }
 
     private func connectSMB(_ url: URL) {
-        SMBMounter.mount(url) { [weak self] result in
+        SMBMounter.mount(url, user: nil, password: nil, guest: true) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let mountPath):
                 self.activePanelVC.panelState.navigateLocal(to: mountPath)
                 SMBBookmarkStore.add(url.absoluteString)
             case .failure(let error):
-                // Deliberate: timeout is informational (share may still have mounted),
-                // so we remember the address either way.
-                SMBBookmarkStore.add(url.absoluteString)
                 if let window = self.view.window {
                     self.presentLocalizedError(error, in: window)
                 }

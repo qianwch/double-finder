@@ -43,15 +43,4 @@ final class ServerURLTests: XCTestCase {
         XCTAssertNil(ServerURL("smb://"))   // no host
         XCTAssertNil(ServerURL(""))
     }
-
-    func testNewMountPathsReturnsOnlyFreshVolumes() {
-        let before: Set<String> = ["/", "/Volumes/Macintosh HD"]
-        let after: Set<String> = ["/", "/Volumes/Macintosh HD", "/Volumes/Media", "/System/x"]
-        XCTAssertEqual(newMountPaths(before: before, after: after), ["/Volumes/Media"])
-    }
-
-    func testNewMountPathsEmptyWhenNothingNew() {
-        let s: Set<String> = ["/", "/Volumes/A"]
-        XCTAssertEqual(newMountPaths(before: s, after: s), [])
-    }
 }

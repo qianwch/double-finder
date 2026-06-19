@@ -28,6 +28,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedLibrary("archive"),
+                .linkedFramework("NetFS"),
                 // Embed Info.plist into the Mach-O so the bare executable carries
                 // a bundle identifier (net.qian.double-finder). This makes
                 // Bundle.main.bundleIdentifier resolve and UserDefaults.standard
