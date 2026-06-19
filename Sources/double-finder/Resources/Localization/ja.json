@@ -329,12 +329,5 @@
   "Use an smb:// or sftp:// address.": "smb:// または sftp:// アドレスを使用してください。",
   "Mount requested — check the drive bar.": "マウントを要求しました — ドライブバーを確認してください。",
   "Still resolving this server — try again in a moment.": "このサーバを解決中です — 少し待ってからもう一度お試しください。",
-  "Enter credentials for %@": "%@ の資格情報を入力",
-  "User name:": "ユーザ名：",
-  "Password:": "パスワード：",
-  "Connect as guest": "ゲストとして接続",
-  "Remember in Keychain": "キーチェーンに保存",
-  "Incorrect user name or password.": "ユーザ名またはパスワードが正しくありません。",
-  "Could not connect to the server.": "サーバに接続できませんでした。",
-  "This server requires a user name and password.": "このサーバにはユーザ名とパスワードが必要です。"
+  "Could not connect to the server.": "サーバに接続できませんでした。"
 }
