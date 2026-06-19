@@ -203,6 +203,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         viewMenu.addItem(.separator())
         viewMenu.addItem(NSMenuItem(title: tr("Refresh"), action: #selector(menuRefresh), keyEquivalent: "r"))
 
+        // Help menu
+        let helpMenuItem = NSMenuItem(title: tr("Help"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(helpMenuItem)
+        let helpMenu = NSMenu(title: tr("Help"))
+        helpMenuItem.submenu = helpMenu
+        helpMenu.addItem(NSMenuItem(title: tr("Double Finder Help"),
+                                    action: #selector(menuShowHelp), keyEquivalent: "?"))
+        helpMenu.addItem(.separator())
+        helpMenu.addItem(NSMenuItem(title: tr("Project Page"),
+                                    action: #selector(menuProjectPage), keyEquivalent: ""))
+        helpMenu.addItem(NSMenuItem(title: tr("Report an Issue"),
+                                    action: #selector(menuReportIssue), keyEquivalent: ""))
+        NSApp.helpMenu = helpMenu
+
         NSApplication.shared.mainMenu = mainMenu
     }
 
@@ -374,6 +388,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func menuSettings() {
         mainVC()?.perform(#selector(MainViewController.openSettings_menu))
+    }
+    @objc private func menuShowHelp() {
+        mainVC()?.perform(#selector(MainViewController.actionShowHelp_menu))
+    }
+    @objc private func menuProjectPage() {
+        NSWorkspace.shared.open(HelpContent.projectURL)
+    }
+    @objc private func menuReportIssue() {
+        NSWorkspace.shared.open(HelpContent.issuesURL)
     }
     @objc private func menuRefresh() {
         mainVC()?.perform(#selector(MainViewController.actionRefresh_menu))
