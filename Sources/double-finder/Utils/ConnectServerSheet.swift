@@ -13,6 +13,7 @@ final class ConnectServerSheet: NSWindowController, NSTableViewDataSource, NSTab
     private var services: [NetworkBrowser.Service] = []
     private var table: NSTableView!
     private var addressField: NSTextField!
+    private var recentPop: NSPopUpButton!
 
     init() {
         let window = NSPanel(
@@ -41,9 +42,20 @@ final class ConnectServerSheet: NSWindowController, NSTableViewDataSource, NSTab
         }
         services = []
         table.reloadData()
+        refreshRecents()
         browser.start()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Reload the recent-SMB list from the store into the popup (hidden when empty),
+    /// so bookmarks added since the sheet was created show up on the next open.
+    private func refreshRecents() {
+        let recents = SMBBookmarkStore.load()
+        recentPop.removeAllItems()
+        recentPop.addItem(withTitle: tr("Recent…"))
+        recentPop.addItems(withTitles: recents)
+        recentPop.isHidden = recents.isEmpty
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -83,15 +95,13 @@ final class ConnectServerSheet: NSWindowController, NSTableViewDataSource, NSTab
         addressField.placeholderString = "smb://host/share   |   sftp://user@host"
         content.addSubview(addressField)
 
-        let recents = SMBBookmarkStore.load()
-        if !recents.isEmpty {
-            let recentPop = NSPopUpButton(frame: NSRect(x: 92, y: 40, width: 250, height: 24))
-            recentPop.addItem(withTitle: tr("Recent…"))
-            recentPop.addItems(withTitles: recents)
-            recentPop.target = self
-            recentPop.action = #selector(recentChosen(_:))
-            content.addSubview(recentPop)
-        }
+        // Always create the recents popup; refreshRecents() (called on each show)
+        // repopulates it from the store and hides it when there are no recents.
+        recentPop = NSPopUpButton(frame: NSRect(x: 92, y: 40, width: 250, height: 24))
+        recentPop.target = self
+        recentPop.action = #selector(recentChosen(_:))
+        content.addSubview(recentPop)
+        refreshRecents()
 
         let connect = NSButton(title: tr("Connect"), target: self, action: #selector(connectClicked))
         connect.frame = NSRect(x: 348, y: 8, width: 92, height: 28)
