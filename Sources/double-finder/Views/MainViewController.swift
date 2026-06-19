@@ -1687,6 +1687,8 @@ class MainViewController: NSViewController {
                 self.activePanelVC.panelState.navigateLocal(to: mountPath)
                 SMBBookmarkStore.add(url.absoluteString)
             case .failure(let error):
+                // Deliberate: timeout is informational (share may still have mounted),
+                // so we remember the address either way.
                 SMBBookmarkStore.add(url.absoluteString)
                 if let window = self.view.window {
                     self.presentLocalizedError(error, in: window)

@@ -124,25 +124,34 @@ final class ConnectServerSheet: NSWindowController, NSTableViewDataSource, NSTab
     @objc private func cancelClicked() { window?.close() }
 
     /// Resolve the address to connect to: the table selection (if any) else the
-    /// manual field. Returns an `smb://`/`sftp://` string.
+    /// manual field. Returns an `smb://`/`sftp://` string, or "" if a discovered
+    /// row is selected but not yet resolved (host is nil).
     private func currentAddress() -> String {
         let row = table.selectedRow
         if row >= 0, row < services.count {
             let s = services[row]
-            let hostPart = s.host ?? s.name
+            guard let host = s.host else { return "" }   // unresolved — no usable address yet
             switch s.kind {
-            case .smb:  return "smb://\(hostPart)"
+            case .smb:  return "smb://\(host)"
             case .sftp:
                 let portPart = (s.port.map { $0 != 22 ? ":\($0)" : "" }) ?? ""
-                return "sftp://\(hostPart)\(portPart)"
+                return "sftp://\(host)\(portPart)"
             }
         }
         return addressField.stringValue.trimmingCharacters(in: .whitespaces)
     }
 
     @objc private func connectClicked() {
-        guard let parsed = ServerURL(currentAddress()),
-              let url = URL(string: currentAddress()) else {
+        let row = table.selectedRow
+        let addr = currentAddress()
+        if row >= 0, row < services.count, addr.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = tr("Still resolving this server — try again in a moment.")
+            alert.beginSheetModal(for: window!, completionHandler: nil)
+            return
+        }
+        guard let parsed = ServerURL(addr),
+              let url = URL(string: addr) else {
             let alert = NSAlert()
             alert.messageText = tr("Unsupported address.")
             alert.informativeText = tr("Use an smb:// or sftp:// address.")

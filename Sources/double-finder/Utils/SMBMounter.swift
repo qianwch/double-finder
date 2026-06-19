@@ -2,9 +2,8 @@ import AppKit
 
 /// "Mount requested but not detected within the timeout" — informational, not a
 /// hard failure (the volume may still appear in the drive bar).
-@MainActor
-struct SMBMountPending: @preconcurrency LocalizedError {
-    var errorDescription: String? { tr("Mount requested — check the drive bar.") }
+struct SMBMountPending: LocalizedError {
+    var errorDescription: String? { "Mount requested — check the drive bar." }
 }
 
 /// Mounts an smb:// share via macOS (which shows the native auth/Keychain UI and

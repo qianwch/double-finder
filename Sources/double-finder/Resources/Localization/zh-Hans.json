@@ -327,5 +327,6 @@
   "Recent…": "最近…",
   "Unsupported address.": "不支持的地址。",
   "Use an smb:// or sftp:// address.": "请使用 smb:// 或 sftp:// 地址。",
-  "Mount requested — check the drive bar.": "已请求挂载——请查看驱动器栏。"
+  "Mount requested — check the drive bar.": "已请求挂载——请查看驱动器栏。",
+  "Still resolving this server — try again in a moment.": "正在解析该服务器，请稍后重试。"
 }

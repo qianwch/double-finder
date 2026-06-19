@@ -327,5 +327,6 @@
   "Recent…": "Zuletzt…",
   "Unsupported address.": "Nicht unterstützte Adresse.",
   "Use an smb:// or sftp:// address.": "Verwenden Sie eine smb://- oder sftp://-Adresse.",
-  "Mount requested — check the drive bar.": "Mounten angefordert – siehe Laufwerksleiste."
+  "Mount requested — check the drive bar.": "Mounten angefordert – siehe Laufwerksleiste.",
+  "Still resolving this server — try again in a moment.": "Server wird noch aufgelöst – bitte gleich erneut versuchen."
 }
