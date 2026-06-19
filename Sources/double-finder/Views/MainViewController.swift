@@ -1102,7 +1102,7 @@ class MainViewController: NSViewController {
                     try await self.appState.activePanelState.fs.createFile(path)
                     await MainActor.run { self.activePanelVC.panelState.refresh() }
                 } catch {
-                    await MainActor.run { NSAlert(error: error).beginSheetModal(for: window) }
+                    await MainActor.run { self.presentLocalizedError(error, in: window) }
                 }
             }
         }
@@ -1313,7 +1313,7 @@ class MainViewController: NSViewController {
                                                   password: opts.password, baseDir: baseDir)
                 await MainActor.run { self.inactivePanelVC.panelState.refresh() }
             } catch {
-                await MainActor.run { NSAlert(error: error).beginSheetModal(for: window) }
+                await MainActor.run { self.presentLocalizedError(error, in: window) }
             }
         }
     }
@@ -1432,10 +1432,7 @@ class MainViewController: NSViewController {
                         self.activePanelVC.updateDisplay()
                     }
                 } catch {
-                    await MainActor.run {
-                        let errAlert = NSAlert(error: error)
-                        errAlert.beginSheetModal(for: window)
-                    }
+                    await MainActor.run { self.presentLocalizedError(error, in: window) }
                 }
             }
         }
@@ -1723,6 +1720,16 @@ class MainViewController: NSViewController {
         }
     }
 
+    /// Shows an error alert whose message is run through `tr()` so localized
+    /// filesystem error strings (which carry bare English keys) get translated.
+    @MainActor
+    func presentLocalizedError(_ error: Error, in window: NSWindow) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = tr((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        alert.beginSheetModal(for: window)
+    }
+
     /// Surfaces items that failed during a batch operation. Previously a single
     /// failure aborted the batch AND was swallowed silently (the progress sheet
     /// only watches `isComplete`); now the batch finishes and we summarize what
@@ -1744,7 +1751,7 @@ class MainViewController: NSViewController {
                                        : tr("%d items could not be deleted", n)
         }
         let lines = op.failures.prefix(10).map {
-            "• \(($0.path as NSString).lastPathComponent): \($0.error.localizedDescription)"
+            "• \(($0.path as NSString).lastPathComponent): \(tr($0.error.localizedDescription))"
         }
         var info = lines.joined(separator: "\n")
         if n > 10 { info += "\n" + tr("… and %d more", n - 10) }
