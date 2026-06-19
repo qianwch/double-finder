@@ -36,7 +36,7 @@ final class S3FS: VirtualFS {
         }
         for o in objects {
             let name = String(o.key.dropFirst(prefix.count))
-            guard !name.isEmpty, name != "/" else { continue }   // skip the prefix placeholder object
+            guard !name.isEmpty, !name.hasSuffix("/") else { continue }   // skip placeholder objects (folder markers)
             items.append(FileItem(id: UUID(), name: name, path: basePath + name,
                                   isDirectory: false, isArchive: FileItem.isArchiveFileName(name),
                                   size: o.size, modified: o.modified, isHidden: name.hasPrefix("."),
@@ -73,10 +73,23 @@ final class S3FS: VirtualFS {
         guard let bucket = bucket, !key.isEmpty else {
             throw FSUnsupportedError(message: "Cannot rename this")
         }
-        let parent = (key as NSString).deletingLastPathComponent
-        let dst = parent.isEmpty ? newName : parent + "/" + newName
-        try await client.copyObject(bucket: bucket, srcKey: key, dstKey: dst)
-        try await client.deleteObject(bucket: bucket, key: key)
+        if key.hasSuffix("/") {
+            // Folder rename: recursively copy+delete every key under the old prefix.
+            let strippedKey = String(key.dropLast())   // "a/b/old"
+            let parent = (strippedKey as NSString).deletingLastPathComponent   // "a/b"
+            let destPrefix = (parent.isEmpty ? "" : parent + "/") + newName + "/"
+            for k in try await client.listAllKeys(bucket: bucket, prefix: key) {
+                let suffix = String(k.dropFirst(key.count))
+                try await client.copyObject(bucket: bucket, srcKey: k, dstKey: destPrefix + suffix)
+                try await client.deleteObject(bucket: bucket, key: k)
+            }
+        } else {
+            // File rename: single copy+delete.
+            let parent = (key as NSString).deletingLastPathComponent
+            let dst = parent.isEmpty ? newName : parent + "/" + newName
+            try await client.copyObject(bucket: bucket, srcKey: key, dstKey: dst)
+            try await client.deleteObject(bucket: bucket, key: key)
+        }
     }
 
     func move(from: String, to: String) async throws {
@@ -86,26 +99,38 @@ final class S3FS: VirtualFS {
         guard let sb = sb, let db = db, sb == db, !sk.isEmpty else {
             throw FSUnsupportedError(message: "Unsupported move")
         }
-        let name = (sk as NSString).lastPathComponent
-        let dst = dkDir + name
-        try await client.copyObject(bucket: sb, srcKey: sk, dstKey: dst)
-        try await client.deleteObject(bucket: sb, key: sk)
+        if sk.hasSuffix("/") {
+            // Folder move: recursively copy+delete every key under the old prefix.
+            let folderName = (String(sk.dropLast()) as NSString).lastPathComponent
+            let destPrefix = dkDir + folderName + "/"
+            for k in try await client.listAllKeys(bucket: sb, prefix: sk) {
+                let suffix = String(k.dropFirst(sk.count))
+                try await client.copyObject(bucket: sb, srcKey: k, dstKey: destPrefix + suffix)
+                try await client.deleteObject(bucket: sb, key: k)
+            }
+        } else {
+            // File move: single copy+delete.
+            let name = (sk as NSString).lastPathComponent
+            let dst = dkDir + name
+            try await client.copyObject(bucket: sb, srcKey: sk, dstKey: dst)
+            try await client.deleteObject(bucket: sb, key: sk)
+        }
     }
 
     func copy(from: String, to: String) async throws {
-        let (sb, sk) = parseS3Path(from)
-        if let sb = sb, !sk.isEmpty, !from.hasPrefix("/Volumes"), !from.hasPrefix("/Users"),
-           parseS3Path(from).bucket != nil, !FileManager.default.fileExists(atPath: from) {
-            // Download: source is an S3 path (not a real local file), `to` is a local dir.
-            let name = (sk as NSString).lastPathComponent
-            let dest = (to as NSString).appendingPathComponent(name)
-            try await client.getObject(bucket: sb, key: sk, toLocalPath: dest)
-        } else {
+        if FileManager.default.fileExists(atPath: from) {
             // Upload: `from` is a local file, `to` is an S3 dir path (/bucket/prefix/).
             let (db, dkDir) = parseS3Path(to.hasSuffix("/") ? to : to + "/")
             guard let db = db else { throw FSUnsupportedError(message: "Unsupported copy") }
             let name = (from as NSString).lastPathComponent
             try await client.putObject(bucket: db, key: dkDir + name, fromLocalPath: from)
+        } else {
+            // Download: `from` is an S3 path, `to` is a local dir.
+            let (sb, sk) = parseS3Path(from)
+            guard let sb = sb, !sk.isEmpty else { throw FSUnsupportedError(message: "Unsupported copy") }
+            let name = (sk as NSString).lastPathComponent
+            let dest = (to as NSString).appendingPathComponent(name)
+            try await client.getObject(bucket: sb, key: sk, toLocalPath: dest)
         }
     }
 }
