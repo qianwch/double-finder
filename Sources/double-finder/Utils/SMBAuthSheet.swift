@@ -88,6 +88,7 @@ final class SMBAuthSheet: NSWindowController {
         let cancel = NSButton(title: tr("Cancel"), target: self, action: #selector(cancel))
         cancel.frame = NSRect(x: 172, y: 8, width: 92, height: 28)
         cancel.bezelStyle = .rounded
+        cancel.keyEquivalent = "\u{1B}"   // Escape dismisses the sheet
         content.addSubview(cancel)
     }
 
