@@ -60,13 +60,19 @@ enum SMBMounter {
                 return
             }
 
-            // Host-only URL (no share path): NetFS+NoUI can't pick a share and
-            // reports "no shares available" (-6003 / -5998) or success-with-no-
-            // mount. Enumerate the server's shares and mount each one, like
-            // Finder does — keeping auth fully in-process (no system UI).
+            // A genuine credential problem must be reported so the caller can
+            // re-prompt — don't try to enumerate past it.
+            if let err = SMBMountError.classify(status), err.isAuthIssue {
+                DispatchQueue.main.async { onResult(.failure(err)) }
+                return
+            }
+
+            // Host-only URL (no share path) with auth OK: NetFS+NoUI can't pick a
+            // share headlessly and fails with a non-auth code (-6003 / -5998 / 63
+            // / success-with-no-mount, etc.). Enumerate the server's shares and
+            // mount each one, like Finder does — auth stays fully in-process.
             let hasShare = !(url.path.isEmpty || url.path == "/")
-            let noSharePicked = (status == -6003 || status == -5998 || (status == 0 && paths.isEmpty))
-            if !hasShare, noSharePicked, let host = url.host {
+            if !hasShare, let host = url.host {
                 let shares = enumerateShares(host: host, user: user, password: password, guest: guest)
                 var mounted: [String] = []
                 for share in shares {
