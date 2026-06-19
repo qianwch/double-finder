@@ -617,7 +617,11 @@ extension PanelViewController: FileTableViewDelegate {
             } catch {
                 await MainActor.run {
                     if let window = self.view.window {
-                        NSAlert(error: error).beginSheetModal(for: window)
+                        let alert = NSAlert()
+                        alert.alertStyle = .warning
+                        let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                        alert.messageText = tr(msg)
+                        alert.beginSheetModal(for: window)
                     }
                 }
             }
