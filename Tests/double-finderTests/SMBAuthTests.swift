@@ -3,6 +3,29 @@ import XCTest
 
 final class SMBAuthTests: XCTestCase {
 
+    /// `smbutil view` output → mountable disk share names (skip header/separator,
+    /// non-disk types, and hidden `$` admin shares).
+    func testParseShareNames() {
+        let output = """
+        Share                                           Type    Comments
+        -------------------------------
+        home                                            disk
+        homes                                           disk
+        TimeMachine                                     disk    Backups
+        Public                                          disk
+        IPC$                                            pipe    Remote IPC
+        ADMIN$                                          disk
+        HP_Printer                                      printer
+        4 shares listed from 4 available
+        """
+        XCTAssertEqual(SMBMounter.parseShareNames(from: output),
+                       ["home", "homes", "TimeMachine", "Public"])
+    }
+
+    func testParseShareNamesEmpty() {
+        XCTAssertEqual(SMBMounter.parseShareNames(from: ""), [])
+    }
+
     func testClassifySuccess() {
         XCTAssertNil(SMBMountError.classify(0))
     }
