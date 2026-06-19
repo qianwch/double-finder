@@ -15,7 +15,7 @@ Each panel has folder tabs: **⌘T** opens a new tab, **⌘W** closes it, click 
 **⌘A** selects all. Type **+ / - / \*** to select, unselect, or invert by wildcard pattern. **⌘F** opens a quick filter to narrow the list as you type.
 
 **File Operations (function keys)**
-**F2** rename · **F3** Quick Look · **F4** edit · **F5** copy · **F6** move · **F7** new folder · **F8** delete. **⌘⌫** moves to Trash instead of deleting permanently.
+**F3** Quick Look · **F4** edit · **F5** copy · **F6** move · **F7** new folder · **F8** delete. **⌘⌫** moves to Trash instead of deleting permanently. Rename a file by clicking its name or via the right-click menu.
 
 **Archives**
 Browse zip / tar / 7z / rar and more like folders — just press Return on them. **⌥F5** packs the selection into the other panel; **⌥F6** extracts an archive.
