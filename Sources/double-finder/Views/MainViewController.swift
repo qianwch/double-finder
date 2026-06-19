@@ -1730,7 +1730,12 @@ class MainViewController: NSViewController {
                                    errorMessage: error.errorDescription.map { tr($0) })
             case .failure(let error):
                 if let window = self.view.window {
-                    self.presentLocalizedError(error, in: window)
+                    var text = (error.errorDescription).map { tr($0) }
+                        ?? tr("Could not connect to the server.")
+                    if case .other(let status) = error { text += " (\(status))" }
+                    let alert = NSAlert()
+                    alert.messageText = text
+                    alert.beginSheetModal(for: window, completionHandler: nil)
                 }
             }
         }
