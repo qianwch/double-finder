@@ -782,15 +782,23 @@ class MainViewController: NSViewController {
         let items = pruneSelectedAncestors(activePanelVC.selectedOrCurrent)
         guard !items.isEmpty else { return }
         let destPath = inactivePanelVC.panelState.currentPath
-        let downloading = activePanelVC.panelState.sftp != nil
-        let uploading = inactivePanelVC.panelState.sftp != nil
-        let isSFTP = downloading || uploading
+        let s3Down = activePanelVC.panelState.s3 != nil
+        let s3Up = inactivePanelVC.panelState.s3 != nil
+        let downloading = activePanelVC.panelState.sftp != nil || s3Down
+        let uploading = inactivePanelVC.panelState.sftp != nil || s3Up
+        let isSFTP = (activePanelVC.panelState.sftp != nil) || (inactivePanelVC.panelState.sftp != nil)
+        let isS3 = s3Down || s3Up
         let verb = downloading ? tr("Download") : (uploading ? tr("Upload") : tr("Copy"))
         // Confirm (TC-style) before any transfer, including SFTP.
         confirmTransfer(verb: verb, items: items, defaultDest: destPath) { [weak self] dest, queued in
             guard let self = self else { return }
             if isSFTP {
                 self.actionSFTPTransfer(items: items, destPath: dest, queued: queued)
+                return
+            }
+            if isS3 {
+                self.actionS3Transfer(items: items, destPath: dest, queued: queued,
+                                      downloading: s3Down)
                 return
             }
             self.resolveConflicts(for: items, destination: dest) { [weak self] policy in
@@ -945,6 +953,28 @@ class MainViewController: NSViewController {
             try await transfer(item, op)
         }
         dispatchOperation(op, queued: queued) { [weak self] in
+            self?.inactivePanelVC.panelState.refresh()
+        }
+    }
+
+    /// URLSession-based S3 transfer (download: active panel is S3; upload: inactive panel is S3).
+    private func actionS3Transfer(items: [FileItem], destPath: String, queued: Bool,
+                                  downloading: Bool) {
+        let srcFS = activePanelVC.panelState.fs
+        let dstFS = inactivePanelVC.panelState.fs
+        let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
+        op.indeterminate = true
+        op.perItemOperation = { path in
+            if downloading {
+                // S3 object → local dir: srcFS is S3FS, `from` is an S3 path → getObject
+                try await srcFS.copy(from: path, to: destPath)
+            } else {
+                // local file → S3 prefix: dstFS is S3FS, `from` is a local path → putObject
+                try await dstFS.copy(from: path, to: destPath)
+            }
+        }
+        dispatchOperation(op, queued: queued) { [weak self] in
+            self?.activePanelVC.panelState.refresh()
             self?.inactivePanelVC.panelState.refresh()
         }
     }
