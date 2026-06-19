@@ -83,7 +83,7 @@ class PanelViewController: NSViewController {
         driveButton.imagePosition = .imageOnly
         driveButton.isBordered = false
         driveButton.bezelStyle = .texturedRounded
-        driveButton.toolTip = "Drives"
+        driveButton.toolTip = tr("Drives")
         driveButton.target = self
         driveButton.action = #selector(showDriveMenu)
         driveButton.translatesAutoresizingMaskIntoConstraints = false
@@ -103,7 +103,7 @@ class PanelViewController: NSViewController {
         favoritesButton.imagePosition = .imageOnly
         favoritesButton.isBordered = false
         favoritesButton.bezelStyle = .texturedRounded
-        favoritesButton.toolTip = "Favorites"
+        favoritesButton.toolTip = tr("Favorites")
         favoritesButton.target = self
         favoritesButton.action = #selector(showFavoritesMenu)
         favoritesButton.translatesAutoresizingMaskIntoConstraints = false
@@ -129,7 +129,7 @@ class PanelViewController: NSViewController {
 
         // Quick-filter bar (hidden until activated with Cmd+F)
         filterField = NSSearchField()
-        filterField.placeholderString = "Filter — type to narrow, Esc to clear"
+        filterField.placeholderString = tr("Filter — type to narrow, Esc to clear")
         filterField.font = NSFont.systemFont(ofSize: 11)
         filterField.controlSize = .small
         filterField.delegate = self
@@ -203,6 +203,15 @@ class PanelViewController: NSViewController {
         tabBarHeightConstraint.isActive = true
 
         applyDriveConfig()
+    }
+
+    /// Re-applies the active language to this panel's always-visible chrome
+    /// (button tooltips, filter placeholder) and refreshes the status bar text.
+    func relocalize() {
+        driveButton?.toolTip = tr("Drives")
+        favoritesButton?.toolTip = tr("Favorites")
+        filterField?.placeholderString = tr("Filter — type to narrow, Esc to clear")
+        updateDisplay()   // re-read PanelState.statusText in the new language
     }
 
     // MARK: - Folder tabs
@@ -306,7 +315,7 @@ class PanelViewController: NSViewController {
         let wasInArchive = PanelState.archiveRoot(in: panelState.currentPath) != nil
         guard let window = view.window else { return }
         let alert = NSAlert()
-        alert.messageText = "Can’t Open Archive"
+        alert.messageText = tr("Can’t Open Archive")
         alert.informativeText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         alert.alertStyle = .warning
         alert.beginSheetModal(for: window) { [weak self] _ in
@@ -443,10 +452,10 @@ class PanelViewController: NSViewController {
         panelDelegate?.panelViewControllerWantsActivation(self)
         let menu = NSMenu()
 
-        let add = NSMenuItem(title: "Add Current Folder", action: #selector(favAddCurrent), keyEquivalent: "")
+        let add = NSMenuItem(title: tr("Add Current Folder"), action: #selector(favAddCurrent), keyEquivalent: "")
         add.target = self
         menu.addItem(add)
-        let organize = NSMenuItem(title: "Organize Favorites…", action: #selector(favOrganize), keyEquivalent: "")
+        let organize = NSMenuItem(title: tr("Organize Favorites…"), action: #selector(favOrganize), keyEquivalent: "")
         organize.target = self
         menu.addItem(organize)
 
@@ -466,7 +475,7 @@ class PanelViewController: NSViewController {
         }
         if Favorites.contains(panelState.currentPath) {
             menu.addItem(.separator())
-            let remove = NSMenuItem(title: "Remove Current Folder", action: #selector(favRemoveCurrent), keyEquivalent: "")
+            let remove = NSMenuItem(title: tr("Remove Current Folder"), action: #selector(favRemoveCurrent), keyEquivalent: "")
             remove.target = self
             menu.addItem(remove)
         }

@@ -717,18 +717,18 @@ class PanelState: ObservableObject {
 
     var statusText: String {
         let total = items.filter { $0.name != ".." }.count
-        let searchNote = searchResults != nil ? "  ·  search results (Backspace to exit)" : ""
+        let searchNote = searchResults != nil ? "  ·  " + tr("search results (Backspace to exit)") : ""
         let selCount = selectedItems.count
         let selSize = items.filter { selectedItems.contains($0.id) }.reduce(0) { $0 + $1.effectiveSize }
-        let filterNote = filter.isEmpty ? "" : "  ·  filter: “\(filter)” (\(total)/\(allLoadedItems.count))"
+        let filterNote = filter.isEmpty ? "" : "  ·  " + tr("filter: “%@” (%d/%d)", filter, total, allLoadedItems.count)
         if selCount > 0 {
             let formatter = ByteCountFormatter()
             formatter.allowedUnits = [.useKB, .useMB, .useGB]
             formatter.countStyle = .file
             let sizeStr = formatter.string(fromByteCount: selSize)
-            return "\(total) items, \(selCount) selected (\(sizeStr))\(filterNote)\(searchNote)\(diskNote)"
+            return tr("%d items, %d selected (%@)", total, selCount, sizeStr) + "\(filterNote)\(searchNote)\(diskNote)"
         }
-        return "\(total) items\(filterNote)\(searchNote)\(diskNote)"
+        return tr("%d items", total) + "\(filterNote)\(searchNote)\(diskNote)"
     }
 
     /// Free / total space of the volume backing the current path. Empty for
@@ -743,7 +743,7 @@ class PanelState: ObservableObject {
         let fmt = ByteCountFormatter()
         fmt.allowedUnits = [.useGB, .useTB]
         fmt.countStyle = .file
-        return "  ·  \(fmt.string(fromByteCount: free)) free of \(fmt.string(fromByteCount: Int64(total)))"
+        return "  ·  " + tr("%@ free of %@", fmt.string(fromByteCount: free), fmt.string(fromByteCount: Int64(total)))
     }
 
     var currentItem: FileItem? {

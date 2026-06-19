@@ -41,7 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appState.save()
     }
 
-    private func setupMenus() {
+    @MainActor private func setupMenus() {
         let mainMenu = NSMenu()
 
         // App menu
@@ -49,159 +49,159 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu(title: "Double Finder")
         appMenuItem.submenu = appMenu
-        appMenu.addItem(NSMenuItem(title: "About Double Finder", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: tr("About Double Finder"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(menuSettings), keyEquivalent: ","))
+        appMenu.addItem(NSMenuItem(title: tr("Settings…"), action: #selector(menuSettings), keyEquivalent: ","))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Quit Double Finder", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: tr("Quit Double Finder"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         // File menu
-        let fileMenuItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        let fileMenuItem = NSMenuItem(title: tr("File"), action: nil, keyEquivalent: "")
         mainMenu.addItem(fileMenuItem)
-        let fileMenu = NSMenu(title: "File")
+        let fileMenu = NSMenu(title: tr("File"))
         fileMenuItem.submenu = fileMenu
-        fileMenu.addItem(NSMenuItem(title: "New Directory", action: #selector(menuNewDirectory), keyEquivalent: "d"))
-        let newFileItem = NSMenuItem(title: "New File…", action: #selector(menuNewFile), keyEquivalent: String(UnicodeScalar(NSF4FunctionKey)!))
+        fileMenu.addItem(NSMenuItem(title: tr("New Directory"), action: #selector(menuNewDirectory), keyEquivalent: "d"))
+        let newFileItem = NSMenuItem(title: tr("New File…"), action: #selector(menuNewFile), keyEquivalent: String(UnicodeScalar(NSF4FunctionKey)!))
         newFileItem.keyEquivalentModifierMask = [.shift]   // .function is rejected for custom items (macOS adds it for F-keys automatically)
         fileMenu.addItem(newFileItem)
-        fileMenu.addItem(NSMenuItem(title: "Change Permissions…", action: #selector(menuChangeAttributes), keyEquivalent: ""))
-        let packItem = NSMenuItem(title: "Pack to Other Panel…", action: #selector(menuPack), keyEquivalent: String(UnicodeScalar(NSF5FunctionKey)!))
+        fileMenu.addItem(NSMenuItem(title: tr("Change Permissions…"), action: #selector(menuChangeAttributes), keyEquivalent: ""))
+        let packItem = NSMenuItem(title: tr("Pack to Other Panel…"), action: #selector(menuPack), keyEquivalent: String(UnicodeScalar(NSF5FunctionKey)!))
         packItem.keyEquivalentModifierMask = [.option]
         fileMenu.addItem(packItem)
-        let extractItem = NSMenuItem(title: "Extract to Other Panel", action: #selector(menuExtract), keyEquivalent: String(UnicodeScalar(NSF6FunctionKey)!))
+        let extractItem = NSMenuItem(title: tr("Extract to Other Panel"), action: #selector(menuExtract), keyEquivalent: String(UnicodeScalar(NSF6FunctionKey)!))
         extractItem.keyEquivalentModifierMask = [.option]
         fileMenu.addItem(extractItem)
         fileMenu.addItem(.separator())
-        fileMenu.addItem(NSMenuItem(title: "New SFTP Connection...", action: #selector(menuNewSFTP), keyEquivalent: "n"))
+        fileMenu.addItem(NSMenuItem(title: tr("New SFTP Connection..."), action: #selector(menuNewSFTP), keyEquivalent: "n"))
 
         // Edit menu
-        let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let editMenuItem = NSMenuItem(title: tr("Edit"), action: nil, keyEquivalent: "")
         mainMenu.addItem(editMenuItem)
-        let editMenu = NSMenu(title: "Edit")
+        let editMenu = NSMenu(title: tr("Edit"))
         editMenuItem.submenu = editMenu
         // Clipboard copy/paste of files — interoperates with Finder. These use
         // the standard copy:/paste: actions (target=nil → responder chain), so
         // the file list copies/pastes files while a focused text field gets text
         // copy/paste instead.
-        editMenu.addItem(NSMenuItem(title: "Copy", action: Selector(("copy:")), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: "Paste", action: Selector(("paste:")), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: "Cut Text", action: Selector(("cut:")), keyEquivalent: "x"))
-        let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(menuCopyPath), keyEquivalent: "c")
+        editMenu.addItem(NSMenuItem(title: tr("Copy"), action: Selector(("copy:")), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: tr("Paste"), action: Selector(("paste:")), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: tr("Cut Text"), action: Selector(("cut:")), keyEquivalent: "x"))
+        let copyPathItem = NSMenuItem(title: tr("Copy Path"), action: #selector(menuCopyPath), keyEquivalent: "c")
         copyPathItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(copyPathItem)
         editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(menuSelectAll), keyEquivalent: "a"))
-        let deselectItem = NSMenuItem(title: "Deselect All", action: #selector(menuDeselectAll), keyEquivalent: "a")
+        editMenu.addItem(NSMenuItem(title: tr("Select All"), action: #selector(menuSelectAll), keyEquivalent: "a"))
+        let deselectItem = NSMenuItem(title: tr("Deselect All"), action: #selector(menuDeselectAll), keyEquivalent: "a")
         deselectItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(deselectItem)
-        editMenu.addItem(NSMenuItem(title: "Select by Pattern… (+)", action: #selector(menuSelectPattern), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: "Unselect by Pattern… (−)", action: #selector(menuUnselectPattern), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: "Invert Selection (*)", action: #selector(menuInvertSelection), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: tr("Select by Pattern… (+)"), action: #selector(menuSelectPattern), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: tr("Unselect by Pattern… (−)"), action: #selector(menuUnselectPattern), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: tr("Invert Selection (*)"), action: #selector(menuInvertSelection), keyEquivalent: ""))
         editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "Rename…", action: #selector(menuRename), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: "Copy to Other Panel", action: #selector(menuCopy), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: "Move to Other Panel", action: #selector(menuMove), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: "Delete", action: #selector(menuDelete), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: tr("Rename…"), action: #selector(menuRename), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: tr("Copy to Other Panel"), action: #selector(menuCopy), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: tr("Move to Other Panel"), action: #selector(menuMove), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: tr("Delete"), action: #selector(menuDelete), keyEquivalent: ""))
 
         // Go menu
-        let goMenuItem = NSMenuItem(title: "Go", action: nil, keyEquivalent: "")
+        let goMenuItem = NSMenuItem(title: tr("Go"), action: nil, keyEquivalent: "")
         mainMenu.addItem(goMenuItem)
-        let goMenu = NSMenu(title: "Go")
+        let goMenu = NSMenu(title: tr("Go"))
         goMenuItem.submenu = goMenu
-        goMenu.addItem(NSMenuItem(title: "Home", action: #selector(menuGoHome), keyEquivalent: "h"))
-        goMenu.addItem(NSMenuItem(title: "Back", action: #selector(menuGoBack), keyEquivalent: "["))
-        goMenu.addItem(NSMenuItem(title: "Forward", action: #selector(menuGoForward), keyEquivalent: "]"))
-        goMenu.addItem(NSMenuItem(title: "Parent Directory", action: #selector(menuGoUp), keyEquivalent: ""))
+        goMenu.addItem(NSMenuItem(title: tr("Home"), action: #selector(menuGoHome), keyEquivalent: "h"))
+        goMenu.addItem(NSMenuItem(title: tr("Back"), action: #selector(menuGoBack), keyEquivalent: "["))
+        goMenu.addItem(NSMenuItem(title: tr("Forward"), action: #selector(menuGoForward), keyEquivalent: "]"))
+        goMenu.addItem(NSMenuItem(title: tr("Parent Directory"), action: #selector(menuGoUp), keyEquivalent: ""))
         goMenu.addItem(NSMenuItem.separator())
-        let goToFolderItem = NSMenuItem(title: "Go to Folder…", action: #selector(menuGoToFolder), keyEquivalent: "g")
+        let goToFolderItem = NSMenuItem(title: tr("Go to Folder…"), action: #selector(menuGoToFolder), keyEquivalent: "g")
         goToFolderItem.keyEquivalentModifierMask = [.command, .shift]
         goMenu.addItem(goToFolderItem)
 
         // Commands menu (panel operations)
-        let cmdMenuItem = NSMenuItem(title: "Commands", action: nil, keyEquivalent: "")
+        let cmdMenuItem = NSMenuItem(title: tr("Commands"), action: nil, keyEquivalent: "")
         mainMenu.addItem(cmdMenuItem)
-        let cmdMenu = NSMenu(title: "Commands")
+        let cmdMenu = NSMenu(title: tr("Commands"))
         cmdMenuItem.submenu = cmdMenu
-        let newTabItem = NSMenuItem(title: "New Tab", action: #selector(menuNewTab), keyEquivalent: "t")
+        let newTabItem = NSMenuItem(title: tr("New Tab"), action: #selector(menuNewTab), keyEquivalent: "t")
         newTabItem.keyEquivalentModifierMask = [.command]
         cmdMenu.addItem(newTabItem)
-        let closeTabItem = NSMenuItem(title: "Close Tab", action: #selector(menuCloseTab), keyEquivalent: "w")
+        let closeTabItem = NSMenuItem(title: tr("Close Tab"), action: #selector(menuCloseTab), keyEquivalent: "w")
         closeTabItem.keyEquivalentModifierMask = [.command]
         cmdMenu.addItem(closeTabItem)
         cmdMenu.addItem(.separator())
-        cmdMenu.addItem(NSMenuItem(title: "Compare Directories", action: #selector(menuCompareDirs), keyEquivalent: ""))
-        cmdMenu.addItem(NSMenuItem(title: "Synchronize Directories…", action: #selector(menuSyncDirs), keyEquivalent: ""))
+        cmdMenu.addItem(NSMenuItem(title: tr("Compare Directories"), action: #selector(menuCompareDirs), keyEquivalent: ""))
+        cmdMenu.addItem(NSMenuItem(title: tr("Synchronize Directories…"), action: #selector(menuSyncDirs), keyEquivalent: ""))
         cmdMenu.addItem(.separator())
-        let swapItem = NSMenuItem(title: "Swap Panels", action: #selector(menuSwapPanels), keyEquivalent: "u")
+        let swapItem = NSMenuItem(title: tr("Swap Panels"), action: #selector(menuSwapPanels), keyEquivalent: "u")
         swapItem.keyEquivalentModifierMask = [.command]
         cmdMenu.addItem(swapItem)
-        let findItem = NSMenuItem(title: "Find Files…", action: #selector(menuFindFiles), keyEquivalent: "f")
+        let findItem = NSMenuItem(title: tr("Find Files…"), action: #selector(menuFindFiles), keyEquivalent: "f")
         findItem.keyEquivalentModifierMask = [.command, .shift]
         cmdMenu.addItem(findItem)
-        let renameItem = NSMenuItem(title: "Multi-Rename Tool…", action: #selector(menuMultiRename), keyEquivalent: "m")
+        let renameItem = NSMenuItem(title: tr("Multi-Rename Tool…"), action: #selector(menuMultiRename), keyEquivalent: "m")
         renameItem.keyEquivalentModifierMask = [.command]
         cmdMenu.addItem(renameItem)
-        cmdMenu.addItem(NSMenuItem(title: "Open Folder in Other Panel", action: #selector(menuOpenInOther), keyEquivalent: ""))
-        cmdMenu.addItem(NSMenuItem(title: "Same Folder as Active in Other Panel", action: #selector(menuMatchOther), keyEquivalent: ""))
+        cmdMenu.addItem(NSMenuItem(title: tr("Open Folder in Other Panel"), action: #selector(menuOpenInOther), keyEquivalent: ""))
+        cmdMenu.addItem(NSMenuItem(title: tr("Same Folder as Active in Other Panel"), action: #selector(menuMatchOther), keyEquivalent: ""))
         cmdMenu.addItem(.separator())
-        let termItem = NSMenuItem(title: "Open in Terminal", action: #selector(menuOpenTerminal), keyEquivalent: "t")
+        let termItem = NSMenuItem(title: tr("Open in Terminal"), action: #selector(menuOpenTerminal), keyEquivalent: "t")
         termItem.keyEquivalentModifierMask = [.command, .shift]
         cmdMenu.addItem(termItem)
-        let termAppItem = NSMenuItem(title: "Terminal App", action: nil, keyEquivalent: "")
-        let termAppMenu = NSMenu(title: "Terminal App")
+        let termAppItem = NSMenuItem(title: tr("Terminal App"), action: nil, keyEquivalent: "")
+        let termAppMenu = NSMenu(title: tr("Terminal App"))
         termAppMenu.delegate = self                 // populated dynamically
         termAppItem.submenu = termAppMenu
         terminalAppMenu = termAppMenu
         cmdMenu.addItem(termAppItem)
         cmdMenu.addItem(.separator())
-        cmdMenu.addItem(NSMenuItem(title: "Focus Command Line", action: #selector(menuFocusCommandLine), keyEquivalent: "l"))
-        cmdMenu.addItem(NSMenuItem(title: "Customize Shortcuts…", action: #selector(menuCustomizeShortcuts), keyEquivalent: ""))
-        cmdMenu.addItem(NSMenuItem(title: "7-Zip Location…", action: #selector(menuSevenZipLocation), keyEquivalent: ""))
+        cmdMenu.addItem(NSMenuItem(title: tr("Focus Command Line"), action: #selector(menuFocusCommandLine), keyEquivalent: "l"))
+        cmdMenu.addItem(NSMenuItem(title: tr("Customize Shortcuts…"), action: #selector(menuCustomizeShortcuts), keyEquivalent: ""))
+        cmdMenu.addItem(NSMenuItem(title: tr("7-Zip Location…"), action: #selector(menuSevenZipLocation), keyEquivalent: ""))
 
         // Favorites menu (populated dynamically via menuNeedsUpdate)
-        let favMenuItem = NSMenuItem(title: "Favorites", action: nil, keyEquivalent: "")
+        let favMenuItem = NSMenuItem(title: tr("Favorites"), action: nil, keyEquivalent: "")
         mainMenu.addItem(favMenuItem)
-        let favMenu = NSMenu(title: "Favorites")
+        let favMenu = NSMenu(title: tr("Favorites"))
         favMenu.delegate = self
         favMenuItem.submenu = favMenu
         favoritesMenu = favMenu
 
         // View menu
-        let viewMenuItem = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
+        let viewMenuItem = NSMenuItem(title: tr("View"), action: nil, keyEquivalent: "")
         mainMenu.addItem(viewMenuItem)
-        let viewMenu = NSMenu(title: "View")
+        let viewMenu = NSMenu(title: tr("View"))
         viewMenuItem.submenu = viewMenu
-        viewMenu.addItem(NSMenuItem(title: "Quick Look", action: #selector(menuQuickLook), keyEquivalent: ""))
-        let fullItem = NSMenuItem(title: "Full View", action: #selector(menuViewFull), keyEquivalent: "1")
-        let briefItem = NSMenuItem(title: "Brief View", action: #selector(menuViewBrief), keyEquivalent: "2")
-        let thumbItem = NSMenuItem(title: "Thumbnails", action: #selector(menuViewThumbnails), keyEquivalent: "3")
+        viewMenu.addItem(NSMenuItem(title: tr("Quick Look"), action: #selector(menuQuickLook), keyEquivalent: ""))
+        let fullItem = NSMenuItem(title: tr("Full View"), action: #selector(menuViewFull), keyEquivalent: "1")
+        let briefItem = NSMenuItem(title: tr("Brief View"), action: #selector(menuViewBrief), keyEquivalent: "2")
+        let thumbItem = NSMenuItem(title: tr("Thumbnails"), action: #selector(menuViewThumbnails), keyEquivalent: "3")
         viewMenu.addItem(fullItem); viewMenu.addItem(briefItem); viewMenu.addItem(thumbItem)
         viewMenu.addItem(.separator())
-        let treeItem = NSMenuItem(title: "Directory Tree", action: #selector(menuToggleTree), keyEquivalent: "d")
+        let treeItem = NSMenuItem(title: tr("Directory Tree"), action: #selector(menuToggleTree), keyEquivalent: "d")
         treeItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(treeItem)
-        viewMenu.addItem(NSMenuItem(title: "Quick Filter…", action: #selector(menuFilter), keyEquivalent: "f"))
-        let branchItem = NSMenuItem(title: "Branch View (flatten subtree)", action: #selector(menuBranchView), keyEquivalent: "b")
+        viewMenu.addItem(NSMenuItem(title: tr("Quick Filter…"), action: #selector(menuFilter), keyEquivalent: "f"))
+        let branchItem = NSMenuItem(title: tr("Branch View (flatten subtree)"), action: #selector(menuBranchView), keyEquivalent: "b")
         branchItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(branchItem)
-        let colorItem = NSMenuItem(title: "Color by File Type", action: #selector(menuToggleColor), keyEquivalent: "")
+        let colorItem = NSMenuItem(title: tr("Color by File Type"), action: #selector(menuToggleColor), keyEquivalent: "")
         colorItem.state = AppSettings.colorByType ? .on : .off
         viewMenu.addItem(colorItem)
-        let foldersFirstItem = NSMenuItem(title: "Folders First", action: #selector(menuToggleFoldersFirst), keyEquivalent: "")
+        let foldersFirstItem = NSMenuItem(title: tr("Folders First"), action: #selector(menuToggleFoldersFirst), keyEquivalent: "")
         foldersFirstItem.state = AppSettings.foldersFirst ? .on : .off
         viewMenu.addItem(foldersFirstItem)
-        let hiddenItem = NSMenuItem(title: "Show Hidden Files", action: #selector(menuToggleHidden), keyEquivalent: ".")
+        let hiddenItem = NSMenuItem(title: tr("Show Hidden Files"), action: #selector(menuToggleHidden), keyEquivalent: ".")
         hiddenItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(hiddenItem)
         viewMenu.addItem(.separator())
-        let driveDropItem = NSMenuItem(title: "Show Drive Dropdown", action: #selector(menuToggleDriveDropdown), keyEquivalent: "")
+        let driveDropItem = NSMenuItem(title: tr("Show Drive Dropdown"), action: #selector(menuToggleDriveDropdown), keyEquivalent: "")
         driveDropItem.state = AppSettings.showDriveDropdown ? .on : .off
         viewMenu.addItem(driveDropItem)
-        let driveBarItem = NSMenuItem(title: "Show Drive Buttons", action: #selector(menuToggleDriveBar), keyEquivalent: "")
+        let driveBarItem = NSMenuItem(title: tr("Show Drive Buttons"), action: #selector(menuToggleDriveBar), keyEquivalent: "")
         driveBarItem.state = AppSettings.showDriveBar ? .on : .off
         viewMenu.addItem(driveBarItem)
         viewMenu.addItem(.separator())
-        viewMenu.addItem(NSMenuItem(title: "Refresh", action: #selector(menuRefresh), keyEquivalent: "r"))
+        viewMenu.addItem(NSMenuItem(title: tr("Refresh"), action: #selector(menuRefresh), keyEquivalent: "r"))
 
         NSApplication.shared.mainMenu = mainMenu
     }
@@ -211,7 +211,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Favorites menu (dynamic)
-    func menuNeedsUpdate(_ menu: NSMenu) {
+    @MainActor func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === terminalAppMenu {
             menu.removeAllItems()
             let current = AppSettings.terminalApp
@@ -228,10 +228,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard menu === favoritesMenu else { return }
         menu.removeAllItems()
 
-        let addItem = NSMenuItem(title: "Add Current Folder", action: #selector(menuAddFavorite), keyEquivalent: "b")
+        let addItem = NSMenuItem(title: tr("Add Current Folder"), action: #selector(menuAddFavorite), keyEquivalent: "b")
         addItem.target = self
         menu.addItem(addItem)
-        let organizeItem = NSMenuItem(title: "Organize Favorites…", action: #selector(menuOrganizeFavorites), keyEquivalent: "")
+        let organizeItem = NSMenuItem(title: tr("Organize Favorites…"), action: #selector(menuOrganizeFavorites), keyEquivalent: "")
         organizeItem.target = self
         menu.addItem(organizeItem)
 
@@ -248,7 +248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let removeItem = NSMenuItem(title: "Remove Current Folder", action: #selector(menuRemoveFavorite), keyEquivalent: "")
+        let removeItem = NSMenuItem(title: tr("Remove Current Folder"), action: #selector(menuRemoveFavorite), keyEquivalent: "")
         removeItem.target = self
         menu.addItem(removeItem)
     }

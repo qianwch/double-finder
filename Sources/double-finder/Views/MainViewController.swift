@@ -36,6 +36,26 @@ class MainViewController: NSViewController {
         setupFunctionKeyActions()
         appState.load()
         updateActivePanelHighlight()
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(languageDidChange),
+            name: .localizerDidChange, object: nil)
+    }
+
+    @MainActor @objc private func languageDidChange() {
+        relocalize()
+    }
+
+    /// Re-apply localized text to all always-visible main-window chrome.
+    func relocalize() {
+        // Re-run the data-driven configs so freshly translated captions/tooltips apply.
+        setupFunctionKeyActions()   // re-assigns FunctionKeyBar.actions (English source labels, translated on display)
+        configureToolbar()          // re-applies tr(...) tooltips
+        leftPanelVC.relocalize()
+        rightPanelVC.relocalize()
+        functionKeyBar?.relocalize()
+        toolbarBar?.relocalize()
+        actionRefreshDisplay_menu()   // re-render status bars / counts in new language
     }
 
     private func setupUI() {
