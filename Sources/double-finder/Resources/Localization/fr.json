@@ -104,6 +104,7 @@
   "Default": "Par défaut",
   "Default view:": "Vue par défaut :",
   "Delete": "Supprimer",
+  "Delete %@ from S3?": "Supprimer %@ de S3 ?",
   "Delete %@ from the server?": "Supprimer %@ du serveur ?",
   "Delete (F8)": "Supprimer (F8)",
   "Delete Permanently…": "Supprimer définitivement…",
@@ -111,6 +112,7 @@
   "Deselect All": "Tout désélectionner",
   "Detected:": "Détecté :",
   "Directory Tree": "Arborescence",
+  "Discard": "Ignorer",
   "Discovered Servers": "Serveurs détectés",
   "Done": "Terminé",
   "Double Finder Help": "Aide de Double Finder",
@@ -338,6 +340,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "« %@ » est chiffré ou n’a pas pu être extrait. Saisissez le mot de passe :",
   "“%@” is encrypted. Enter password to browse:": "« %@ » est chiffré. Saisissez le mot de passe pour parcourir :",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "« %@ » n'est pas un fichier exécutable. Choisissez le binaire 7z / 7zz / 7za, ou laissez le champ vide pour la détection automatique.",
-  "… and %d more": "… et %d de plus",
-  "Delete %@ from S3?": "Supprimer %@ de S3 ?"
+  "“%@” was changed. Upload it back to %@?": "« %@ » a été modifié. Le réuploader vers %@ ?",
+  "… and %d more": "… et %d de plus"
 }

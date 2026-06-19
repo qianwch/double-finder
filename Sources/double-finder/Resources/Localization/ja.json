@@ -104,6 +104,7 @@
   "Default": "デフォルト",
   "Default view:": "デフォルト表示：",
   "Delete": "削除",
+  "Delete %@ from S3?": "S3 から %@ を削除しますか？",
   "Delete %@ from the server?": "サーバーから %@ を削除しますか？",
   "Delete (F8)": "削除 (F8)",
   "Delete Permanently…": "完全に削除…",
@@ -111,6 +112,7 @@
   "Deselect All": "すべて選択解除",
   "Detected:": "検出：",
   "Directory Tree": "フォルダツリー",
+  "Discard": "破棄",
   "Discovered Servers": "検出されたサーバ",
   "Done": "完了",
   "Double Finder Help": "Double Finder ヘルプ",
@@ -338,6 +340,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "「%@」は暗号化されているか展開できませんでした。パスワードを入力してください：",
   "“%@” is encrypted. Enter password to browse:": "「%@」は暗号化されています。閲覧するにはパスワードを入力してください：",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "「%@」は実行可能ファイルではありません。7z / 7zz / 7za のバイナリを選ぶか、欄を空にして自動検出してください。",
-  "… and %d more": "…他 %d 件",
-  "Delete %@ from S3?": "S3 から %@ を削除しますか？"
+  "“%@” was changed. Upload it back to %@?": "「%@」が変更されました。%@ にアップロードして戻しますか？",
+  "… and %d more": "…他 %d 件"
 }

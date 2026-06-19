@@ -104,6 +104,7 @@
   "Default": "默认",
   "Default view:": "默认视图：",
   "Delete": "删除",
+  "Delete %@ from S3?": "从 S3 删除 %@？",
   "Delete %@ from the server?": "从服务器删除 %@？",
   "Delete (F8)": "删除 (F8)",
   "Delete Permanently…": "永久删除…",
@@ -111,6 +112,7 @@
   "Deselect All": "取消全选",
   "Detected:": "已检测：",
   "Directory Tree": "目录树",
+  "Discard": "放弃",
   "Discovered Servers": "发现的服务器",
   "Done": "完成",
   "Double Finder Help": "Double Finder 帮助",
@@ -338,6 +340,6 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "“%@”已加密或无法解压。请输入密码：",
   "“%@” is encrypted. Enter password to browse:": "“%@”已加密。请输入密码以浏览：",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "“%@”不是可执行文件。请选择 7z / 7zz / 7za 可执行文件，或将该字段留空以自动检测。",
-  "… and %d more": "…还有 %d 项",
-  "Delete %@ from S3?": "从 S3 删除 %@？"
+  "“%@” was changed. Upload it back to %@?": "“%@” 已修改，是否上传回 %@？",
+  "… and %d more": "…还有 %d 项"
 }
