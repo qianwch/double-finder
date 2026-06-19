@@ -46,6 +46,8 @@ enum SMBCredentialStore {
         SecItemAdd(q as CFDictionary, nil)
     }
 
+    /// Removes the credential for `host`/`account`. A nil `account` removes ALL
+    /// stored credentials for that host (used to clear a stale saved login).
     static func delete(host: String, account: String?) {
         SecItemDelete(query(host: host, account: account) as CFDictionary)
     }
