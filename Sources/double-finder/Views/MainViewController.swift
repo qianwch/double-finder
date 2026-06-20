@@ -1344,36 +1344,33 @@ class MainViewController: NSViewController {
             // The user may have typed a path that doesn't exist yet — create it.
             try? FileManager.default.createDirectory(
                 atPath: dest, withIntermediateDirectories: true)
-            self.extractArchives(items, to: dest, password: nil)
+            self.runExtractOperation(items, to: dest, password: nil)
         }
     }
 
-    /// Extracts archives; whatever fails (typically encrypted) prompts for a
-    /// password and is retried.
-    private func extractArchives(_ items: [FileItem], to dest: String, password: String?) {
-        Task {
-            var failed: [FileItem] = []
-            for item in items {
-                do {
-                    let path = item.path
-                    try await Task.detached { try ZipFS.extractAll(archivePath: path, to: dest, password: password) }.value
-                } catch {
-                    failed.append(item)
-                }
-            }
-            await MainActor.run {
-                // The destination may be either panel (the user can edit it), so
-                // refresh both to reveal the extracted files wherever they landed.
-                self.inactivePanelVC.panelState.refresh()
-                self.activePanelVC.panelState.refresh()
-                guard !failed.isEmpty else { return }
-                let msg = failed.count == 1
-                    ? tr("“%@” is encrypted or could not be extracted. Enter password:", failed[0].name)
-                    : tr("%d archives could not be extracted. Enter password:", failed.count)
-                self.promptForPassword(message: msg) { pw in
-                    guard let pw = pw, !pw.isEmpty else { return }
-                    self.extractArchives(failed, to: dest, password: pw)
-                }
+    /// Runs an extract through the standard progress sheet, then re-prompts for a
+    /// password and retries any archives that failed (typically encrypted).
+    private func runExtractOperation(_ items: [FileItem], to dest: String, password: String?) {
+        let op = ExtractProvider().makeOperation(items: items, destPath: dest, password: password)
+        // We handle failures ourselves via the password-retry prompt, so suppress
+        // the generic “X items could not be copied” alert that runOperation would
+        // otherwise surface. The user sees ONLY the password prompt, not both.
+        op.suppressFailureReport = true
+        runOperation(op) { [weak self] in
+            guard let self = self else { return }
+            // The destination may be either panel (the user can edit it), so
+            // refresh both to reveal the extracted files wherever they landed.
+            self.inactivePanelVC.panelState.refresh()
+            self.activePanelVC.panelState.refresh()
+            let failedPaths = Set(op.failures.map { $0.path })
+            guard !failedPaths.isEmpty else { return }
+            let failed = items.filter { failedPaths.contains($0.path) }
+            let msg = failed.count == 1
+                ? tr("“%@” is encrypted or could not be extracted. Enter password:", failed[0].name)
+                : tr("%d archives could not be extracted. Enter password:", failed.count)
+            self.promptForPassword(message: msg) { [weak self] pw in
+                guard let self = self, let pw = pw, !pw.isEmpty else { return }
+                self.runExtractOperation(failed, to: dest, password: pw)
             }
         }
     }
@@ -1751,7 +1748,11 @@ class MainViewController: NSViewController {
         sheet.beginSheet(on: window) { [weak self] in
             completion()
             self?.activeProgressSheet = nil
-            self?.reportOperationFailures(op)
+            // Suppress the generic failure alert when the coordinator has already
+            // arranged custom failure recovery UI (e.g. the extract password prompt).
+            if !op.suppressFailureReport {
+                self?.reportOperationFailures(op)
+            }
         }
     }
 

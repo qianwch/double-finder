@@ -135,6 +135,7 @@
   "Extract to Other Panel": "解压到对侧面板",
   "Extract to:": "解压到：",
   "Extract “%@”": "解压“%@”",
+  "Extracting": "解压中",
   "Extracting archives is not supported here": "此处不支持解压压缩包",
   "Fast": "快速",
   "Favorites": "收藏夹",
@@ -240,6 +241,7 @@
   "Permanently delete %@?": "永久删除 %@？",
   "Permissions": "权限",
   "Port:": "端口：",
+  "Preparing…": "准备中…",
   "Press keys…": "请按键…",
   "Project Page": "项目主页",
   "Quick Filter": "快速过滤",
@@ -345,6 +347,5 @@
   "“%@” is encrypted. Enter password to browse:": "“%@”已加密。请输入密码以浏览：",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "“%@”不是可执行文件。请选择 7z / 7zz / 7za 可执行文件，或将该字段留空以自动检测。",
   "“%@” was changed. Upload it back to %@?": "“%@” 已修改，是否上传回 %@？",
-  "… and %d more": "…还有 %d 项",
-  "Preparing…": "准备中…"
+  "… and %d more": "…还有 %d 项"
 }

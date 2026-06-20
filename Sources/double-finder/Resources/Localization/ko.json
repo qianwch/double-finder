@@ -135,6 +135,7 @@
   "Extract to Other Panel": "반대 패널로 압축 풀기",
   "Extract to:": "압축 풀 위치:",
   "Extract “%@”": "\"%@\" 압축 풀기",
+  "Extracting": "압축 푸는 중",
   "Extracting archives is not supported here": "여기서는 압축 해제를 지원하지 않습니다",
   "Fast": "빠르게",
   "Favorites": "즐겨찾기",
@@ -240,6 +241,7 @@
   "Permanently delete %@?": "%@을(를) 영구적으로 삭제하시겠습니까?",
   "Permissions": "권한",
   "Port:": "포트：",
+  "Preparing…": "준비 중…",
   "Press keys…": "키를 누르십시오…",
   "Project Page": "프로젝트 페이지",
   "Quick Filter": "빠른 필터",
@@ -345,6 +347,5 @@
   "“%@” is encrypted. Enter password to browse:": "\"%@\"이(가) 암호화되어 있습니다. 탐색하려면 암호를 입력하세요:",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "“%@”은(는) 실행 가능한 파일이 아닙니다. 7z / 7zz / 7za 실행 파일을 선택하거나 필드를 비워 자동 감지하십시오.",
   "“%@” was changed. Upload it back to %@?": "“%@”이(가) 변경되었습니다. %@(으)로 다시 업로드할까요?",
-  "… and %d more": "… 외 %d개",
-  "Preparing…": "준비 중…"
+  "… and %d more": "… 외 %d개"
 }

@@ -78,6 +78,12 @@ class FileOperation: ObservableObject {
     /// Returns bytes transferred so far (typically the destination's size).
     var bytesTransferred: (() -> Int64)?
 
+    /// When true, `runOperation`'s generic failure alert is suppressed. Set by
+    /// coordinators (e.g. `runExtractOperation`) that handle `op.failures` themselves
+    /// (e.g. via a password-retry prompt) to avoid showing both a generic error alert
+    /// AND the custom recovery UI.
+    var suppressFailureReport: Bool = false
+
     var title: String { customTitle ?? type.displayName }
 
     /// Synchronous on-disk size of a file or directory (recursive).
