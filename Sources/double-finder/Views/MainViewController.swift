@@ -2084,6 +2084,23 @@ extension MainViewController: PanelViewControllerDelegate {
             if targets.count == 1 && targets[0].isDirectory {
                 add(tr("Add to Favorites"), #selector(ctxAddItemToFavorites))
             }
+            // System Services submenu (Finder-style), for selected local files.
+            // The selection comes from `targets` (the same panelState source the
+            // rest of the menu uses) and is stashed on the table, which vends it
+            // to AppKit's Services machinery via NSServicesMenuRequestor.
+            let serviceURLs = targets
+                .filter { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }
+                .map { URL(fileURLWithPath: $0.path) }
+            if let table = vc.fileTableView?.tableView, !serviceURLs.isEmpty {
+                table.serviceURLs = serviceURLs
+                vc.view.window?.makeFirstResponder(table)
+                let servicesItem = NSMenuItem(title: tr("Services"), action: nil, keyEquivalent: "")
+                let servicesSubmenu = NSMenu(title: tr("Services"))
+                servicesItem.submenu = servicesSubmenu
+                NSApp.servicesMenu = servicesSubmenu
+                menu.addItem(.separator())
+                menu.addItem(servicesItem)
+            }
         } else {
             add(tr("Paste"), #selector(ctxPasteFiles), key: "v", mask: [.command])
             add(tr("Copy Path"), #selector(actionCopyPath_menu), key: "c", mask: [.command, .shift])
