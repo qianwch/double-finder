@@ -61,5 +61,8 @@ final class TransferProviderTests: XCTestCase {
         let op = p.makeOperation(items: [file("a")], destPath: "/dst")
         XCTAssertEqual(op.type, .move)
         XCTAssertNil(op.transferUnits)
+        // Faithful to actionMove: NO byte-mode (plain item-count progress bar).
+        XCTAssertEqual(op.totalBytes, 0)
+        XCTAssertNil(op.bytesTransferred)
     }
 }
