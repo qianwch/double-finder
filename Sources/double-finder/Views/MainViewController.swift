@@ -888,8 +888,19 @@ class MainViewController: NSViewController {
                 return
             }
             if isS3 {
-                self.actionS3Transfer(items: items, destPath: dest, queued: queued,
-                                      downloading: s3Down)
+                if s3Down {
+                    // Downloading to a local dir: prompt to overwrite/skip when a
+                    // selected (top-level) item already exists locally, like a
+                    // local copy. Upload conflicts (remote keys) aren't checked.
+                    self.resolveConflicts(for: items, destination: dest) { [weak self] policy in
+                        guard let self = self, let policy = policy else { return }
+                        self.actionS3Transfer(items: items, destPath: dest, queued: queued,
+                                              downloading: true, conflictPolicy: policy)
+                    }
+                } else {
+                    self.actionS3Transfer(items: items, destPath: dest, queued: queued,
+                                          downloading: false)
+                }
                 return
             }
             self.resolveConflicts(for: items, destination: dest) { [weak self] policy in
@@ -1052,7 +1063,7 @@ class MainViewController: NSViewController {
     /// (folder → listAllKeys / local recursive enumeration), then run them with
     /// bounded concurrency and a count-based progress sheet.
     private func actionS3Transfer(items: [FileItem], destPath: String, queued: Bool,
-                                  downloading: Bool) {
+                                  downloading: Bool, conflictPolicy: ConflictPolicy = .overwrite) {
         let s3Panel = downloading ? activePanelVC.panelState : inactivePanelVC.panelState
         guard let client = s3Panel.s3Client else { return }
 
@@ -1069,6 +1080,12 @@ class MainViewController: NSViewController {
             if downloading {
                 // Each selected S3 item → file units.
                 for item in items {
+                    // Top-level conflict check: skip an item whose local
+                    // destination already exists when the user chose Skip.
+                    if conflictPolicy == .skip,
+                       FileOperation.destinationExists(source: item.path, in: destPath) {
+                        continue
+                    }
                     let (b, key) = parseS3Path(item.path)
                     guard let b = b else { continue }
                     if item.isDirectory || key.hasSuffix("/") {
