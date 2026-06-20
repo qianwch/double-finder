@@ -1065,10 +1065,27 @@ class MainViewController: NSViewController {
                     guard let b = b else { continue }
                     if item.isDirectory || key.hasSuffix("/") {
                         let folderKey = key.hasSuffix("/") ? key : key + "/"
-                        let keys = (try? await client.listAllKeys(bucket: b, prefix: folderKey)) ?? []
+                        // M3: surface listing failures instead of silently yielding zero units.
+                        let keys: [String]
+                        do {
+                            keys = try await client.listAllKeys(bucket: b, prefix: folderKey)
+                        } catch {
+                            let capturedError = error
+                            units.append(FileOperation.Unit(label: item.name) {
+                                throw capturedError
+                            })
+                            continue
+                        }
                         for k in keys where !k.hasSuffix("/") {
                             let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
                                                                             destDir: destPath)
+                            // C1: reject keys that escape the destination directory.
+                            guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
+                                units.append(FileOperation.Unit(label: k) {
+                                    throw FSUnsupportedError(message: "Unsafe path in key: \(k)")
+                                })
+                                continue
+                            }
                             units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent) {
                                 let dir = (local as NSString).deletingLastPathComponent
                                 try FileManager.default.createDirectory(atPath: dir,
@@ -1079,7 +1096,18 @@ class MainViewController: NSViewController {
                     } else {
                         let local = S3TransferPlanner.downloadLocalPath(key: key, folderKey: nil,
                                                                         destDir: destPath)
+                        // C1: reject keys that escape the destination directory.
+                        guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
+                            units.append(FileOperation.Unit(label: key) {
+                                throw FSUnsupportedError(message: "Unsafe path in key: \(key)")
+                            })
+                            continue
+                        }
+                        // M1: ensure parent directory exists before writing the file.
                         units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent) {
+                            let dir = (local as NSString).deletingLastPathComponent
+                            try FileManager.default.createDirectory(atPath: dir,
+                                                                    withIntermediateDirectories: true)
                             try await client.getObject(bucket: b, key: key, toLocalPath: local)
                         })
                     }
