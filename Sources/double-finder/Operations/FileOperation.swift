@@ -36,6 +36,21 @@ class FileOperation: ObservableObject {
     /// Items that failed (path + error). A single failure no longer aborts the
     /// rest of the batch; these are reported together once the operation ends.
     @Published var failures: [(path: String, error: Error)] = []
+    @Published var completedUnits: Int = 0
+    var totalUnits: Int = 0
+    var concurrency: Int = 6
+
+    /// One file-level unit of a concurrent transfer (e.g. one S3 getObject/putObject).
+    struct Unit {
+        let label: String
+        let body: () async throws -> Void
+        init(label: String, body: @escaping () async throws -> Void) {
+            self.label = label; self.body = body
+        }
+    }
+    /// When set, `start()` runs these units with bounded concurrency instead of
+    /// the serial sourcePaths loop.
+    var transferUnits: [Unit]?
 
     let type: OperationType
     let sourcePaths: [String]
@@ -92,6 +107,16 @@ class FileOperation: ObservableObject {
     }
 
     func start() {
+        if let units = transferUnits {
+            totalUnits = units.count
+            task = Task { @MainActor in
+                await runConcurrently(units)
+                progress = 1.0
+                isComplete = true
+                onComplete?()
+            }
+            return
+        }
         task = Task { @MainActor in
             let total = Double(sourcePaths.count)
             for (index, path) in sourcePaths.enumerated() {
@@ -135,6 +160,40 @@ class FileOperation: ObservableObject {
             progress = 1.0
             isComplete = true
             onComplete?()
+        }
+    }
+
+    /// Runs `units` with at most `concurrency` in flight. Updates currentFile /
+    /// completedUnits / failures on the main actor; one failure never aborts the
+    /// batch; honors `isCancelled`.
+    @MainActor
+    private func runConcurrently(_ units: [Unit]) async {
+        var index = 0
+        let limit = max(1, concurrency)
+
+        @MainActor func scheduleNext(into group: inout TaskGroup<Void>) {
+            guard !isCancelled, index < units.count else { return }
+            let unit = units[index]
+            index += 1
+            currentFile = unit.label
+            group.addTask { @MainActor in
+                do { try await unit.body() }
+                catch {
+                    self.error = error
+                    self.failures.append((unit.label, error))
+                }
+                self.completedUnits += 1
+                self.progress = self.totalUnits > 0
+                    ? Double(self.completedUnits) / Double(self.totalUnits) : 1
+            }
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<limit { scheduleNext(into: &group) }
+            while await group.next() != nil {
+                if isCancelled { group.cancelAll(); break }
+                scheduleNext(into: &group)
+            }
         }
     }
 

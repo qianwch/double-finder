@@ -43,8 +43,8 @@ class ProgressSheet: NSWindowController {
         progressBar.style = .bar
         progressBar.minValue = 0
         progressBar.maxValue = 1
-        progressBar.isIndeterminate = operation.indeterminate
-        if operation.indeterminate { progressBar.startAnimation(nil) }
+        progressBar.isIndeterminate = operation.indeterminate && operation.totalUnits == 0
+        if progressBar.isIndeterminate { progressBar.startAnimation(nil) }
         progressBar.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(progressBar)
 
@@ -104,6 +104,12 @@ class ProgressSheet: NSWindowController {
             progressBar.doubleValue = min(1.0, Double(bytes) / Double(operation.totalBytes))
             let speedStr = smoothedSpeed > 0 ? "\(Self.byteFmt.string(fromByteCount: Int64(smoothedSpeed)))/s" : "—"
             fileLabel.stringValue = "\(operation.currentFile)  ·  \(Self.byteFmt.string(fromByteCount: bytes)) / \(Self.byteFmt.string(fromByteCount: operation.totalBytes))  ·  \(speedStr)"
+        } else if operation.totalUnits > 0 {
+            progressBar.isIndeterminate = false
+            progressBar.minValue = 0
+            progressBar.maxValue = Double(operation.totalUnits)
+            progressBar.doubleValue = Double(operation.completedUnits)
+            fileLabel.stringValue = "\(operation.currentFile)  ·  \(operation.completedUnits)/\(operation.totalUnits)"
         } else {
             progressBar.doubleValue = operation.progress
             fileLabel.stringValue = operation.currentFile
