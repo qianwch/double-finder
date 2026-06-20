@@ -141,6 +141,16 @@ class PanelState: ObservableObject {
         return Self.fileSystem(for: currentPath)
     }
 
+    /// The S3 client for the active S3 session, or nil if not connected to S3.
+    var s3Client: S3Client? {
+        guard let conn = s3 else { return nil }
+        let raw = conn.endpoint.contains("://") ? conn.endpoint : "https://\(conn.endpoint)"
+        let ep = S3Endpoint(base: URL(string: raw) ?? URL(string: "https://s3.amazonaws.com")!,
+                            region: conn.region, pathStyle: conn.pathStyle)
+        let signer = S3Signer(accessKey: conn.accessKey, secretKey: s3Secret, region: conn.region)
+        return S3Client(endpoint: ep, signer: signer)
+    }
+
     func connectSFTP(_ conn: SFTPConnection, initialPath: String) {
         remoteArchive = nil
         remoteArchiveReturn = nil
