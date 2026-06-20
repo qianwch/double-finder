@@ -133,9 +133,24 @@ final class S3FS: VirtualFS {
             // Download: `from` is an S3 path, `to` is a local dir.
             let (sb, sk) = parseS3Path(from)
             guard let sb = sb, !sk.isEmpty else { throw FSUnsupportedError(message: "Unsupported copy") }
-            let name = (sk as NSString).lastPathComponent
-            let dest = (to as NSString).appendingPathComponent(name)
-            try await client.getObject(bucket: sb, key: sk, toLocalPath: dest)
+            if sk.hasSuffix("/") {
+                // Folder: S3 has no folder object to GET (a getObject on the
+                // prefix key fails). Recursively download every object under it,
+                // recreating the directory tree below `to/<foldername>/`.
+                let folderName = (String(sk.dropLast()) as NSString).lastPathComponent
+                let keys = try await client.listAllKeys(bucket: sb, prefix: sk)
+                for key in keys where !key.hasSuffix("/") {   // skip placeholder objects
+                    let rel = String(key.dropFirst(sk.count))
+                    let localPath = (to as NSString).appendingPathComponent(folderName + "/" + rel)
+                    let dir = (localPath as NSString).deletingLastPathComponent
+                    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                    try await client.getObject(bucket: sb, key: key, toLocalPath: localPath)
+                }
+            } else {
+                let name = (sk as NSString).lastPathComponent
+                let dest = (to as NSString).appendingPathComponent(name)
+                try await client.getObject(bucket: sb, key: sk, toLocalPath: dest)
+            }
         }
     }
 }
