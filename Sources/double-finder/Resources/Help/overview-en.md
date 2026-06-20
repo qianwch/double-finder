@@ -15,13 +15,16 @@ Each panel has folder tabs: **⌘T** opens a new tab, **⌘W** closes it, click 
 **⌘A** selects all. Type **+ / - / \*** to select, unselect, or invert by wildcard pattern. **⌘F** opens a quick filter to narrow the list as you type.
 
 **File Operations (function keys)**
-**F3** Quick Look · **F4** edit · **F5** copy · **F6** move · **F7** new folder · **F8** delete. **⌘⌫** moves to Trash instead of deleting permanently. Rename a file by clicking its name or via the right-click menu.
+**F3** Quick Look · **F4** edit · **F5** copy · **F6** move · **F7** new folder · **F8** delete. **⌘⌫** moves to Trash instead of deleting permanently. When a name already exists at the destination you get an **Overwrite / Skip / Cancel** prompt. Rename a file by clicking its name or via the right-click menu.
 
 **Archives**
-Browse zip / tar / 7z / rar and more like folders — just press Return on them. **⌥F5** packs the selection into the other panel; **⌥F6** extracts an archive.
+Browse zip / tar / 7z / rar and more like folders — just press Return on them. **⌥F5** packs the selection into the other panel; **⌥F6** extracts an archive (with a progress sheet you can cancel; encrypted archives prompt for a password).
 
-**SFTP**
-**⌘N** opens an SFTP connection; remote folders (and archives on them) browse like local ones.
+**Connect to Server**
+**⌘K** opens one connection window for **SFTP**, **S3-compatible object storage** (AWS S3, MinIO, R2, Huawei OBS, …), and **SMB/NAS** — with live Bonjour discovery of servers on your network and a saved address book. Remote folders (and archives on SFTP) browse like local ones; S3 buckets/objects browse as folders/files. Copying to/from a server shows a progress bar (count-based for S3) and prompts Overwrite/Skip/Cancel on name conflicts.
+
+**Editing remote files**
+Press **F4** on an S3 or SFTP file to edit a local copy. After you save and switch back to Double Finder, it offers to upload your changes back to the server.
 
 **Find & Sync**
 **⌘⇧F** finds files by name or content. The Commands menu offers directory compare & synchronize.
