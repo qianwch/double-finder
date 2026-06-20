@@ -87,4 +87,23 @@ final class S3XMLTests: XCTestCase {
         XCTAssertEqual(ep.url(bucket: "buck", key: "a.txt", query: [:]).absoluteString,
                        "https://buck.s3.amazonaws.com/a.txt")
     }
+
+    /// The request URL must be sent with the SAME strict RFC3986 encoding the
+    /// SigV4 signer uses, or the server rejects it with SignatureDoesNotMatch.
+    /// `$`, `+`, space in a key must reach the wire as %24 / %2B / %20.
+    func testEndpointEncodesSpecialCharsInPath() {
+        let ep = S3Endpoint(base: URL(string: "https://minio.local:9000")!,
+                            region: "us-east-1", pathStyle: true)
+        let s = ep.url(bucket: "buck", key: "dir/$loader/a+b c.js", query: [:]).absoluteString
+        XCTAssertEqual(s, "https://minio.local:9000/buck/dir/%24loader/a%2Bb%20c.js")
+    }
+
+    /// Query values must be strict-encoded too (slash → %2F, $ → %24).
+    func testEndpointEncodesQuery() {
+        let ep = S3Endpoint(base: URL(string: "https://minio.local:9000")!,
+                            region: "us-east-1", pathStyle: true)
+        let s = ep.url(bucket: "buck", key: "",
+                       query: ["list-type": "2", "prefix": "a/$loader/"]).absoluteString
+        XCTAssertEqual(s, "https://minio.local:9000/buck?list-type=2&prefix=a%2F%24loader%2F")
+    }
 }
