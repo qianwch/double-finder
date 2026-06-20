@@ -1,6 +1,6 @@
 import Foundation
 
-struct SFTPConnection {
+struct SFTPConnection: Equatable {
     var host: String
     var user: String
     var port: Int = 22
