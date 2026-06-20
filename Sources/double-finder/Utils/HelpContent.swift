@@ -65,7 +65,7 @@ enum HelpContent {
         ShortcutGroup(titleKey: "Search", shortcuts: [
             Shortcut(nameKey: "Find Files", keys: "⌘⇧F"),
             Shortcut(nameKey: "Multi-Rename", keys: "⌘M"),
-            Shortcut(nameKey: "SFTP Connection", keys: "⌘N"),
+            Shortcut(nameKey: "Connect to Server", keys: "⌘K"),
         ]),
     ]
 

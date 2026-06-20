@@ -21,10 +21,23 @@ SwiftUI), inspired by the Total Commander workflow.
   family, 7z, and read-only rar, iso, cpio, xar, and raw gz/bz2/xz/zst — no
   external tools required. Encrypted zip is supported with a password.
   Encrypted 7z uses a bundled `7zz` (see below).
-- **SFTP:** browse remote servers over `ssh`/`scp` (⌘N), including streaming
-  browse of remote archives without downloading the whole file.
+- **Connect to Server (⌘K):** one unified connection window for **SFTP**,
+  **S3-compatible object storage**, and **SMB/NAS** — with live Bonjour
+  discovery of servers on the local network and a saved address book.
+  - **SFTP:** browse remote servers over `ssh`/`scp`, including streaming
+    browse of remote archives without downloading the whole file.
+  - **S3:** any S3-compatible endpoint (AWS S3, MinIO, Cloudflare R2, Huawei
+    OBS, …) via native AWS SigV4 signing — zero external CLI/SDK. Browse
+    buckets/objects, concurrent multi-file up/download with a count-based
+    progress bar, and folder upload.
+  - **SMB:** mount via the system's NetFS with native authentication — no
+    Finder window.
+- **Edit remote files (F4):** editing an S3/SFTP file downloads a temp copy;
+  when Double Finder regains focus and the copy changed, it offers to upload
+  it back (Total Commander–style write-back).
 - **File operations:** copy/move with a progress sheet and transfer queue,
-  in-place rename, batch rename (⌘M), cut/paste, drag & drop, Open With,
+  **overwrite/skip/cancel conflict prompts** on every backend (local, SFTP,
+  S3), in-place rename, batch rename (⌘M), cut/paste, drag & drop, Open With,
   trash (⌘⌫) and permanent delete (F8).
 - **Power tools:** quick filter (⌘F), select by pattern (+/-/*), find files
   (⌘⇧F) incl. content & Spotlight, directory compare & sync, branch view
