@@ -889,17 +889,34 @@ class MainViewController: NSViewController {
             }
             if isS3 {
                 if s3Down {
-                    // Downloading to a local dir: prompt to overwrite/skip when a
-                    // selected (top-level) item already exists locally, like a
-                    // local copy. Upload conflicts (remote keys) aren't checked.
-                    self.resolveConflicts(for: items, destination: dest) { [weak self] policy in
+                    // Downloading to a local dir: top-level conflicts are local
+                    // files that already exist (synchronous check).
+                    let conflicts = items.filter {
+                        FileOperation.destinationExists(source: $0.path, in: dest)
+                    }
+                    self.promptConflicts(conflicts) { [weak self] policy in
                         guard let self = self, let policy = policy else { return }
+                        let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
                         self.actionS3Transfer(items: items, destPath: dest, queued: queued,
-                                              downloading: true, conflictPolicy: policy)
+                                              downloading: true, skipNames: skip)
                     }
                 } else {
-                    self.actionS3Transfer(items: items, destPath: dest, queued: queued,
-                                          downloading: false)
+                    // Uploading to S3: top-level conflicts are existing remote
+                    // objects/prefixes — list the destination once to find them.
+                    let dstFS = self.inactivePanelVC.panelState.fs
+                    Task {
+                        let remote = (try? await dstFS.listDirectory(dest)) ?? []
+                        let remoteNames = Set(remote.map { $0.name })
+                        let conflicts = items.filter { remoteNames.contains($0.name) }
+                        await MainActor.run {
+                            self.promptConflicts(conflicts) { [weak self] policy in
+                                guard let self = self, let policy = policy else { return }
+                                let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
+                                self.actionS3Transfer(items: items, destPath: dest, queued: queued,
+                                                      downloading: false, skipNames: skip)
+                            }
+                        }
+                    }
                 }
                 return
             }
@@ -1063,7 +1080,7 @@ class MainViewController: NSViewController {
     /// (folder → listAllKeys / local recursive enumeration), then run them with
     /// bounded concurrency and a count-based progress sheet.
     private func actionS3Transfer(items: [FileItem], destPath: String, queued: Bool,
-                                  downloading: Bool, conflictPolicy: ConflictPolicy = .overwrite) {
+                                  downloading: Bool, skipNames: Set<String> = []) {
         let s3Panel = downloading ? activePanelVC.panelState : inactivePanelVC.panelState
         guard let client = s3Panel.s3Client else { return }
 
@@ -1080,12 +1097,8 @@ class MainViewController: NSViewController {
             if downloading {
                 // Each selected S3 item → file units.
                 for item in items {
-                    // Top-level conflict check: skip an item whose local
-                    // destination already exists when the user chose Skip.
-                    if conflictPolicy == .skip,
-                       FileOperation.destinationExists(source: item.path, in: destPath) {
-                        continue
-                    }
+                    // Top-level conflict skip (caller resolved Overwrite/Skip).
+                    if skipNames.contains(item.name) { continue }
                     let (b, key) = parseS3Path(item.path)
                     guard let b = b else { continue }
                     if item.isDirectory || key.hasSuffix("/") {
@@ -1143,6 +1156,8 @@ class MainViewController: NSViewController {
                 guard let db = db else { return units }
                 let destPrefix = dkDirRaw
                 for item in items {
+                    // Top-level conflict skip (caller resolved Overwrite/Skip).
+                    if skipNames.contains(item.name) { continue }
                     var isDir: ObjCBool = false
                     FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir)
                     if isDir.boolValue {
