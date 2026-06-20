@@ -116,6 +116,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         savedTable.delegate = self
         savedTable.tag = 1
         savedTable.rowHeight = 20
+        savedTable.target = self
+        savedTable.doubleAction = #selector(connectClicked)
         savedScroll.documentView = savedTable
         content.addSubview(savedScroll)
 
@@ -138,6 +140,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         discoveredTable.delegate = self
         discoveredTable.tag = 2
         discoveredTable.rowHeight = 20
+        discoveredTable.target = self
+        discoveredTable.doubleAction = #selector(connectClicked)
         discScroll.documentView = discoveredTable
         content.addSubview(discScroll)
 

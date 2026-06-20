@@ -41,17 +41,3 @@ enum SMBMounter {
         }
     }
 }
-
-/// Recent SMB server URLs, most-recent-first (max 10).
-enum SMBBookmarkStore {
-    private static let key = "SMBBookmarks"
-    static func load() -> [String] {
-        UserDefaults.standard.stringArray(forKey: key) ?? []
-    }
-    static func add(_ url: String) {
-        var list = load().filter { $0 != url }
-        list.insert(url, at: 0)
-        if list.count > 10 { list = Array(list.prefix(10)) }
-        UserDefaults.standard.set(list, forKey: key)
-    }
-}
