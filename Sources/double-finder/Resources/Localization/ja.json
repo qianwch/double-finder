@@ -135,6 +135,7 @@
   "Extract to Other Panel": "反対パネルへ展開",
   "Extract to:": "展開先：",
   "Extract “%@”": "「%@」を展開",
+  "Extracting": "解凍中",
   "Extracting archives is not supported here": "ここではアーカイブの展開はサポートされていません",
   "Fast": "高速",
   "Favorites": "お気に入り",
@@ -240,6 +241,7 @@
   "Permanently delete %@?": "%@ を完全に削除しますか？",
   "Permissions": "アクセス権",
   "Port:": "ポート：",
+  "Preparing…": "準備中…",
   "Press keys…": "キーを押してください…",
   "Project Page": "プロジェクトページ",
   "Quick Filter": "クイックフィルター",
@@ -345,6 +347,5 @@
   "“%@” is encrypted. Enter password to browse:": "「%@」は暗号化されています。閲覧するにはパスワードを入力してください：",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "「%@」は実行可能ファイルではありません。7z / 7zz / 7za のバイナリを選ぶか、欄を空にして自動検出してください。",
   "“%@” was changed. Upload it back to %@?": "「%@」が変更されました。%@ にアップロードして戻しますか？",
-  "… and %d more": "…他 %d 件",
-  "Preparing…": "準備中…"
+  "… and %d more": "…他 %d 件"
 }

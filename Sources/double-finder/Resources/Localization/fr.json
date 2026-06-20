@@ -135,6 +135,7 @@
   "Extract to Other Panel": "Extraire vers l’autre panneau",
   "Extract to:": "Extraire vers :",
   "Extract “%@”": "Extraire « %@ »",
+  "Extracting": "Extraction…",
   "Extracting archives is not supported here": "L’extraction d’archives n’est pas prise en charge ici",
   "Fast": "Rapide",
   "Favorites": "Favoris",
@@ -240,6 +241,7 @@
   "Permanently delete %@?": "Supprimer définitivement %@ ?",
   "Permissions": "Autorisations",
   "Port:": "Port :",
+  "Preparing…": "Préparation…",
   "Press keys…": "Appuyez sur les touches…",
   "Project Page": "Page du projet",
   "Quick Filter": "Filtre rapide",
@@ -345,6 +347,5 @@
   "“%@” is encrypted. Enter password to browse:": "« %@ » est chiffré. Saisissez le mot de passe pour parcourir :",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "« %@ » n'est pas un fichier exécutable. Choisissez le binaire 7z / 7zz / 7za, ou laissez le champ vide pour la détection automatique.",
   "“%@” was changed. Upload it back to %@?": "« %@ » a été modifié. Le réuploader vers %@ ?",
-  "… and %d more": "… et %d de plus",
-  "Preparing…": "Préparation…"
+  "… and %d more": "… et %d de plus"
 }

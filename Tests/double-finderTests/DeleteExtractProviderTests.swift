@@ -42,4 +42,15 @@ final class DeleteExtractProviderTests: XCTestCase {
         // Local Trash uses FileOperation's built-in fs.delete (trashItem) — no perItemOperation.
         XCTAssertNil(op.perItemOperation)
     }
+
+    func testExtractProviderConfig() {
+        let p = ExtractProvider()
+        let item = FileItem(id: UUID(), name: "a.zip", path: "/p/a.zip", isDirectory: false,
+                            isArchive: true, size: 1, modified: Date(), isHidden: false,
+                            isSymlink: false, permissions: "rw-r--r--")
+        let op = p.makeOperation(items: [item], destPath: "/dst", password: nil)
+        XCTAssertEqual(op.customTitle, "Extracting")
+        XCTAssertTrue(op.indeterminate)
+        XCTAssertNotNil(op.perItemOperation)
+    }
 }
