@@ -101,3 +101,69 @@ struct LocalMoveProvider: TransferProvider {
         return op
     }
 }
+
+// MARK: - SFTPTransferProvider
+
+/// Builds a `FileOperation` for SFTP download (remote → local) or upload
+/// (local → remote).  Faithfully extracted from `MainViewController.runSFTPTransfer`
+/// + the download/upload closures in `actionSFTPTransfer`.
+///
+/// - **download**: byte-mode (totalBytes = Σitem.size; bytesTransferred polls
+///   sizeOnDisk of already-written files); `SFTPFS.copy(from:to:onProcess:)`.
+/// - **upload**: indeterminate (no per-byte progress available);
+///   `SFTPFS.upload(localPath:to:onProcess:)`.
+///
+/// In both cases `perItemOperation` captures the scp `Process` into
+/// `op.processBox` so the progress sheet's Cancel button works.
+struct SFTPTransferProvider: TransferProvider {
+    enum Direction { case download, upload }
+
+    let connection: SFTPConnection
+    let direction: Direction
+
+    init(connection: SFTPConnection, direction: Direction) {
+        self.connection = connection
+        self.direction = direction
+    }
+
+    @MainActor var verb: String {
+        direction == .download ? tr("Download") : tr("Upload")
+    }
+
+    @MainActor
+    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+        let op = FileOperation(type: .copy,
+                               sources: items.map { $0.path },
+                               destination: destPath)
+        op.customTitle = direction == .download ? tr("Downloading") : tr("Uploading")
+
+        let conn = connection
+        let byPath = Dictionary(items.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+
+        switch direction {
+        case .download:
+            let total = items.reduce(Int64(0)) { $0 + $1.size }
+            op.totalBytes = total
+            let names = items.map { $0.name }
+            let dest = destPath
+            op.bytesTransferred = {
+                names.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk((dest as NSString).appendingPathComponent($1)) }
+            }
+            op.perItemOperation = { [weak op] path in
+                guard let op = op, byPath[path] != nil else { return }
+                let fs = SFTPFS(connection: conn)
+                try await fs.copy(from: path, to: destPath) { op.processBox.process = $0 }
+            }
+
+        case .upload:
+            op.indeterminate = true
+            op.perItemOperation = { [weak op] path in
+                guard let op = op, byPath[path] != nil else { return }
+                let fs = SFTPFS(connection: conn)
+                try await fs.upload(localPath: path, to: destPath) { op.processBox.process = $0 }
+            }
+        }
+
+        return op
+    }
+}

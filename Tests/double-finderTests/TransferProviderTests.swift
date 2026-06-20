@@ -65,4 +65,23 @@ final class TransferProviderTests: XCTestCase {
         XCTAssertEqual(op.totalBytes, 0)
         XCTAssertNil(op.bytesTransferred)
     }
+
+    func testSFTPDownloadByteMode() {
+        let conn = SFTPConnection(host: "h", user: "u")
+        let p = SFTPTransferProvider(connection: conn, direction: .download)
+        XCTAssertEqual(p.verb, "Download")
+        let op = p.makeOperation(items: [file("a"), file("b")], destPath: "/dst")
+        XCTAssertNotNil(op.perItemOperation)
+        XCTAssertGreaterThan(op.totalBytes, 0)        // download knows sizes upfront
+        XCTAssertNotNil(op.bytesTransferred)
+    }
+
+    func testSFTPUploadIndeterminate() {
+        let conn = SFTPConnection(host: "h", user: "u")
+        let p = SFTPTransferProvider(connection: conn, direction: .upload)
+        XCTAssertEqual(p.verb, "Upload")
+        let op = p.makeOperation(items: [file("a")], destPath: "/dst")
+        XCTAssertNotNil(op.perItemOperation)
+        XCTAssertTrue(op.indeterminate)               // upload: no per-byte progress
+    }
 }
