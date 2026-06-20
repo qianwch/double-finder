@@ -25,6 +25,23 @@ struct S3Signer {
         return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
     }
 
+    /// Strict RFC3986-encoded path (keeps "/"). The request MUST be sent with
+    /// this exact encoding so the server's canonical request matches ours.
+    static func canonicalPath(_ path: String) -> String {
+        uriEncode(path.isEmpty ? "/" : path, encodeSlash: false)
+    }
+
+    /// Strict-encoded, sorted canonical query string from raw (unencoded) items.
+    static func canonicalQueryString(_ items: [(name: String, value: String)]) -> String {
+        var encoded: [(String, String)] = []
+        for item in items {
+            encoded.append((uriEncode(item.name, encodeSlash: true),
+                            uriEncode(item.value, encodeSlash: true)))
+        }
+        encoded.sort { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
+        return encoded.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+    }
+
     /// Returns headers to add to the request: Authorization, x-amz-date,
     /// x-amz-content-sha256.
     func authorizationHeaders(method: String, url: URL,
@@ -50,18 +67,14 @@ struct S3Signer {
         let canonicalHeaders = lowered.map { "\($0.0):\($0.1)\n" }.joined()
         let signedHeaders = lowered.map { $0.0 }.joined(separator: ";")
 
-        // Canonical URI (path, slashes preserved) + canonical query (sorted, encoded).
-        let canonicalURI = Self.uriEncode(url.path.isEmpty ? "/" : url.path, encodeSlash: false)
-        let rawQueryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        let encodedQueryItems: [(String, String)] = rawQueryItems.map { item in
-            let k = Self.uriEncode(item.name, encodeSlash: true)
-            let v = Self.uriEncode(item.value ?? "", encodeSlash: true)
-            return (k, v)
-        }
-        let sortedQueryItems = encodedQueryItems.sorted { lhs, rhs in
-            lhs.0 == rhs.0 ? lhs.1 < rhs.1 : lhs.0 < rhs.0
-        }
-        let canonicalQuery = sortedQueryItems.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+        // Sign the EXACT bytes on the wire: S3Endpoint builds the URL with strict
+        // RFC3986 percent-encoding, so the canonical request must read that
+        // encoded path/query back as-is (not re-encode a decoded url.path, which
+        // would diverge for keys with "$", "+", spaces, trailing "/").
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let encodedPath = comps?.percentEncodedPath ?? ""
+        let canonicalURI = encodedPath.isEmpty ? "/" : encodedPath
+        let canonicalQuery = comps?.percentEncodedQuery ?? ""
 
         let canonicalRequest = [
             method, canonicalURI, canonicalQuery, canonicalHeaders, signedHeaders, payloadHash,

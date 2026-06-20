@@ -14,20 +14,20 @@ struct S3Endpoint {
 
     func url(bucket: String?, key: String, query: [String: String]) -> URL {
         var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        var path = "/"
         if let bucket = bucket {
             if pathStyle {
-                comps.path = "/" + bucket + (key.isEmpty ? "" : "/" + key)
+                path = "/" + bucket + (key.isEmpty ? "" : "/" + key)
             } else {
                 comps.host = bucket + "." + (base.host ?? "")
-                comps.path = "/" + key
+                path = "/" + key
             }
-        } else {
-            comps.path = "/"
         }
-        if comps.path.isEmpty { comps.path = "/" }
+        // Strict RFC3986 encoding (must match the SigV4 signer byte-for-byte).
+        comps.percentEncodedPath = S3Signer.canonicalPath(path)
         if !query.isEmpty {
-            comps.queryItems = query.sorted { $0.key < $1.key }
-                .map { URLQueryItem(name: $0.key, value: $0.value) }
+            let items = query.map { (name: $0.key, value: $0.value) }
+            comps.percentEncodedQuery = S3Signer.canonicalQueryString(items)
         }
         return comps.url!
     }
