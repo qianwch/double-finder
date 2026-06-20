@@ -1048,25 +1048,83 @@ class MainViewController: NSViewController {
         }
     }
 
-    /// URLSession-based S3 transfer (download: active panel is S3; upload: inactive panel is S3).
+    /// Concurrent S3 transfer: expand each selected item into file-level units
+    /// (folder → listAllKeys / local recursive enumeration), then run them with
+    /// bounded concurrency and a count-based progress sheet.
     private func actionS3Transfer(items: [FileItem], destPath: String, queued: Bool,
                                   downloading: Bool) {
-        let srcFS = activePanelVC.panelState.fs
-        let dstFS = inactivePanelVC.panelState.fs
-        let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
-        op.indeterminate = true
-        op.perItemOperation = { path in
+        let s3Panel = downloading ? activePanelVC.panelState : inactivePanelVC.panelState
+        guard let client = s3Panel.s3Client else { return }
+
+        Task { @MainActor in
+            var units: [FileOperation.Unit] = []
             if downloading {
-                // S3 object → local dir: srcFS is S3FS, `from` is an S3 path → getObject
-                try await srcFS.copy(from: path, to: destPath)
+                // Each selected S3 item → file units.
+                for item in items {
+                    let (b, key) = parseS3Path(item.path)
+                    guard let b = b else { continue }
+                    if item.isDirectory || key.hasSuffix("/") {
+                        let folderKey = key.hasSuffix("/") ? key : key + "/"
+                        let keys = (try? await client.listAllKeys(bucket: b, prefix: folderKey)) ?? []
+                        for k in keys where !k.hasSuffix("/") {
+                            let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
+                                                                            destDir: destPath)
+                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent) {
+                                let dir = (local as NSString).deletingLastPathComponent
+                                try FileManager.default.createDirectory(atPath: dir,
+                                                                        withIntermediateDirectories: true)
+                                try await client.getObject(bucket: b, key: k, toLocalPath: local)
+                            })
+                        }
+                    } else {
+                        let local = S3TransferPlanner.downloadLocalPath(key: key, folderKey: nil,
+                                                                        destDir: destPath)
+                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent) {
+                            try await client.getObject(bucket: b, key: key, toLocalPath: local)
+                        })
+                    }
+                }
             } else {
-                // local file → S3 prefix: dstFS is S3FS, `from` is a local path → putObject
-                try await dstFS.copy(from: path, to: destPath)
+                // Upload: each selected local item → file units; dest is /bucket/prefix.
+                let (db, dkDirRaw) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
+                guard let db = db else { return }
+                let destPrefix = dkDirRaw
+                for item in items {
+                    var isDir: ObjCBool = false
+                    FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir)
+                    if isDir.boolValue {
+                        let root = item.path
+                        let files = (FileManager.default.subpaths(atPath: root) ?? []).compactMap { sub -> String? in
+                            let full = (root as NSString).appendingPathComponent(sub)
+                            var d: ObjCBool = false
+                            FileManager.default.fileExists(atPath: full, isDirectory: &d)
+                            return d.boolValue ? nil : full
+                        }
+                        for f in files {
+                            let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
+                                                                  destPrefix: destPrefix)
+                            units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent) {
+                                try await client.putObject(bucket: db, key: key, fromLocalPath: f)
+                            })
+                        }
+                    } else {
+                        let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
+                                                              destPrefix: destPrefix)
+                        units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent) {
+                            try await client.putObject(bucket: db, key: key, fromLocalPath: item.path)
+                        })
+                    }
+                }
             }
-        }
-        dispatchOperation(op, queued: queued) { [weak self] in
-            self?.activePanelVC.panelState.refresh()
-            self?.inactivePanelVC.panelState.refresh()
+
+            let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
+            op.customTitle = downloading ? tr("Downloading") : tr("Uploading")
+            op.transferUnits = units
+            op.concurrency = 6
+            self.dispatchOperation(op, queued: queued) { [weak self] in
+                self?.activePanelVC.panelState.refresh()
+                self?.inactivePanelVC.panelState.refresh()
+            }
         }
     }
 
