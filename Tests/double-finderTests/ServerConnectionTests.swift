@@ -93,4 +93,23 @@ final class ServerConnectionTests: XCTestCase {
         let sftp = ServerConnection.sftp(SFTPConnection(host: "h", user: "u"))
         XCTAssertEqual(sftp.kindLabel, "SFTP")
     }
+
+    func testGrouped() {
+        let conns: [ServerConnection] = [
+            .s3(S3Connection(name: "o", endpoint: "https://e", region: "r", bucket: "", accessKey: "a", pathStyle: true)),
+            .smb(SMBConnection(name: "nas", host: "h")),
+            .sftp(SFTPConnection(host: "h1", user: "u")),
+            .sftp(SFTPConnection(host: "h2", user: "u")),
+        ]
+        let g = ServerConnectionStore.grouped(conns)
+        // order: SFTP, S3, SMB (non-empty only); SFTP has 2
+        XCTAssertEqual(g.map { $0.kind }, [.sftp, .s3, .smb])
+        XCTAssertEqual(g[0].items.count, 2)
+        XCTAssertEqual(g[1].items.count, 1)
+        XCTAssertEqual(g[2].items.count, 1)
+        // empty input → no groups
+        XCTAssertTrue(ServerConnectionStore.grouped([]).isEmpty)
+        // only one kind → one group
+        XCTAssertEqual(ServerConnectionStore.grouped([.smb(SMBConnection(name: "x", host: "h"))]).map { $0.kind }, [.smb])
+    }
 }
