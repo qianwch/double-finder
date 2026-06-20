@@ -39,4 +39,50 @@ final class ServerConnectionTests: XCTestCase {
         XCTAssertNil(ServerConnection(dict: ["kind": "ftp", "host": "x"]))
         XCTAssertNil(ServerConnection(dict: ["host": "x"]))   // no kind
     }
+
+    private func freshDefaults() -> UserDefaults {
+        let suite = "ServerConnTest-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        return d
+    }
+
+    func testStoreAddLoadDelete() {
+        let d = freshDefaults()
+        let a = ServerConnection.smb(SMBConnection(name: "NAS", host: "nas.local"))
+        let b = ServerConnection.s3(S3Connection(name: "minio", endpoint: "https://m:9000",
+                                                 region: "us-east-1", bucket: "", accessKey: "AK", pathStyle: true))
+        ServerConnectionStore.add(a, defaults: d)
+        ServerConnectionStore.add(b, defaults: d)
+        XCTAssertEqual(ServerConnectionStore.load(defaults: d).count, 2)
+        // add same name+kind replaces (no dupe)
+        ServerConnectionStore.add(a, defaults: d)
+        XCTAssertEqual(ServerConnectionStore.load(defaults: d).count, 2)
+        ServerConnectionStore.delete(name: "NAS", kind: .smb, defaults: d)
+        let left = ServerConnectionStore.load(defaults: d)
+        XCTAssertEqual(left.count, 1)
+        XCTAssertEqual(left.first?.kind, .s3)
+    }
+
+    func testMigrationFromLegacyKeys() {
+        let d = freshDefaults()
+        // legacy SFTPBookmarks (dict shape used by SFTPBookmark)
+        d.set([["name": "srv", "host": "10.0.0.9", "port": "22", "user": "ubuntu",
+                "key": "~/.ssh/id_rsa", "path": "/home/ubuntu"]], forKey: "SFTPBookmarks")
+        // legacy S3Connections
+        d.set([["name": "minio", "endpoint": "https://m:9000", "region": "us-east-1",
+                "bucket": "data", "accessKey": "AK", "pathStyle": "1"]], forKey: "S3Connections")
+        // legacy SMBBookmarks (array of smb:// url strings)
+        d.set(["smb://qian-nas.local"], forKey: "SMBBookmarks")
+
+        ServerConnectionStore.migrateIfNeeded(defaults: d)
+        let conns = ServerConnectionStore.load(defaults: d)
+        XCTAssertEqual(Set(conns.map { $0.kind }), Set([.sftp, .s3, .smb]))
+        XCTAssertTrue(d.bool(forKey: "ServerConnectionsMigrated"))
+        // idempotent: second call doesn't duplicate
+        ServerConnectionStore.migrateIfNeeded(defaults: d)
+        XCTAssertEqual(ServerConnectionStore.load(defaults: d).count, 3)
+        // legacy keys preserved
+        XCTAssertNotNil(d.array(forKey: "SFTPBookmarks"))
+    }
 }

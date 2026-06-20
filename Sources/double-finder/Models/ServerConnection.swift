@@ -74,3 +74,67 @@ enum ServerConnection: Equatable {
         }
     }
 }
+
+/// Unified address book for all server connections (UserDefaults `ServerConnections`).
+enum ServerConnectionStore {
+    private static let key = "ServerConnections"
+    private static let migratedFlag = "ServerConnectionsMigrated"
+
+    static func load(defaults: UserDefaults = .standard) -> [ServerConnection] {
+        let raw = defaults.array(forKey: key) as? [[String: String]] ?? []
+        return raw.compactMap(ServerConnection.init(dict:))
+    }
+
+    static func save(_ conns: [ServerConnection], defaults: UserDefaults = .standard) {
+        defaults.set(conns.map { $0.dict }, forKey: key)
+    }
+
+    /// Add or replace by (name, kind).
+    static func add(_ conn: ServerConnection, defaults: UserDefaults = .standard) {
+        var conns = load(defaults: defaults)
+        conns.removeAll { $0.kind == conn.kind && $0.name == conn.name }
+        conns.append(conn)
+        save(conns, defaults: defaults)
+    }
+
+    static func delete(name: String, kind: ServerKind, defaults: UserDefaults = .standard) {
+        var conns = load(defaults: defaults)
+        conns.removeAll { $0.kind == kind && $0.name == name }
+        save(conns, defaults: defaults)
+    }
+
+    /// One-time migration of the three legacy address books into the unified one.
+    /// Reads raw UserDefaults dicts (no dependency on the old sheet code).
+    static func migrateIfNeeded(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: migratedFlag) else { return }
+        var migrated = load(defaults: defaults)
+
+        // SFTP: SFTPBookmark dict shape {name,host,port,user,key,path}
+        let sftpRaw = defaults.array(forKey: "SFTPBookmarks") as? [[String: String]] ?? []
+        for b in sftpRaw {
+            guard let host = b["host"], !host.isEmpty else { continue }
+            let c = SFTPConnection(host: host, user: b["user"] ?? "",
+                                   port: Int(b["port"] ?? "22") ?? 22,
+                                   keyPath: b["key"] ?? "~/.ssh/id_rsa",
+                                   remotePath: b["path"] ?? "~")
+            migrated.append(.sftp(c))
+        }
+
+        // S3: S3Connections (already the right dict shape).
+        let s3Raw = defaults.array(forKey: "S3Connections") as? [[String: String]] ?? []
+        for d in s3Raw { if let c = S3Connection(dict: d) { migrated.append(.s3(c)) } }
+
+        // SMB: SMBBookmarks (array of smb:// url strings).
+        let smbRaw = defaults.array(forKey: "SMBBookmarks") as? [String] ?? []
+        for urlString in smbRaw {
+            guard let host = URL(string: urlString)?.host else { continue }
+            migrated.append(.smb(SMBConnection(name: host, host: host)))
+        }
+
+        // De-dup by (kind, name) keeping first.
+        var seen = Set<String>()
+        let deduped = migrated.filter { seen.insert("\($0.kind.rawValue)|\($0.name)").inserted }
+        save(deduped, defaults: defaults)
+        defaults.set(true, forKey: migratedFlag)
+    }
+}
