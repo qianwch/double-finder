@@ -1775,6 +1775,7 @@ class MainViewController: NSViewController {
         let sheet = ServerConnectionSheet()
         serverSheet = sheet
         sheet.onConnect = { [weak self] conn, secret in self?.connect(conn, s3Secret: secret) }
+        sheet.onClose = { [weak self] in self?.serverSheet = nil }
         sheet.show(on: view.window)
     }
 
@@ -1782,7 +1783,16 @@ class MainViewController: NSViewController {
     func connect(_ conn: ServerConnection, s3Secret: String?) {
         switch conn {
         case .sftp(let c):
-            activePanelVC.panelState.connectSFTP(c, initialPath: c.remotePath)
+            let wanted = c.remotePath.trimmingCharacters(in: .whitespaces)
+            if wanted.isEmpty || wanted == "~" {
+                let fs = SFTPFS(connection: c)
+                Task {
+                    let home = await fs.resolveHome()
+                    await MainActor.run { self.activePanelVC.panelState.connectSFTP(c, initialPath: home) }
+                }
+            } else {
+                activePanelVC.panelState.connectSFTP(c, initialPath: wanted)
+            }
         case .s3(let c):
             let initial = c.bucket.isEmpty ? "/" : "/" + c.bucket
             activePanelVC.panelState.connectS3(c, secret: s3Secret ?? "", initialPath: initial)
