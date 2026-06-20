@@ -19,8 +19,7 @@ class MainViewController: NSViewController {
     private var openWithDelegates: [OpenWithMenuDelegate] = []
     private let transferQueue = TransferQueue()
     private var queueWindow: QueueWindowController?
-    private var activeSFTPSheet: SFTPConnectionSheet?
-    private var s3Sheet: S3ConnectionSheet?
+    private var serverSheet: ServerConnectionSheet?
     private var activeRenameSheet: MultiRenameSheet?
     private var activeFindSheet: FindFilesSheet?
     private var activeGoToSheet: GoToFolderSheet?
@@ -173,7 +172,7 @@ class MainViewController: NSViewController {
             .init(id: "extract",     symbol: "shippingbox",            tooltip: "Extract")        { [weak self] in self?.actionExtractArchive() },
             .init(id: "find",        symbol: "magnifyingglass",        tooltip: "Find Files")     { [weak self] in self?.actionFindFiles() },
             .init(id: "multirename", symbol: "pencil",                 tooltip: "Multi-Rename")   { [weak self] in self?.actionMultiRename() },
-            .init(id: "sftp",        symbol: "network",                tooltip: "SFTP Connection")  { [weak self] in self?.actionNewSFTPConnection() },
+            .init(id: "sftp",        symbol: "network",                tooltip: "SFTP Connection")  { [weak self] in self?.actionConnectServer_menu() },
             .init(id: "swap",        symbol: "arrow.left.arrow.right", tooltip: "Swap Panels")    { [weak self] in self?.swapPanels() },
             .init(id: "branch",      symbol: "list.bullet.indent",     tooltip: "Branch View")    { [weak self] in self?.activePanelVC.panelState.toggleBranchView() },
             .init(id: "tree",        symbol: "sidebar.left",           tooltip: "Directory Tree") { [weak self] in self?.toggleDirectoryTree_menu() },
@@ -243,7 +242,7 @@ class MainViewController: NSViewController {
         case .extract: actionExtractArchive()
         case .find: actionFindFiles()
         case .multiRename: actionMultiRename()
-        case .sftp: actionNewSFTPConnection()
+        case .sftp: actionConnectServer_menu()
         case .swap: swapPanels()
         case .branch: activePanelVC.panelState.toggleBranchView()
         case .tree: toggleDirectoryTree_menu()
@@ -552,9 +551,9 @@ class MainViewController: NSViewController {
         // copy:/paste: responder actions in the Edit menu, so they also work
         // to/from Finder and route to the text field when one is focused.
 
-        // Cmd+N: new SFTP connection
+        // Cmd+N: connect to server
         if chars == "n" && flags.contains(.command) {
-            actionNewSFTPConnection()
+            actionConnectServer_menu()
             return true
         }
 
@@ -1675,32 +1674,6 @@ class MainViewController: NSViewController {
         NSPasteboard.general.setString(paths, forType: .string)
     }
 
-    func actionNewSFTPConnection(prefill: (host: String, port: Int, user: String)? = nil) {
-        guard let window = view.window else { return }
-        let sheet = SFTPConnectionSheet()
-        // Retain for the sheet's lifetime (same reason as the progress sheet).
-        activeSFTPSheet = sheet
-        if let p = prefill { sheet.prefill(host: p.host, port: p.port, user: p.user) }
-        sheet.onConnect = { [weak self] conn in
-            guard let self = self else { return }
-            let panel = self.activePanelVC.panelState
-            // Resolve "~"/empty to the real remote home before listing.
-            let wanted = conn.remotePath.trimmingCharacters(in: .whitespaces)
-            if wanted.isEmpty || wanted == "~" {
-                let fs = SFTPFS(connection: conn)
-                Task {
-                    let home = await fs.resolveHome()
-                    await MainActor.run { panel.connectSFTP(conn, initialPath: home) }
-                }
-            } else {
-                panel.connectSFTP(conn, initialPath: wanted)
-            }
-        }
-        sheet.beginSheet(on: window) { [weak self] in
-            self?.activeSFTPSheet = nil
-        }
-    }
-
     /// Opens the row context menu at the cursor (keyboard alternative to right-click).
     func showContextMenuAtCursor() {
         guard let tableView = activePanelVC.fileTableView?.tableView else { return }
@@ -1798,17 +1771,25 @@ class MainViewController: NSViewController {
         helpWindow?.show(on: view.window)
     }
 
-    private var connectServerWindow: ConnectServerSheet?
     @objc func actionConnectServer_menu() {
-        if connectServerWindow == nil {
-            let win = ConnectServerSheet()
-            win.onConnectSMB = { [weak self] url in self?.connectSMB(url) }
-            win.onConnectSFTP = { [weak self] host, port, user in
-                self?.actionNewSFTPConnection(prefill: (host: host, port: port, user: user))
-            }
-            connectServerWindow = win
+        let sheet = ServerConnectionSheet()
+        serverSheet = sheet
+        sheet.onConnect = { [weak self] conn, secret in self?.connect(conn, s3Secret: secret) }
+        sheet.show(on: view.window)
+    }
+
+    /// Dispatch a unified connection to the right backend.
+    func connect(_ conn: ServerConnection, s3Secret: String?) {
+        switch conn {
+        case .sftp(let c):
+            activePanelVC.panelState.connectSFTP(c, initialPath: c.remotePath)
+        case .s3(let c):
+            let initial = c.bucket.isEmpty ? "/" : "/" + c.bucket
+            activePanelVC.panelState.connectS3(c, secret: s3Secret ?? "", initialPath: initial)
+        case .smb(let c):
+            guard let url = URL(string: "smb://\(c.host)") else { return }
+            connectSMB(url)
         }
-        connectServerWindow?.show(on: view.window)
     }
 
     /// Connect to an SMB server via the native macOS UI (auth + share selection)
@@ -1821,7 +1802,9 @@ class MainViewController: NSViewController {
                 if !path.isEmpty {
                     self.activePanelVC.panelState.navigateLocal(to: path)
                 }
-                SMBBookmarkStore.add(url.absoluteString)
+                if let host = url.host {
+                    ServerConnectionStore.add(.smb(SMBConnection(name: host, host: host)))
+                }
             case .cancelled:
                 break   // user dismissed the native auth dialog
             case .failed(let error):
@@ -1940,17 +1923,6 @@ class MainViewController: NSViewController {
 // MARK: - Menu actions (called from AppDelegate)
 extension MainViewController {
     @objc func actionNewDirectory_menu() { actionNewDirectory() }
-    @objc func actionNewSFTP_menu() { actionNewSFTPConnection() }
-    @objc func actionNewS3Connection_menu() {
-        let sheet = S3ConnectionSheet()
-        s3Sheet = sheet
-        sheet.onConnect = { [weak self] conn, secret in
-            guard let self = self else { return }
-            let initial = conn.bucket.isEmpty ? "/" : "/" + conn.bucket
-            self.activePanelVC.panelState.connectS3(conn, secret: secret, initialPath: initial)
-        }
-        sheet.show(on: view.window)
-    }
     @objc func actionCopyPath_menu() { copyPathsToClipboard() }
     @objc func ctxCopyFiles() { copyFilesToClipboard() }
     @objc func ctxPasteFiles() { pasteFilesFromClipboard() }
