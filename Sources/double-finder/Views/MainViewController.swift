@@ -654,9 +654,20 @@ class MainViewController: NSViewController {
         activePanelVC.fileTableView?.tableView.window?.makeFirstResponder(activePanelVC.fileTableView?.tableView)
     }
 
+    /// A local directory that the system treats as a file package (e.g. `.app`,
+    /// `.bundle`, document packages). Double-clicking these should launch/open
+    /// them in their app — like Finder — rather than browsing inside.
+    static func isLaunchablePackage(_ path: String) -> Bool {
+        NSWorkspace.shared.isFilePackage(atPath: path)
+    }
+
     func openItem(_ item: FileItem, in panelVC: PanelViewController) {
+        let isLocal = panelVC.panelState.sftp == nil && panelVC.panelState.s3 == nil
         if item.name == ".." {
             panelVC.panelState.goUp()
+        } else if isLocal && item.isDirectory && Self.isLaunchablePackage(item.path) {
+            // .app / package bundle: launch it (Finder-style), don't enter it.
+            NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
         } else if item.isDirectory {
             panelVC.panelState.navigate(to: item.path)
         } else if FileItem.isArchiveFileName(item.name), let conn = panelVC.panelState.sftp {
