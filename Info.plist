@@ -4,6 +4,17 @@
 <dict>
     <key>CFBundleIdentifier</key>
     <string>net.qian.double-finder</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+        <string>ja</string>
+        <string>ko</string>
+        <string>de</string>
+        <string>fr</string>
+    </array>
     <key>CFBundleName</key>
     <string>Double Finder</string>
     <key>CFBundleDisplayName</key>

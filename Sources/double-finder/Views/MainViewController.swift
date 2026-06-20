@@ -2084,24 +2084,21 @@ extension MainViewController: PanelViewControllerDelegate {
             if targets.count == 1 && targets[0].isDirectory {
                 add(tr("Add to Favorites"), #selector(ctxAddItemToFavorites))
             }
-            // System Services submenu (Finder-style), for selected local files.
-            // The selection comes from `targets` (the same panelState source the
-            // rest of the menu uses) and is stashed on the table, which vends it
-            // to AppKit's Services machinery via NSServicesMenuRequestor.
+            // System Services (Finder-style): stash the selection's local file URLs
+            // on the table (vended via NSServicesMenuRequestor) and make it first
+            // responder. AppKit then AUTO-inserts the single Services submenu and
+            // populates it lazily (on hover) with the services applicable to those
+            // files. We must NOT add our own item — that duplicates the menu, and
+            // assigning NSApp.servicesMenu forces a slow synchronous enumeration.
             let serviceURLs = targets
                 .filter { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }
                 .map { URL(fileURLWithPath: $0.path) }
             if let table = vc.fileTableView?.tableView, !serviceURLs.isEmpty {
                 table.serviceURLs = serviceURLs
                 vc.view.window?.makeFirstResponder(table)
-                let servicesItem = NSMenuItem(title: tr("Services"), action: nil, keyEquivalent: "")
-                let servicesSubmenu = NSMenu(title: tr("Services"))
-                servicesItem.submenu = servicesSubmenu
-                NSApp.servicesMenu = servicesSubmenu
-                menu.addItem(.separator())
-                menu.addItem(servicesItem)
             }
         } else {
+            vc.fileTableView?.tableView.serviceURLs = []
             add(tr("Paste"), #selector(ctxPasteFiles), key: "v", mask: [.command])
             add(tr("Copy Path"), #selector(actionCopyPath_menu), key: "c", mask: [.command, .shift])
             add(tr("Open in Terminal"), #selector(actionOpenTerminal))

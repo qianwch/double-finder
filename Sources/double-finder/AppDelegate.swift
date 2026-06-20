@@ -8,6 +8,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = AppIconRenderer.image(pixels: 512)
+        // Tell the Services system we can SEND file URLs AND the legacy filenames
+        // type. Without this, AppKit only queries text send types, so file/folder
+        // services never appear. Both types are needed: many services (iTerm2's
+        // "New iTerm2 Tab Here", Double Commander, Send to Bluetooth, …) declare
+        // only the legacy NSFilenamesPboardType. The cold scan this causes is
+        // primed below so the first right-click stays fast.
+        NSApp.registerServicesMenuSendTypes([.fileURL, NSPasteboard.PasteboardType("NSFilenamesPboardType")],
+                                            returnTypes: [])
+        // Prime the Services registry in the background shortly after launch, so
+        // the cold scan of installed services doesn't stall the FIRST right-click.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            NSUpdateDynamicServices()
+        }
         appState = AppState()
         // Apply the stored light/dark preference BEFORE showing the window, so a
         // forced appearance opposite to the system doesn't flash the system look

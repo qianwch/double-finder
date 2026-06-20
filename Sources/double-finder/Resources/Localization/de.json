@@ -347,6 +347,5 @@
   "“%@” is encrypted. Enter password to browse:": "„%@“ ist verschlüsselt. Passwort zum Durchsuchen eingeben:",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "„%@“ ist keine ausführbare Datei. Wählen Sie die 7z-/7zz-/7za-Binärdatei oder lassen Sie das Feld leer zur automatischen Erkennung.",
   "“%@” was changed. Upload it back to %@?": "„%@“ wurde geändert. Zurück zu %@ hochladen?",
-  "… and %d more": "… und %d weitere",
-  "Services": "Dienste"
+  "… and %d more": "… und %d weitere"
 }
