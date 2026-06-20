@@ -15,6 +15,14 @@ enum S3TransferPlanner {
         return (destDir as NSString).appendingPathComponent(name)
     }
 
+    /// True iff `localPath` (after resolving "..") stays within `destDir`.
+    /// Used to reject S3 keys that try to escape the download directory.
+    static func isWithin(_ localPath: String, destDir: String) -> Bool {
+        let resolved = (localPath as NSString).standardizingPath
+        let root = (destDir as NSString).standardizingPath
+        return resolved == root || resolved.hasPrefix(root + "/")
+    }
+
     /// Remote key for an uploaded local file.
     /// - folderRoot: the selected local directory (no trailing slash) when the
     ///   file came from a folder upload; nil for a single-file upload.

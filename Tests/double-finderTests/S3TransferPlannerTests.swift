@@ -39,4 +39,29 @@ final class S3TransferPlannerTests: XCTestCase {
             S3TransferPlanner.uploadKey(localPath: "/home/u/proj/a.js", folderRoot: "/home/u/proj", destPrefix: ""),
             "proj/a.js")
     }
+
+    // MARK: - isWithin (path-traversal containment)
+
+    func testIsWithinAcceptsNormalPaths() {
+        XCTAssertTrue(S3TransferPlanner.isWithin("/dest/M_BASE/a.js", destDir: "/dest"))
+        XCTAssertTrue(S3TransferPlanner.isWithin("/dest/file.txt", destDir: "/dest"))
+    }
+
+    func testIsWithinRejectsTraversal() {
+        // downloadLocalPath of an escaping key must be caught by isWithin
+        let escaped = S3TransferPlanner.downloadLocalPath(
+            key: "M_BASE/../../../tmp/evil", folderKey: "M_BASE/", destDir: "/dest")
+        XCTAssertFalse(S3TransferPlanner.isWithin(escaped, destDir: "/dest"))
+        XCTAssertFalse(S3TransferPlanner.isWithin("/dest/../etc/x", destDir: "/dest"))
+    }
+
+    func testIsWithinDestDirExactMatch() {
+        // destDir itself is accepted (edge case: key resolves exactly to root)
+        XCTAssertTrue(S3TransferPlanner.isWithin("/dest", destDir: "/dest"))
+    }
+
+    func testIsWithinRejectsSiblingDir() {
+        // /dest2/file must NOT be accepted when destDir is /dest
+        XCTAssertFalse(S3TransferPlanner.isWithin("/dest2/file.txt", destDir: "/dest"))
+    }
 }
