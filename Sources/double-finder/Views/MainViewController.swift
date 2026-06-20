@@ -1034,18 +1034,9 @@ class MainViewController: NSViewController {
         // Build the operation once; reused on both the confirm and no-confirm paths.
         let run: () -> Void = { [weak self] in
             guard let self = self else { return }
-            let op = FileOperation(type: .delete, sources: items.map { $0.path })
-            if isSFTP, let conn = panel.sftp {
-                op.indeterminate = true
-                op.perItemOperation = { path in try await SFTPFS(connection: conn).delete(path) }
-            } else if isS3 {
-                op.indeterminate = true
-                let fs = panel.fs
-                op.perItemOperation = { path in try await fs.delete(path) }
-            } else if permanent {
-                op.indeterminate = true
-                op.perItemOperation = { path in try await LocalFS().deletePermanently(path) }
-            }   // else: local Trash via FileOperation's default fs.delete (trashItem)
+            let op = DeleteProvider(sftp: panel.sftp,
+                                    s3FS: panel.s3 != nil ? panel.fs : nil,
+                                    permanent: permanent).makeOperation(items: items)
             self.runOperation(op) { [weak self] in
                 self?.activePanelVC.panelState.selectedItems.removeAll()
                 self?.activePanelVC.panelState.loadDirectory()
