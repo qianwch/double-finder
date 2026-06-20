@@ -84,4 +84,31 @@ final class TransferProviderTests: XCTestCase {
         XCTAssertNotNil(op.perItemOperation)
         XCTAssertTrue(op.indeterminate)               // upload: no per-byte progress
     }
+
+    func testS3DownloadCountModeConcurrent() {
+        let ep = S3Endpoint(base: URL(string: "https://h")!, region: "us-east-1", pathStyle: true)
+        let client = S3Client(endpoint: ep, signer: S3Signer(accessKey: "a", secretKey: "s", region: "us-east-1"))
+        let p = S3TransferProvider(client: client, downloading: true)
+        XCTAssertEqual(p.verb, "Download")
+        let item = FileItem(id: UUID(), name: "k", path: "/bucket/k", isDirectory: false,
+                            isArchive: false, size: 1, modified: Date(), isHidden: false,
+                            isSymlink: false, permissions: "")
+        let op = p.makeOperation(items: [item], destPath: "/dst")
+        XCTAssertNotNil(op.transferUnitsProvider)   // deferred expansion
+        XCTAssertEqual(op.concurrency, 6)
+        XCTAssertTrue(op.indeterminate)             // shows "Preparing…" until expanded
+    }
+
+    func testS3UploadVerb() {
+        let ep = S3Endpoint(base: URL(string: "https://h")!, region: "us-east-1", pathStyle: true)
+        let client = S3Client(endpoint: ep, signer: S3Signer(accessKey: "a", secretKey: "s", region: "us-east-1"))
+        let p = S3TransferProvider(client: client, downloading: false)
+        XCTAssertEqual(p.verb, "Upload")
+        let item = FileItem(id: UUID(), name: "f", path: "/local/f", isDirectory: false,
+                            isArchive: false, size: 1, modified: Date(), isHidden: false,
+                            isSymlink: false, permissions: "")
+        let op = p.makeOperation(items: [item], destPath: "/bucket/prefix")
+        XCTAssertNotNil(op.transferUnitsProvider)
+        XCTAssertEqual(op.concurrency, 6)
+    }
 }

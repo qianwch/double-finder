@@ -167,3 +167,132 @@ struct SFTPTransferProvider: TransferProvider {
         return op
     }
 }
+
+// MARK: - S3TransferProvider
+
+/// Builds a `FileOperation` for S3 download (S3 → local) or upload (local → S3).
+/// Faithfully extracted from `MainViewController.actionS3Transfer`.
+///
+/// - **download**: deferred expansion via `transferUnitsProvider`; each selected
+///   S3 item is expanded (folder → `listAllKeys`, file → single unit) with path-
+///   escape guards; `concurrency=6`, `indeterminate=true`, `currentFile="Preparing…"`.
+/// - **upload**: same deferred expansion model; local dir → recursive `subpaths`,
+///   single file → one unit; `concurrency=6`.
+struct S3TransferProvider: TransferProvider {
+    let client: S3Client
+    let downloading: Bool
+
+    init(client: S3Client, downloading: Bool) {
+        self.client = client
+        self.downloading = downloading
+    }
+
+    @MainActor var verb: String {
+        downloading ? tr("Download") : tr("Upload")
+    }
+
+    @MainActor
+    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+        let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
+        op.customTitle = downloading ? tr("Downloading") : tr("Uploading")
+        op.currentFile = tr("Preparing…")
+        op.indeterminate = true
+        op.concurrency = 6
+
+        let capturedClient = client
+        let capturedDownloading = downloading
+
+        op.transferUnitsProvider = {
+            var units: [FileOperation.Unit] = []
+            if capturedDownloading {
+                // Each selected S3 item → file units.
+                for item in items {
+                    let (b, key) = parseS3Path(item.path)
+                    guard let b = b else { continue }
+                    if item.isDirectory || key.hasSuffix("/") {
+                        let folderKey = key.hasSuffix("/") ? key : key + "/"
+                        // M3: surface listing failures instead of silently yielding zero units.
+                        let keys: [String]
+                        do {
+                            keys = try await capturedClient.listAllKeys(bucket: b, prefix: folderKey)
+                        } catch {
+                            let capturedError = error
+                            units.append(FileOperation.Unit(label: item.name) {
+                                throw capturedError
+                            })
+                            continue
+                        }
+                        for k in keys where !k.hasSuffix("/") {
+                            let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
+                                                                            destDir: destPath)
+                            // C1: reject keys that escape the destination directory.
+                            guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
+                                units.append(FileOperation.Unit(label: k) {
+                                    throw FSUnsupportedError(message: "Unsafe path in key: \(k)")
+                                })
+                                continue
+                            }
+                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent) {
+                                let dir = (local as NSString).deletingLastPathComponent
+                                try FileManager.default.createDirectory(atPath: dir,
+                                                                        withIntermediateDirectories: true)
+                                try await capturedClient.getObject(bucket: b, key: k, toLocalPath: local)
+                            })
+                        }
+                    } else {
+                        let local = S3TransferPlanner.downloadLocalPath(key: key, folderKey: nil,
+                                                                        destDir: destPath)
+                        // C1: reject keys that escape the destination directory.
+                        guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
+                            units.append(FileOperation.Unit(label: key) {
+                                throw FSUnsupportedError(message: "Unsafe path in key: \(key)")
+                            })
+                            continue
+                        }
+                        // M1: ensure parent directory exists before writing the file.
+                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent) {
+                            let dir = (local as NSString).deletingLastPathComponent
+                            try FileManager.default.createDirectory(atPath: dir,
+                                                                    withIntermediateDirectories: true)
+                            try await capturedClient.getObject(bucket: b, key: key, toLocalPath: local)
+                        })
+                    }
+                }
+            } else {
+                // Upload: each selected local item → file units; dest is /bucket/prefix.
+                let (db, dkDirRaw) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
+                guard let db = db else { return units }
+                let destPrefix = dkDirRaw
+                for item in items {
+                    var isDir: ObjCBool = false
+                    FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir)
+                    if isDir.boolValue {
+                        let root = item.path
+                        let files = (FileManager.default.subpaths(atPath: root) ?? []).compactMap { sub -> String? in
+                            let full = (root as NSString).appendingPathComponent(sub)
+                            var d: ObjCBool = false
+                            FileManager.default.fileExists(atPath: full, isDirectory: &d)
+                            return d.boolValue ? nil : full
+                        }
+                        for f in files {
+                            let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
+                                                                  destPrefix: destPrefix)
+                            units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent) {
+                                try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: f)
+                            })
+                        }
+                    } else {
+                        let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
+                                                              destPrefix: destPrefix)
+                        units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent) {
+                            try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: item.path)
+                        })
+                    }
+                }
+            }
+            return units
+        }
+
+        return op
+    }
+}
