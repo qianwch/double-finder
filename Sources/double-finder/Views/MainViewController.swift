@@ -870,100 +870,63 @@ class MainViewController: NSViewController {
     }
 
     func actionCopy() {
-        let items = pruneSelectedAncestors(activePanelVC.selectedOrCurrent)
-        guard !items.isEmpty else { return }
-        let destPath = inactivePanelVC.panelState.currentPath
-        let s3Down = activePanelVC.panelState.s3 != nil
-        let s3Up = inactivePanelVC.panelState.s3 != nil
-        let downloading = activePanelVC.panelState.sftp != nil || s3Down
-        let uploading = inactivePanelVC.panelState.sftp != nil || s3Up
-        let isSFTP = (activePanelVC.panelState.sftp != nil) || (inactivePanelVC.panelState.sftp != nil)
-        let isS3 = s3Down || s3Up
-        let verb = downloading ? tr("Download") : (uploading ? tr("Upload") : tr("Copy"))
-        // Confirm (TC-style) before any transfer, including SFTP.
-        confirmTransfer(verb: verb, items: items, defaultDest: destPath) { [weak self] dest, queued in
+        let src = activePanelVC.panelState
+        let dst = inactivePanelVC.panelState
+        let provider = transferProvider(forCopyFrom: src, to: dst)
+        runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst, provider: provider)
+    }
+
+    /// One transfer pipeline for every backend: prune → confirm → unified conflict
+    /// detection → Overwrite/Skip/Cancel → drop skipped → provider builds the op → dispatch.
+    private func runTransfer(items rawItems: [FileItem], destPanel: PanelState, provider: TransferProvider) {
+        let pruned = pruneSelectedAncestors(rawItems)
+        guard !pruned.isEmpty else { return }
+        let dest0 = destPanel.currentPath
+        confirmTransfer(verb: provider.verb, items: pruned, defaultDest: dest0) { [weak self] dest, queued in
             guard let self = self else { return }
-            if isSFTP {
-                self.actionSFTPTransfer(items: items, destPath: dest, queued: queued)
-                return
-            }
-            if isS3 {
-                if s3Down {
-                    // Downloading to a local dir: top-level conflicts are local
-                    // files that already exist (synchronous check).
-                    let conflicts = items.filter {
-                        FileOperation.destinationExists(source: $0.path, in: dest)
+            Task { @MainActor in
+                let existing = await self.existingDestNames(of: pruned, at: dest, destPanel: destPanel)
+                let conflicts = pruned.filter { existing.contains($0.name) }
+                self.promptConflicts(conflicts) { [weak self] policy in
+                    guard let self = self, let policy = policy else { return }
+                    let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
+                    let toTransfer = pruned.filter { !skip.contains($0.name) }
+                    guard !toTransfer.isEmpty else { return }
+                    let op = provider.makeOperation(items: toTransfer, destPath: dest)
+                    self.dispatchOperation(op, queued: queued) { [weak self] in
+                        self?.activePanelVC.panelState.refresh()
+                        self?.inactivePanelVC.panelState.refresh()
                     }
-                    self.promptConflicts(conflicts) { [weak self] policy in
-                        guard let self = self, let policy = policy else { return }
-                        let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
-                        self.actionS3Transfer(items: items, destPath: dest, queued: queued,
-                                              downloading: true, skipNames: skip)
-                    }
-                } else {
-                    // Uploading to S3: top-level conflicts are existing remote
-                    // objects/prefixes — list the destination once to find them.
-                    let dstFS = self.inactivePanelVC.panelState.fs
-                    Task {
-                        let remote = (try? await dstFS.listDirectory(dest)) ?? []
-                        let remoteNames = Set(remote.map { $0.name })
-                        let conflicts = items.filter { remoteNames.contains($0.name) }
-                        await MainActor.run {
-                            self.promptConflicts(conflicts) { [weak self] policy in
-                                guard let self = self, let policy = policy else { return }
-                                let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
-                                self.actionS3Transfer(items: items, destPath: dest, queued: queued,
-                                                      downloading: false, skipNames: skip)
-                            }
-                        }
-                    }
-                }
-                return
-            }
-            self.resolveConflicts(for: items, destination: dest) { [weak self] policy in
-                guard let self = self, let policy = policy else { return }
-                let op = FileOperation(type: .copy, sources: items.map { $0.path },
-                                       destination: dest, conflictPolicy: policy)
-                let currentDir = self.activePanelVC.panelState.currentPath
-                if PanelState.archiveRoot(in: currentDir) != nil {
-                    // Source is inside an archive: extract each entry instead of a
-                    // plain local copy (the item paths are virtual). Preserve the
-                    // structure below the selection's common ancestor, so an entry
-                    // pulled from a deep sub-folder keeps its folder hierarchy
-                    // (same behaviour as the local expanded-copy below).
-                    let srcFS = self.activePanelVC.panelState.fs
-                    let base = LocalFS.commonAncestor(of: items.map { $0.path })
-                    op.indeterminate = true
-                    op.perItemOperation = { path in
-                        let rel = LocalFS.relativePath(path, base: base)
-                        let relParent = (rel as NSString).deletingLastPathComponent
-                        let targetDir = relParent.isEmpty ? dest : (dest as NSString).appendingPathComponent(relParent)
-                        try FileManager.default.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
-                        try await srcFS.copy(from: path, to: targetDir)
-                    }
-                } else if items.contains(where: { $0.depth > 0 }) {
-                    // Some selected items come from expanded sub-folders: preserve
-                    // structure below the selection's common ancestor folder, so
-                    // shared parent folders aren't duplicated (tar/untar style).
-                    let base = LocalFS.commonAncestor(of: items.map { $0.path })
-                    op.indeterminate = true
-                    op.perItemOperation = { path in
-                        let rel = LocalFS.relativePath(path, base: base)
-                        try await LocalFS().copyPreservingPath(from: path, toBaseDir: dest, relativePath: rel)
-                    }
-                } else {
-                    op.totalBytes = items.reduce(0) { $0 + FileOperation.sizeOnDisk($1.path) }
-                    let names = items.map { $0.name }
-                    op.bytesTransferred = {
-                        names.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk((dest as NSString).appendingPathComponent($1)) }
-                    }
-                }
-                self.dispatchOperation(op, queued: queued) { [weak self] in
-                    self?.activePanelVC.panelState.refresh()
-                    self?.inactivePanelVC.panelState.refresh()
                 }
             }
         }
+    }
+
+    /// Names that already exist at the destination. Local dest → raw FileManager
+    /// read (incl. hidden, matches destinationExists precision); remote dest →
+    /// the destination FS listing. Failure → empty (no conflicts).
+    private func existingDestNames(of items: [FileItem], at dest: String,
+                                   destPanel: PanelState) async -> Set<String> {
+        if destPanel.sftp == nil && destPanel.s3 == nil {
+            // Local destination: precise per-name existence (includes hidden).
+            return Set(items.filter { FileOperation.destinationExists(source: $0.path, in: dest) }.map { $0.name })
+        }
+        let listed = (try? await destPanel.fs.listDirectory(dest)) ?? []
+        return Set(listed.map { $0.name })
+    }
+
+    /// Pick the provider for a copy from `src` panel to `dst` panel.
+    private func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) -> TransferProvider {
+        if src.s3 != nil, let client = src.s3Client {
+            return S3TransferProvider(client: client, downloading: true)
+        }
+        if dst.s3 != nil, let client = dst.s3Client {
+            return S3TransferProvider(client: client, downloading: false)
+        }
+        if let conn = src.sftp { return SFTPTransferProvider(connection: conn, direction: .download) }
+        if let conn = dst.sftp { return SFTPTransferProvider(connection: conn, direction: .upload) }
+        let archive = PanelState.archiveRoot(in: src.currentPath) != nil
+        return LocalCopyProvider(srcFS: src.fs, archiveRoot: archive)
     }
 
     /// Routes a finished-conflict-resolution operation either to the modal
@@ -1007,219 +970,9 @@ class MainViewController: NSViewController {
         sheet.beginSheet(on: window) { [weak self] in self?.activeConfirmSheet = nil }
     }
 
-    /// scp-based transfer between a local and a remote panel, shown in a progress
-    /// sheet (indeterminate — scp gives no per-byte progress through a pipe).
-    private func actionSFTPTransfer(items: [FileItem], destPath: String, queued: Bool) {
-        let srcPanel = activePanelVC.panelState
-        let dstPanel = inactivePanelVC.panelState
-
-        if let conn = srcPanel.sftp {
-            // Download remote → local: conflicts are local files that already exist.
-            let conflicts = items.filter {
-                FileManager.default.fileExists(atPath: (destPath as NSString).appendingPathComponent($0.name))
-            }
-            promptConflicts(conflicts) { [weak self] policy in
-                guard let self = self, let policy = policy else { return }
-                let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
-                let total = items.reduce(Int64(0)) { $0 + $1.size }
-                let names = items.map { $0.name }
-                let provider: () -> Int64 = {
-                    names.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk((destPath as NSString).appendingPathComponent($1)) }
-                }
-                self.runSFTPTransfer(items: items, destPath: destPath, title: "Downloading", skipNames: skip,
-                                     queued: queued, totalBytes: total, bytesProvider: provider) { item, op in
-                    let fs = SFTPFS(connection: conn)
-                    try await fs.copy(from: item.path, to: destPath) { op.processBox.process = $0 }
-                }
-            }
-        } else if let conn = dstPanel.sftp {
-            // Upload local → remote: check which names already exist remotely.
-            Task {
-                let remote = (try? await SFTPFS(connection: conn).listDirectory(destPath)) ?? []
-                let remoteNames = Set(remote.map { $0.name })
-                let conflicts = items.filter { remoteNames.contains($0.name) }
-                await MainActor.run {
-                    self.promptConflicts(conflicts) { [weak self] policy in
-                        guard let self = self, let policy = policy else { return }
-                        let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
-                        self.runSFTPTransfer(items: items, destPath: destPath, title: "Uploading", skipNames: skip,
-                                             queued: queued) { item, op in
-                            let fs = SFTPFS(connection: conn)
-                            try await fs.upload(localPath: item.path, to: destPath) { op.processBox.process = $0 }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func runSFTPTransfer(items: [FileItem], destPath: String, title: String,
-                                 skipNames: Set<String>, queued: Bool = false,
-                                 totalBytes: Int64 = 0, bytesProvider: (() -> Int64)? = nil,
-                                 transfer: @escaping (FileItem, FileOperation) async throws -> Void) {
-        let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
-        op.customTitle = title
-        if let bytesProvider = bytesProvider, totalBytes > 0 {
-            op.totalBytes = totalBytes
-            op.bytesTransferred = bytesProvider   // determinate + speed
-        } else {
-            op.indeterminate = true               // e.g. upload: no per-byte progress
-        }
-        let byPath = Dictionary(items.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
-        op.perItemOperation = { [weak op] path in
-            guard let op = op, let item = byPath[path] else { return }
-            if skipNames.contains(item.name) { return }
-            try await transfer(item, op)
-        }
-        dispatchOperation(op, queued: queued) { [weak self] in
-            self?.inactivePanelVC.panelState.refresh()
-        }
-    }
-
-    /// Concurrent S3 transfer: expand each selected item into file-level units
-    /// (folder → listAllKeys / local recursive enumeration), then run them with
-    /// bounded concurrency and a count-based progress sheet.
-    private func actionS3Transfer(items: [FileItem], destPath: String, queued: Bool,
-                                  downloading: Bool, skipNames: Set<String> = []) {
-        let s3Panel = downloading ? activePanelVC.panelState : inactivePanelVC.panelState
-        guard let client = s3Panel.s3Client else { return }
-
-        // Show the progress sheet immediately; the (possibly slow, network-bound)
-        // listAllKeys expansion runs behind it as the unit provider rather than
-        // blocking the sheet from appearing.
-        let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
-        op.customTitle = downloading ? tr("Downloading") : tr("Uploading")
-        op.currentFile = tr("Preparing…")
-        op.indeterminate = true
-        op.concurrency = 6
-        op.transferUnitsProvider = {
-            var units: [FileOperation.Unit] = []
-            if downloading {
-                // Each selected S3 item → file units.
-                for item in items {
-                    // Top-level conflict skip (caller resolved Overwrite/Skip).
-                    if skipNames.contains(item.name) { continue }
-                    let (b, key) = parseS3Path(item.path)
-                    guard let b = b else { continue }
-                    if item.isDirectory || key.hasSuffix("/") {
-                        let folderKey = key.hasSuffix("/") ? key : key + "/"
-                        // M3: surface listing failures instead of silently yielding zero units.
-                        let keys: [String]
-                        do {
-                            keys = try await client.listAllKeys(bucket: b, prefix: folderKey)
-                        } catch {
-                            let capturedError = error
-                            units.append(FileOperation.Unit(label: item.name) {
-                                throw capturedError
-                            })
-                            continue
-                        }
-                        for k in keys where !k.hasSuffix("/") {
-                            let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
-                                                                            destDir: destPath)
-                            // C1: reject keys that escape the destination directory.
-                            guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
-                                units.append(FileOperation.Unit(label: k) {
-                                    throw FSUnsupportedError(message: "Unsafe path in key: \(k)")
-                                })
-                                continue
-                            }
-                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent) {
-                                let dir = (local as NSString).deletingLastPathComponent
-                                try FileManager.default.createDirectory(atPath: dir,
-                                                                        withIntermediateDirectories: true)
-                                try await client.getObject(bucket: b, key: k, toLocalPath: local)
-                            })
-                        }
-                    } else {
-                        let local = S3TransferPlanner.downloadLocalPath(key: key, folderKey: nil,
-                                                                        destDir: destPath)
-                        // C1: reject keys that escape the destination directory.
-                        guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
-                            units.append(FileOperation.Unit(label: key) {
-                                throw FSUnsupportedError(message: "Unsafe path in key: \(key)")
-                            })
-                            continue
-                        }
-                        // M1: ensure parent directory exists before writing the file.
-                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent) {
-                            let dir = (local as NSString).deletingLastPathComponent
-                            try FileManager.default.createDirectory(atPath: dir,
-                                                                    withIntermediateDirectories: true)
-                            try await client.getObject(bucket: b, key: key, toLocalPath: local)
-                        })
-                    }
-                }
-            } else {
-                // Upload: each selected local item → file units; dest is /bucket/prefix.
-                let (db, dkDirRaw) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
-                guard let db = db else { return units }
-                let destPrefix = dkDirRaw
-                for item in items {
-                    // Top-level conflict skip (caller resolved Overwrite/Skip).
-                    if skipNames.contains(item.name) { continue }
-                    var isDir: ObjCBool = false
-                    FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir)
-                    if isDir.boolValue {
-                        let root = item.path
-                        let files = (FileManager.default.subpaths(atPath: root) ?? []).compactMap { sub -> String? in
-                            let full = (root as NSString).appendingPathComponent(sub)
-                            var d: ObjCBool = false
-                            FileManager.default.fileExists(atPath: full, isDirectory: &d)
-                            return d.boolValue ? nil : full
-                        }
-                        for f in files {
-                            let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
-                                                                  destPrefix: destPrefix)
-                            units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent) {
-                                try await client.putObject(bucket: db, key: key, fromLocalPath: f)
-                            })
-                        }
-                    } else {
-                        let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
-                                                              destPrefix: destPrefix)
-                        units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent) {
-                            try await client.putObject(bucket: db, key: key, fromLocalPath: item.path)
-                        })
-                    }
-                }
-            }
-
-            return units
-        }
-        dispatchOperation(op, queued: queued) { [weak self] in
-            self?.activePanelVC.panelState.refresh()
-            self?.inactivePanelVC.panelState.refresh()
-        }
-    }
-
     func actionMove() {
-        let items = pruneSelectedAncestors(activePanelVC.selectedOrCurrent)
-        guard !items.isEmpty else { return }
-        let destPath = inactivePanelVC.panelState.currentPath
-        confirmTransfer(verb: tr("Move"), items: items, defaultDest: destPath) { [weak self] dest, queued in
-            guard let self = self else { return }
-            self.resolveConflicts(for: items, destination: dest) { [weak self] policy in
-                guard let self = self, let policy = policy else { return }
-                let op = FileOperation(type: .move, sources: items.map { $0.path },
-                                       destination: dest, conflictPolicy: policy)
-                self.dispatchOperation(op, queued: queued) { [weak self] in
-                    self?.activePanelVC.panelState.refresh()
-                    self?.inactivePanelVC.panelState.refresh()
-                }
-            }
-        }
-    }
-
-    /// Checks for name collisions in the destination. If any exist, asks the user
-    /// how to proceed and calls `completion` with the chosen policy, or `nil` to
-    /// cancel. With no collisions, proceeds immediately with `.overwrite`.
-    private func resolveConflicts(for items: [FileItem], destination: String,
-                                  completion: @escaping (ConflictPolicy?) -> Void) {
-        let conflicts = items.filter {
-            FileOperation.destinationExists(source: $0.path, in: destination)
-        }
-        promptConflicts(conflicts, completion: completion)
+        let dst = inactivePanelVC.panelState
+        runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst, provider: LocalMoveProvider())
     }
 
     /// Shows the Overwrite / Skip / Cancel dialog for a precomputed conflict list,
