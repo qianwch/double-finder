@@ -326,6 +326,10 @@ class FileTableView: NSScrollView {
 class NCTableView: NSTableView {
     weak var fileTableView: FileTableView?
 
+    /// Local file URLs the context menu's Services submenu should act on. Set by
+    /// the menu builder just before the menu shows; vended via NSServicesMenuRequestor.
+    var serviceURLs: [URL] = []
+
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
@@ -828,4 +832,39 @@ class NCRowView: NSTableRowView {
             bounds.fill()
         }
     }
+}
+
+// MARK: - System Services support
+//
+// Lets the macOS Services menu (Finder-style) act on the selected files. The
+// file table is the first responder, so AppKit walks the responder chain here
+// to discover what the selection can vend and which services apply. The context
+// menu stashes the selection's local file URLs in `serviceURLs` (from the same
+// panelState selection the rest of the menu uses) just before showing.
+extension NCTableView: NSServicesMenuRequestor {
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?,
+                                 returnType: NSPasteboard.PasteboardType?) -> Any? {
+        if let sendType = sendType,
+           sendType == .fileURL || sendType.rawValue == "NSFilenamesPboardType",
+           returnType == nil,
+           !serviceURLs.isEmpty {
+            return self
+        }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+
+    func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard !serviceURLs.isEmpty else { return false }
+        pboard.clearContents()
+        var ok = pboard.writeObjects(serviceURLs as [NSURL])
+        // Also vend the legacy filenames type for older services that ask for it.
+        let filenames = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        if types.contains(filenames) {
+            pboard.setPropertyList(serviceURLs.map { $0.path }, forType: filenames)
+            ok = true
+        }
+        return ok
+    }
+
+    func readSelection(from pboard: NSPasteboard) -> Bool { false }   // we only send, never receive
 }
