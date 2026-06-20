@@ -1,19 +1,32 @@
 import AppKit
 
+/// A node in the Saved address-book tree: either a kind group header or a leaf
+/// connection. NSOutlineView items must be reference types (identity) — hence a class.
+private final class SavedNode {
+    let kind: ServerKind          // group's kind, or the connection's kind
+    let conn: ServerConnection?   // nil = group header; non-nil = leaf connection
+    var children: [SavedNode] = []
+    init(group kind: ServerKind) { self.kind = kind; self.conn = nil }
+    init(conn: ServerConnection) { self.kind = conn.kind; self.conn = conn }
+    var isGroup: Bool { conn == nil }
+    var label: String { conn?.name ?? kind.rawValue.uppercased() }
+}
+
 /// One window to create / pick / connect any server (SFTP, S3, SMB), with live
 /// Bonjour discovery. Replaces SFTPConnectionSheet, S3ConnectionSheet, and ConnectServerSheet.
 final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableViewDelegate,
-                                   NSWindowDelegate {
+                                   NSOutlineViewDataSource, NSOutlineViewDelegate, NSWindowDelegate {
     var onConnect: ((ServerConnection, String?) -> Void)?
     var onClose: (() -> Void)?
 
     private var saved: [ServerConnection] = []
+    private var savedRoots: [SavedNode] = []      // grouped tree for the outline view
     private var discovered: [NetworkBrowser.Service] = []
     private let browser = NetworkBrowser()
 
     private let typePicker = NSSegmentedControl(labels: ["SFTP", "S3", "SMB"],
                                                 trackingMode: .selectOne, target: nil, action: nil)
-    private var savedTable: NSTableView!
+    private var savedOutline: NSOutlineView!
     private var discoveredTable: NSTableView!
 
     // SFTP fields
@@ -50,7 +63,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         win.delegate = self
         buildUI()
         saved = ServerConnectionStore.load()
-        savedTable.reloadData()
+        reloadSaved()
         sftpPort.stringValue = "22"
         sftpKey.stringValue = "~/.ssh/id_rsa"
         sftpPath.stringValue = "~"
@@ -75,7 +88,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             win.setFrame(f, display: false)
         }
         saved = ServerConnectionStore.load()
-        savedTable.reloadData()
+        reloadSaved()
         browser.start()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -107,18 +120,19 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         let savedScroll = NSScrollView(frame: NSRect(x: 16, y: 224, width: 190, height: 152))
         savedScroll.hasVerticalScroller = true
         savedScroll.borderType = .bezelBorder
-        savedTable = NSTableView()
-        savedTable.headerView = nil
+        savedOutline = NSOutlineView()
+        savedOutline.headerView = nil
+        savedOutline.indentationPerLevel = 12
         let savedCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("saved-name"))
         savedCol.width = 172
-        savedTable.addTableColumn(savedCol)
-        savedTable.dataSource = self
-        savedTable.delegate = self
-        savedTable.tag = 1
-        savedTable.rowHeight = 20
-        savedTable.target = self
-        savedTable.doubleAction = #selector(connectClicked)
-        savedScroll.documentView = savedTable
+        savedOutline.addTableColumn(savedCol)
+        savedOutline.outlineTableColumn = savedCol
+        savedOutline.dataSource = self
+        savedOutline.delegate = self
+        savedOutline.rowHeight = 20
+        savedOutline.target = self
+        savedOutline.doubleAction = #selector(connectClicked)
+        savedScroll.documentView = savedOutline
         content.addSubview(savedScroll)
 
         // --- Left column: Discovered list ---
@@ -236,7 +250,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         for v in sftpRows { v.isHidden = (index != 0) }
         for v in s3Rows   { v.isHidden = (index != 1) }
         for v in smbRows  { v.isHidden = (index != 2) }
-        if clearSaved { savedTable.deselectAll(nil) }
+        if clearSaved { savedOutline.deselectAll(nil) }
     }
 
     @objc private func typePickerChanged() {
@@ -327,7 +341,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     // MARK: - Button actions
 
     @objc private func newClicked() {
-        savedTable.deselectAll(nil)
+        savedOutline.deselectAll(nil)
         clearForm()
     }
 
@@ -339,16 +353,15 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
            let s = secret, !s.isEmpty {
             S3SecretStore.save(endpointHost: c.endpointHost, accessKey: c.accessKey, secret: s)
         }
-        savedTable.reloadData()
+        reloadSaved()
     }
 
     @objc private func deleteClicked() {
-        let row = savedTable.selectedRow
-        guard row >= 0, row < saved.count else { return }
-        let conn = saved[row]
+        guard let node = savedOutline.item(atRow: savedOutline.selectedRow) as? SavedNode,
+              let conn = node.conn else { return }
         ServerConnectionStore.delete(name: conn.name, kind: conn.kind)
         saved = ServerConnectionStore.load()
-        savedTable.reloadData()
+        reloadSaved()
     }
 
     @objc private func connectClicked() {
@@ -361,16 +374,81 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         window?.close()
     }
 
-    // MARK: - NSTableViewDataSource
+    // MARK: - Saved address-book tree
 
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        tableView.tag == 1 ? saved.count : discovered.count
+    /// Rebuilds the grouped tree (`[SFTP][S3][SMB]`, non-empty groups) and reloads
+    /// the outline view, expanding all groups.
+    private func reloadSaved() {
+        savedRoots = ServerConnectionStore.grouped(saved).map { group in
+            let node = SavedNode(group: group.kind)
+            node.children = group.items.map { SavedNode(conn: $0) }
+            return node
+        }
+        savedOutline?.reloadData()
+        for node in savedRoots { savedOutline?.expandItem(node) }
     }
+
+    // MARK: - NSOutlineViewDataSource / Delegate (Saved tree)
+
+    func outlineView(_ ov: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        if item == nil { return savedRoots.count }
+        return (item as? SavedNode)?.children.count ?? 0
+    }
+
+    func outlineView(_ ov: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if item == nil { return savedRoots[index] }
+        return (item as! SavedNode).children[index]
+    }
+
+    func outlineView(_ ov: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        (item as? SavedNode)?.isGroup ?? false
+    }
+
+    func outlineView(_ ov: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+        !((item as? SavedNode)?.isGroup ?? true)   // only leaf connections are selectable
+    }
+
+    func outlineView(_ ov: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        guard let node = item as? SavedNode else { return nil }
+        let id = NSUserInterfaceItemIdentifier("saved-cell")
+        let cell = (ov.makeView(withIdentifier: id, owner: self) as? NSTableCellView) ?? {
+            let c = NSTableCellView()
+            let tf = NSTextField(labelWithString: "")
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            tf.lineBreakMode = .byTruncatingTail
+            tf.backgroundColor = .clear; tf.isBordered = false; tf.drawsBackground = false
+            c.addSubview(tf); c.textField = tf; c.identifier = id
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 2),
+                tf.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -2),
+                tf.centerYAnchor.constraint(equalTo: c.centerYAnchor),
+            ])
+            return c
+        }()
+        cell.textField?.stringValue = node.label
+        cell.textField?.font = node.isGroup
+            ? .systemFont(ofSize: 11, weight: .semibold)
+            : .systemFont(ofSize: 12)
+        cell.textField?.textColor = node.isGroup ? .secondaryLabelColor : .labelColor
+        return cell
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard let node = savedOutline.item(atRow: savedOutline.selectedRow) as? SavedNode,
+              let conn = node.conn else { return }
+        // The tab follows the selected connection's kind (without clearing the
+        // selection), then the form is populated from it.
+        selectKind(kindIndex(of: conn), clearSaved: false)
+        populate(conn)
+    }
+
+    // MARK: - NSTableViewDataSource / Delegate (Discovered list)
+
+    func numberOfRows(in tableView: NSTableView) -> Int { discovered.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
-        let idStr = tableView.tag == 1 ? "saved-cell" : "disc-cell"
-        let id = NSUserInterfaceItemIdentifier(idStr)
+        let id = NSUserInterfaceItemIdentifier("disc-cell")
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView) ?? {
             let c = NSTableCellView()
             let tf = NSTextField(labelWithString: "")
@@ -384,44 +462,27 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             ])
             return c
         }()
-        if tableView.tag == 1 {
-            let c = saved[row]
-            cell.textField?.stringValue = "[\(c.kindLabel)] \(c.name)"
-        } else {
-            let s = discovered[row]
-            let proto = s.kind == .smb ? "SMB" : "SFTP"
-            let hostNote = s.host.map { " — \($0)" } ?? ""
-            cell.textField?.stringValue = "[\(proto)] \(s.name)\(hostNote)"
-        }
+        let s = discovered[row]
+        let proto = s.kind == .smb ? "SMB" : "SFTP"
+        let hostNote = s.host.map { " — \($0)" } ?? ""
+        cell.textField?.stringValue = "[\(proto)] \(s.name)\(hostNote)"
         return cell
     }
 
-    // MARK: - NSTableViewDelegate
-
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let tableView = notification.object as? NSTableView else { return }
-        if tableView.tag == 1 {
-            let row = tableView.selectedRow
-            guard row >= 0, row < saved.count else { return }
-            let conn = saved[row]
-            // The tab follows the selected connection's kind (without clearing
-            // the selection), then the form is populated from it.
-            selectKind(kindIndex(of: conn), clearSaved: false)
-            populate(conn)
-        } else {
-            let row = tableView.selectedRow
-            guard row >= 0, row < discovered.count else { return }
-            let svc = discovered[row]
-            switch svc.kind {
-            case .smb:
-                selectKind(2)
-                smbName.stringValue = svc.name
-                smbHost.stringValue = svc.host ?? ""
-            case .sftp:
-                selectKind(0)
-                sftpHost.stringValue = svc.host ?? ""
-                if let port = svc.port { sftpPort.stringValue = "\(port)" }
-            }
+        let row = tableView.selectedRow
+        guard row >= 0, row < discovered.count else { return }
+        let svc = discovered[row]
+        switch svc.kind {
+        case .smb:
+            selectKind(2)
+            smbName.stringValue = svc.name
+            smbHost.stringValue = svc.host ?? ""
+        case .sftp:
+            selectKind(0)
+            sftpHost.stringValue = svc.host ?? ""
+            if let port = svc.port { sftpPort.stringValue = "\(port)" }
         }
     }
 }

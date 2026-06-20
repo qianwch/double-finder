@@ -94,6 +94,16 @@ enum ServerConnectionStore {
         return raw.compactMap(ServerConnection.init(dict:))
     }
 
+    /// Connections grouped by kind in SFTP → S3 → SMB order; empty groups omitted.
+    /// Used by the address-book tree in the connection sheet.
+    static func grouped(_ conns: [ServerConnection]) -> [(kind: ServerKind, items: [ServerConnection])] {
+        let order: [ServerKind] = [.sftp, .s3, .smb]
+        return order.compactMap { k in
+            let items = conns.filter { $0.kind == k }
+            return items.isEmpty ? nil : (k, items)
+        }
+    }
+
     static func save(_ conns: [ServerConnection], defaults: UserDefaults = .standard) {
         defaults.set(conns.map { $0.dict }, forKey: key)
     }
