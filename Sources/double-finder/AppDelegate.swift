@@ -13,6 +13,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // forced appearance opposite to the system doesn't flash the system look
         // for one frame at launch.
         AppSettings.applyAppearance()
+        ServerConnectionStore.migrateIfNeeded()
         windowController = MainWindowController(appState: appState)
         windowController.showWindow()
         setupMenus()
@@ -76,11 +77,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         extractItem.keyEquivalentModifierMask = [.option]
         fileMenu.addItem(extractItem)
         fileMenu.addItem(.separator())
-        fileMenu.addItem(NSMenuItem(title: tr("New SFTP Connection..."), action: #selector(menuNewSFTP), keyEquivalent: "n"))
-        fileMenu.addItem(NSMenuItem(title: tr("Connect to Server…"),
+        fileMenu.addItem(NSMenuItem(title: tr("Connect…"),
                                     action: #selector(menuConnectServer), keyEquivalent: "k"))
-        fileMenu.addItem(NSMenuItem(title: tr("New S3 Connection…"),
-                                    action: #selector(menuNewS3), keyEquivalent: ""))
 
         // Edit menu
         let editMenuItem = NSMenuItem(title: tr("Edit"), action: nil, keyEquivalent: "")
@@ -286,14 +284,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuNewDirectory() {
         mainVC()?.perform(#selector(MainViewController.actionNewDirectory_menu))
     }
-    @objc private func menuNewSFTP() {
-        mainVC()?.perform(#selector(MainViewController.actionNewSFTP_menu))
-    }
     @objc private func menuConnectServer() {
         mainVC()?.perform(#selector(MainViewController.actionConnectServer_menu))
-    }
-    @objc private func menuNewS3() {
-        mainVC()?.perform(#selector(MainViewController.actionNewS3Connection_menu))
     }
     @objc private func menuCopyPath() {
         mainVC()?.perform(#selector(MainViewController.actionCopyPath_menu))
