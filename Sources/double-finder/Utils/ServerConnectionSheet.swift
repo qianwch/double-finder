@@ -227,22 +227,20 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         switch conn { case .sftp: return 0; case .s3: return 1; case .smb: return 2 }
     }
 
-    private func filteredSaved() -> [ServerConnection] {
-        let seg = typePicker.selectedSegment
-        return saved.filter { kindIndex(of: $0) == seg }
-    }
-
-    private func selectKind(_ index: Int) {
+    /// Switches the editor to `index`'s field group. The Saved address book is
+    /// NOT filtered by kind — it always shows every connection. `clearSaved` is
+    /// true when the user picks a tab (compose a new connection of that kind);
+    /// false when selecting a saved row drives the tab to its own kind.
+    private func selectKind(_ index: Int, clearSaved: Bool = true) {
         typePicker.selectedSegment = index
         for v in sftpRows { v.isHidden = (index != 0) }
         for v in s3Rows   { v.isHidden = (index != 1) }
         for v in smbRows  { v.isHidden = (index != 2) }
-        savedTable.deselectAll(nil)
-        savedTable.reloadData()
+        if clearSaved { savedTable.deselectAll(nil) }
     }
 
     @objc private func typePickerChanged() {
-        selectKind(typePicker.selectedSegment)
+        selectKind(typePicker.selectedSegment, clearSaved: true)
     }
 
     // MARK: - Current connection builder
@@ -346,9 +344,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
 
     @objc private func deleteClicked() {
         let row = savedTable.selectedRow
-        let fs = filteredSaved()
-        guard row >= 0, row < fs.count else { return }
-        let conn = fs[row]
+        guard row >= 0, row < saved.count else { return }
+        let conn = saved[row]
         ServerConnectionStore.delete(name: conn.name, kind: conn.kind)
         saved = ServerConnectionStore.load()
         savedTable.reloadData()
@@ -367,7 +364,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     // MARK: - NSTableViewDataSource
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        tableView.tag == 1 ? filteredSaved().count : discovered.count
+        tableView.tag == 1 ? saved.count : discovered.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?,
@@ -388,7 +385,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             return c
         }()
         if tableView.tag == 1 {
-            cell.textField?.stringValue = filteredSaved()[row].name
+            let c = saved[row]
+            cell.textField?.stringValue = "[\(c.kindLabel)] \(c.name)"
         } else {
             let s = discovered[row]
             let proto = s.kind == .smb ? "SMB" : "SFTP"
@@ -404,9 +402,12 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         guard let tableView = notification.object as? NSTableView else { return }
         if tableView.tag == 1 {
             let row = tableView.selectedRow
-            let fs = filteredSaved()
-            guard row >= 0, row < fs.count else { return }
-            populate(fs[row])
+            guard row >= 0, row < saved.count else { return }
+            let conn = saved[row]
+            // The tab follows the selected connection's kind (without clearing
+            // the selection), then the form is populated from it.
+            selectKind(kindIndex(of: conn), clearSaved: false)
+            populate(conn)
         } else {
             let row = tableView.selectedRow
             guard row >= 0, row < discovered.count else { return }

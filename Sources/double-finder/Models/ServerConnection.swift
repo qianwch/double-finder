@@ -33,6 +33,15 @@ enum ServerConnection: Equatable {
         }
     }
 
+    /// Short uppercase label for the address-book row (e.g. "[SFTP] host").
+    var kindLabel: String {
+        switch self {
+        case .sftp: return "SFTP"
+        case .s3:   return "S3"
+        case .smb:  return "SMB"
+        }
+    }
+
     var name: String {
         switch self {
         case .sftp(let c): return c.host.isEmpty ? c.displayName : "\(c.user)@\(c.host)"

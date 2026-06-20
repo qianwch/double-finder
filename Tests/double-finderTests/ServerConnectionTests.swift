@@ -85,4 +85,12 @@ final class ServerConnectionTests: XCTestCase {
         // legacy keys preserved
         XCTAssertNotNil(d.array(forKey: "SFTPBookmarks"))
     }
+
+    func testKindLabel() {
+        XCTAssertEqual(ServerConnection.smb(SMBConnection(name: "n", host: "h")).kindLabel, "SMB")
+        let s3 = ServerConnection.s3(S3Connection(name: "x", endpoint: "https://e", region: "r", bucket: "", accessKey: "a", pathStyle: true))
+        XCTAssertEqual(s3.kindLabel, "S3")
+        let sftp = ServerConnection.sftp(SFTPConnection(host: "h", user: "u"))
+        XCTAssertEqual(sftp.kindLabel, "SFTP")
+    }
 }
