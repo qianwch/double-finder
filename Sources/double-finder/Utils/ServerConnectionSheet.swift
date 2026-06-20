@@ -5,6 +5,7 @@ import AppKit
 final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableViewDelegate,
                                    NSWindowDelegate {
     var onConnect: ((ServerConnection, String?) -> Void)?
+    var onClose: (() -> Void)?
 
     private var saved: [ServerConnection] = []
     private var discovered: [NetworkBrowser.Service] = []
@@ -82,6 +83,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
 
     func windowWillClose(_ n: Notification) {
         browser.stop()
+        onClose?()
     }
 
     // MARK: - UI Construction
