@@ -1056,7 +1056,15 @@ class MainViewController: NSViewController {
         let s3Panel = downloading ? activePanelVC.panelState : inactivePanelVC.panelState
         guard let client = s3Panel.s3Client else { return }
 
-        Task { @MainActor in
+        // Show the progress sheet immediately; the (possibly slow, network-bound)
+        // listAllKeys expansion runs behind it as the unit provider rather than
+        // blocking the sheet from appearing.
+        let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
+        op.customTitle = downloading ? tr("Downloading") : tr("Uploading")
+        op.currentFile = tr("Preparing…")
+        op.indeterminate = true
+        op.concurrency = 6
+        op.transferUnitsProvider = {
             var units: [FileOperation.Unit] = []
             if downloading {
                 // Each selected S3 item → file units.
@@ -1115,7 +1123,7 @@ class MainViewController: NSViewController {
             } else {
                 // Upload: each selected local item → file units; dest is /bucket/prefix.
                 let (db, dkDirRaw) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
-                guard let db = db else { return }
+                guard let db = db else { return units }
                 let destPrefix = dkDirRaw
                 for item in items {
                     var isDir: ObjCBool = false
@@ -1145,14 +1153,11 @@ class MainViewController: NSViewController {
                 }
             }
 
-            let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
-            op.customTitle = downloading ? tr("Downloading") : tr("Uploading")
-            op.transferUnits = units
-            op.concurrency = 6
-            self.dispatchOperation(op, queued: queued) { [weak self] in
-                self?.activePanelVC.panelState.refresh()
-                self?.inactivePanelVC.panelState.refresh()
-            }
+            return units
+        }
+        dispatchOperation(op, queued: queued) { [weak self] in
+            self?.activePanelVC.panelState.refresh()
+            self?.inactivePanelVC.panelState.refresh()
         }
     }
 

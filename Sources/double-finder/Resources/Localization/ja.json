@@ -345,5 +345,6 @@
   "“%@” is encrypted. Enter password to browse:": "「%@」は暗号化されています。閲覧するにはパスワードを入力してください：",
   "“%@” is not an executable file. Pick the 7z / 7zz / 7za binary, or leave the field empty to auto-detect.": "「%@」は実行可能ファイルではありません。7z / 7zz / 7za のバイナリを選ぶか、欄を空にして自動検出してください。",
   "“%@” was changed. Upload it back to %@?": "「%@」が変更されました。%@ にアップロードして戻しますか？",
-  "… and %d more": "…他 %d 件"
+  "… and %d more": "…他 %d 件",
+  "Preparing…": "準備中…"
 }

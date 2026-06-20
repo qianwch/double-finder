@@ -4,6 +4,26 @@ import XCTest
 @MainActor
 final class FileOperationConcurrencyTests: XCTestCase {
 
+    /// A slow unit-expansion (e.g. S3 listAllKeys) must NOT block the operation
+    /// from starting — the provider runs after start(), so the progress sheet can
+    /// appear immediately instead of after the expansion finishes.
+    func testUnitsProviderDefersExpansion() async {
+        let op = FileOperation(type: .copy, sources: [], destination: nil)
+        op.indeterminate = true
+        op.transferUnitsProvider = {
+            try? await Task.sleep(nanoseconds: 30_000_000)   // 30ms "network" expansion
+            return (0..<8).map { i in FileOperation.Unit(label: "u\(i)") {} }
+        }
+        op.start()
+        // Right after start(): expansion hasn't run yet → no units known. This is
+        // exactly what lets the sheet show before the (slow) expansion completes.
+        XCTAssertEqual(op.totalUnits, 0)
+        for _ in 0..<200 where !op.isComplete { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(op.isComplete)
+        XCTAssertEqual(op.totalUnits, 8)
+        XCTAssertEqual(op.completedUnits, 8)
+    }
+
     func testRunsUnitsWithBoundedConcurrencyAndCounts() async {
         let op = FileOperation(type: .copy, sources: [], destination: nil)
         op.concurrency = 4
