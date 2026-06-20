@@ -86,8 +86,9 @@ struct LocalCopyProvider: TransferProvider {
 
 // MARK: - LocalMoveProvider
 
-/// Builds a local move `FileOperation` (byte-mode with `totalBytes` /
-/// `bytesTransferred`), extracted verbatim from `MainViewController.actionMove`.
+/// Builds a local move `FileOperation`, extracted verbatim from
+/// `MainViewController.actionMove` — which sets NO byte-mode (the move shows the
+/// plain item-count progress bar, not bytes/speed), so neither does this.
 struct LocalMoveProvider: TransferProvider {
     @MainActor var verb: String { tr("Move") }
 
@@ -97,12 +98,6 @@ struct LocalMoveProvider: TransferProvider {
                                sources: items.map { $0.path },
                                destination: destPath,
                                conflictPolicy: .overwrite)
-        op.totalBytes = items.reduce(0) { $0 + FileOperation.sizeOnDisk($1.path) }
-        let names = items.map { $0.name }
-        let dest = destPath
-        op.bytesTransferred = {
-            names.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk((dest as NSString).appendingPathComponent($1)) }
-        }
         return op
     }
 }
