@@ -52,6 +52,11 @@ class FileOperation: ObservableObject {
     /// the serial sourcePaths loop.
     var transferUnits: [Unit]?
 
+    /// When set, `start()` shows the (indeterminate) sheet immediately, then runs
+    /// this to build the units — so a slow expansion (e.g. S3 listAllKeys over a
+    /// big tree) doesn't delay the progress sheet from appearing.
+    var transferUnitsProvider: (() async -> [Unit])?
+
     let type: OperationType
     let sourcePaths: [String]
     let destinationPath: String?
@@ -107,6 +112,21 @@ class FileOperation: ObservableObject {
     }
 
     func start() {
+        if let provider = transferUnitsProvider {
+            // Sheet shows now (indeterminate "Preparing…"); expand units behind it.
+            indeterminate = true
+            task = Task { @MainActor in
+                let units = await provider()
+                self.transferUnits = units
+                self.totalUnits = units.count
+                self.indeterminate = false
+                await self.runConcurrently(units)
+                self.progress = 1.0
+                self.isComplete = true
+                self.onComplete?()
+            }
+            return
+        }
         if let units = transferUnits {
             totalUnits = units.count
             task = Task { @MainActor in
