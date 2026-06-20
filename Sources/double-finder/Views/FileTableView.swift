@@ -842,10 +842,14 @@ class NCRowView: NSTableRowView {
 // menu stashes the selection's local file URLs in `serviceURLs` (from the same
 // panelState selection the rest of the menu uses) just before showing.
 extension NCTableView: NSServicesMenuRequestor {
+    /// Legacy filenames pasteboard type — advertised/written alongside file-url so
+    /// services that declare only it (iTerm2, Double Commander, …) also appear.
+    private static let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+
     override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?,
                                  returnType: NSPasteboard.PasteboardType?) -> Any? {
         if let sendType = sendType,
-           sendType == .fileURL || sendType.rawValue == "NSFilenamesPboardType",
+           sendType == .fileURL || sendType == Self.filenamesType,
            returnType == nil,
            !serviceURLs.isEmpty {
             return self
@@ -856,11 +860,9 @@ extension NCTableView: NSServicesMenuRequestor {
     func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
         guard !serviceURLs.isEmpty else { return false }
         pboard.clearContents()
+        pboard.addTypes([Self.filenamesType], owner: nil)
         var ok = pboard.writeObjects(serviceURLs as [NSURL])
-        // Also vend the legacy filenames type for older services that ask for it.
-        let filenames = NSPasteboard.PasteboardType("NSFilenamesPboardType")
-        if types.contains(filenames) {
-            pboard.setPropertyList(serviceURLs.map { $0.path }, forType: filenames)
+        if pboard.setPropertyList(serviceURLs.map { $0.path }, forType: Self.filenamesType) {
             ok = true
         }
         return ok
