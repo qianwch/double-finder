@@ -332,5 +332,14 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "„%@“ ist verschlüsselt oder konnte nicht entpackt werden. Passwort eingeben:",
   "“%@” is encrypted. Enter password to browse:": "„%@“ ist verschlüsselt. Passwort zum Durchsuchen eingeben:",
   "“%@” was changed. Upload it back to %@?": "„%@“ wurde geändert. Zurück zu %@ hochladen?",
-  "… and %d more": "… und %d weitere"
+  "… and %d more": "… und %d weitere",
+  "Add Folder…": "Ordner hinzufügen…",
+  "Choose Folder to Add": "Hinzuzufügenden Ordner wählen",
+  "Display": "Anzeige",
+  "Operation": "Bedienung",
+  "Panels": "Bereiche",
+  "Reset All": "Alle zurücksetzen",
+  "Reset Defaults": "Standards wiederherstellen",
+  "Shortcuts": "Tastenkürzel",
+  "Toolbar": "Symbolleiste"
 }

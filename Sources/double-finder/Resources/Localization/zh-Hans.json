@@ -332,5 +332,14 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "“%@”已加密或无法解压。请输入密码：",
   "“%@” is encrypted. Enter password to browse:": "“%@”已加密。请输入密码以浏览：",
   "“%@” was changed. Upload it back to %@?": "“%@” 已修改，是否上传回 %@？",
-  "… and %d more": "…还有 %d 项"
+  "… and %d more": "…还有 %d 项",
+  "Add Folder…": "添加文件夹…",
+  "Choose Folder to Add": "选择要添加的文件夹",
+  "Display": "显示",
+  "Operation": "操作",
+  "Panels": "面板",
+  "Reset All": "全部重置",
+  "Reset Defaults": "恢复默认值",
+  "Shortcuts": "快捷键",
+  "Toolbar": "工具栏"
 }
