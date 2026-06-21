@@ -91,7 +91,7 @@ class MainViewController: NSViewController {
         // Customizable toolbar across the top (TC-style button bar).
         toolbarBar = ToolbarBar()
         toolbarBar.translatesAutoresizingMaskIntoConstraints = false
-        toolbarBar.onCustomize = { [weak self] in self?.customizeToolbar() }
+        toolbarBar.onCustomize = { [weak self] in self?.openSettingsToolbar() }
         view.addSubview(toolbarBar)
 
         // Directory tree sidebar (collapsed by default).
@@ -186,25 +186,8 @@ class MainViewController: NSViewController {
         toolbarBar.configure(ToolbarConfig.ids.compactMap { byID[$0] })
     }
 
-    private var activeShortcutsSheet: ShortcutsSheet?
     @objc func customizeShortcuts_menu() {
-        guard let window = view.window else { return }
-        let sheet = ShortcutsSheet()
-        activeShortcutsSheet = sheet
-        sheet.beginSheet(on: window) { [weak self] in self?.activeShortcutsSheet = nil }
-    }
-
-    private var activeToolbarSheet: ToolbarCustomizeSheet?
-    private func customizeToolbar() {
-        guard let window = view.window else { return }
-        let all = allToolbarCommands.map { (id: $0.id, label: $0.tooltip) }
-        let sheet = ToolbarCustomizeSheet(allCommands: all, currentIDs: ToolbarConfig.ids)
-        activeToolbarSheet = sheet
-        sheet.onSave = { [weak self] ids in
-            ToolbarConfig.ids = ids
-            self?.configureToolbar()
-        }
-        sheet.beginSheet(on: window) { [weak self] in self?.activeToolbarSheet = nil }
+        settings().show(select: "shortcuts", on: view.window)
     }
 
     // MARK: - View mode
@@ -1623,13 +1606,8 @@ class MainViewController: NSViewController {
         Favorites.add(appState.activePanelState.currentPath)
     }
 
-    private var activeFavoritesSheet: FavoritesSheet?
     @objc func organizeFavorites_menu() {
-        guard let window = view.window else { return }
-        let sheet = FavoritesSheet(favorites: Favorites.all())
-        activeFavoritesSheet = sheet
-        sheet.onSave = { Favorites.setAll($0) }
-        sheet.beginSheet(on: window) { [weak self] in self?.activeFavoritesSheet = nil }
+        settings().show(select: "favorites", on: view.window)
     }
 
 
@@ -1696,17 +1674,20 @@ class MainViewController: NSViewController {
     }
 
     private var settingsWindow: SettingsWindowController?
-    @objc func openSettings_menu() {
-        if settingsWindow == nil {
-            let win = SettingsWindowController(installedTerminals: installedTerminals())
-            win.onChange = { [weak self] in self?.reapplyAllSettings() }
-            win.onCustomizeToolbar = { [weak self] in self?.customizeToolbar_public() }
-            win.onCustomizeShortcuts = { [weak self] in self?.customizeShortcuts_menu() }
-            win.onOrganizeFavorites = { [weak self] in self?.organizeFavorites_menu() }
-            settingsWindow = win
-        }
-        settingsWindow?.show(on: view.window)
+    private func settings() -> SettingsWindowController {
+        if let w = settingsWindow { return w }
+        let win = SettingsWindowController(installedTerminals: installedTerminals())
+        win.onChange = { [weak self] in self?.reapplyAllSettings() }
+        win.onToolbarChanged = { [weak self] in self?.configureToolbar() }
+        // onShortcutsChanged / onFavoritesChanged: no refresh needed
+        // (key bindings read live; favorites menu rebuilt on demand)
+        settingsWindow = win
+        return win
     }
+    @objc func openSettings_menu()    { settings().show(on: view.window) }
+    @objc func openSettingsToolbar()   { settings().show(select: "toolbar",   on: view.window) }
+    @objc func openSettingsShortcuts() { settings().show(select: "shortcuts", on: view.window) }
+    @objc func openSettingsFavorites() { settings().show(select: "favorites", on: view.window) }
 
     /// Re-applies all settings that the Settings window can change, to both panels.
     func reapplyAllSettings() {
@@ -1717,8 +1698,6 @@ class MainViewController: NSViewController {
         applyDriveConfig_menu()
         actionRefreshDisplay_menu()
     }
-
-    func customizeToolbar_public() { customizeToolbar() }
 
     // MARK: - Pattern selection
     func actionSelectByPattern(select: Bool) {

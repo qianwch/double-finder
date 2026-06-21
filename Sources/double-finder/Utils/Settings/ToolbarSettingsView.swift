@@ -1,15 +1,14 @@
 import AppKit
 
-/// Embedded toolbar-customization pane for the Settings window (Task 3).
-/// Mirrors the body of `ToolbarCustomizeSheet` but lives inside an NSView
-/// rather than a sheet, and applies every change immediately (no OK/Cancel).
+/// Embedded toolbar-customization pane for the Settings window.
+/// Lives inside an NSView (not a sheet) and applies every change immediately
+/// (no OK/Cancel) — writing `ToolbarConfig.ids` and calling `onChanged`.
 final class ToolbarSettingsView: NSView {
 
     // MARK: - State
 
     /// All available commands: (id, human-readable label/tooltip), in canonical
-    /// order. This is the same list that `MainViewController.customizeToolbar()`
-    /// derives from `allToolbarCommands`.
+    /// order. This mirrors `MainViewController.allToolbarCommands`.
     private static let allCommands: [(id: String, label: String)] = [
         ("refresh",     "Refresh"),
         ("copy",        "Copy (F5)"),
@@ -74,7 +73,7 @@ final class ToolbarSettingsView: NSView {
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("col"))
-        col.width = 220
+        col.width = 260
         tableView.addTableColumn(col)
         tableView.headerView = nil
         tableView.rowHeight = 22
