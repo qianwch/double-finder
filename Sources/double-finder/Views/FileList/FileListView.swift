@@ -38,6 +38,11 @@ final class FileListView: NSScrollView {
         autohidesScrollers = true
         borderType = .noBorder
         drawsBackground = false
+        // Take full control of content insets: otherwise the automatic adjustment
+        // (default on) overrides our manual top inset back to 0, so the reserved
+        // space under the floating header vanishes and the header covers row 0
+        // (the ".." entry). With this off, applyViewMode's contentInsets.top sticks.
+        automaticallyAdjustsContentInsets = false
 
         // Body is the document view (flipped, scrollable).
         documentView = body
