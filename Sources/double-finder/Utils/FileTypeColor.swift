@@ -107,6 +107,24 @@ enum AppSettings {
         get { Language(rawValue: UserDefaults.standard.string(forKey: "Language") ?? "") ?? .system }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "Language") }
     }
+
+    /// Per-column widths (id → CGFloat) persisted as [String: Double] in UserDefaults.
+    /// Default: empty (each column falls back to its own default width).
+    static var columnWidths: [String: CGFloat] {
+        get {
+            guard let raw = UserDefaults.standard.dictionary(forKey: "ColumnWidths") else { return [:] }
+            var result: [String: CGFloat] = [:]
+            for (k, v) in raw {
+                if let d = v as? Double { result[k] = CGFloat(d) }
+            }
+            return result
+        }
+        set {
+            var raw: [String: Double] = [:]
+            for (k, v) in newValue { raw[k] = Double(v) }
+            UserDefaults.standard.set(raw, forKey: "ColumnWidths")
+        }
+    }
 }
 
 /// Total Commander-style coloring of file names by type.

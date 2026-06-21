@@ -190,11 +190,34 @@ enum CanvasBench {
 
     static func runFileListBench(dir: String, app: NSApplication) {
         let items = loadDir(dir)
-        let win = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 760, height: 760),
+        let winRect = NSRect(x: 120, y: 120, width: 760, height: 760)
+        let win = NSWindow(contentRect: winRect,
                            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         win.title = "FileListBodyView bench — \(dir) (\(items.count) items)"
 
-        let scroll = NSScrollView(frame: win.contentLayoutRect)
+        let contentRect = win.contentLayoutRect
+        let headerHeight: CGFloat = 22
+
+        // Container fills the window content area.
+        // AppKit content view uses bottom-left origin (non-flipped).
+        // Header sits at the top → y = contentRect.height - headerHeight.
+        // Scroll view fills the rest below the header.
+        let container = NSView(frame: contentRect)
+        container.autoresizingMask = [.width, .height]
+
+        // --- Header (Task 9) ---
+        let headerY = contentRect.height - headerHeight
+        let header = FileListHeaderView(frame: NSRect(x: 0, y: headerY,
+                                                      width: contentRect.width, height: headerHeight))
+        header.autoresizingMask = [.width, .minYMargin]
+        header.sortColumnID = "name"
+        header.sortAscending = true
+        container.addSubview(header)
+
+        // --- Scroll view below the header ---
+        let scrollRect = NSRect(x: 0, y: 0,
+                                width: contentRect.width, height: contentRect.height - headerHeight)
+        let scroll = NSScrollView(frame: scrollRect)
         scroll.hasVerticalScroller = true
         scroll.autoresizingMask = [.width, .height]
 
@@ -203,7 +226,35 @@ enum CanvasBench {
         list.isActivePanel = true
         list.items = items          // triggers reloadLayout + icon prefetch
         scroll.documentView = list
-        win.contentView = scroll
+        container.addSubview(scroll)
+        win.contentView = container
+
+        // --- Header callbacks ---
+        header.onSort = { [weak header, weak win] colID in
+            guard let header = header else { return }
+            if header.sortColumnID == colID {
+                header.sortAscending = !header.sortAscending
+            } else {
+                header.sortColumnID = colID
+                header.sortAscending = true
+            }
+            let msg = "onSort → \(colID) asc=\(header.sortAscending)\n"
+            win?.title = "FileListBodyView bench — sorted by \(colID)"
+            let url = URL(fileURLWithPath: "/tmp/df-filelist.txt")
+            if let fh = try? FileHandle(forWritingTo: url) {
+                fh.seekToEndOfFile(); fh.write(msg.data(using: .utf8)!); try? fh.close()
+            } else { try? msg.write(to: url, atomically: true, encoding: .utf8) }
+        }
+        header.onLayoutChanged = { [weak header, weak list, weak scroll] in
+            list?.needsDisplay = true
+            scroll?.needsDisplay = true
+            header?.needsDisplay = true
+            let msg = "onLayoutChanged — columnWidths=\(AppSettings.columnWidths)\n"
+            let url = URL(fileURLWithPath: "/tmp/df-filelist.txt")
+            if let fh = try? FileHandle(forWritingTo: url) {
+                fh.seekToEndOfFile(); fh.write(msg.data(using: .utf8)!); try? fh.close()
+            } else { try? msg.write(to: url, atomically: true, encoding: .utf8) }
+        }
 
         // --- Stub delegate: logs every callback to /tmp/df-filelist.txt ---
         let stub = BenchFileDelegate(list: list, scroll: scroll)
@@ -218,7 +269,7 @@ enum CanvasBench {
             win.title = "FileListBodyView bench — \(dir) (\(items.count) items) [mode: \(mode.title)]"
         }
 
-        keepAlive = [win, scroll, list, stub]
+        keepAlive = [win, container, header, scroll, list, stub]
         win.makeKeyAndOrderFront(nil)
         win.makeFirstResponder(list)
         app.setActivationPolicy(.regular)
