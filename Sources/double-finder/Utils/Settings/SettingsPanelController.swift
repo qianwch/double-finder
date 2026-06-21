@@ -176,6 +176,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pane.frame = containerView.bounds
         pane.autoresizingMask = [.width, .height]
         containerView.addSubview(pane)
+        reloadVisiblePane()
+    }
+
+    /// Re-reads the currently-shown pane from its backing model, so a cached pane
+    /// reflects changes made elsewhere (e.g. a favorite added via the panel menu)
+    /// rather than the snapshot it took when first built.
+    private func reloadVisiblePane() {
+        if let id = currentPaneID, let p = built[id] as? SettingsPaneReloadable {
+            p.reloadFromModel()
+        }
     }
 
     // MARK: - Public show API
@@ -194,6 +204,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        reloadVisiblePane()
     }
 
     func show(select id: String, on parent: NSWindow?) {
