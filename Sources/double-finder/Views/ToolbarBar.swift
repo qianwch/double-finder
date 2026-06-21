@@ -69,6 +69,15 @@ final class ToolbarBar: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         }
+        retintButtons()
+    }
+
+    /// Re-tints every button's image for the current appearance (light/dark switch).
+    private func retintButtons() {
+        for (item, btn) in zip(items, itemButtons) {
+            btn.image = Self.tintedSymbol(item.symbol, appearance: effectiveAppearance)
+        }
+        gearButton?.image = Self.tintedSymbol("gearshape", appearance: effectiveAppearance)
     }
 
     func configure(_ items: [Item]) {
@@ -102,20 +111,31 @@ final class ToolbarBar: NSView {
         gearButton?.toolTip = tr("Customize Toolbar…")
     }
 
-    /// Toolbar icon tint: a light gray in dark mode (the default accent renders as a
-    /// low-contrast deep blue there), the standard accent color in light mode.
-    private static let iconTint = NSColor(name: nil) { ap in
-        ap.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
-            ? NSColor(white: 0.78, alpha: 1.0)
-            : .controlAccentColor
+    /// Builds an SF Symbol image tinted for the given appearance. A bordered
+    /// `.texturedRounded` button ignores `contentTintColor` for its image (it draws
+    /// the template in the system accent — a low-contrast deep blue in dark mode), so
+    /// we colour the image ourselves: light gray in dark mode, accent in light mode.
+    private static func tintedSymbol(_ symbol: String, appearance: NSAppearance) -> NSImage {
+        let base = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            ?? NSImage(systemSymbolName: "questionmark", accessibilityDescription: nil)
+            ?? NSImage()
+        let dark = appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+        let tint = dark ? NSColor(white: 0.78, alpha: 1.0) : NSColor.controlAccentColor
+        let size = base.size == .zero ? NSSize(width: 15, height: 15) : base.size
+        let img = NSImage(size: size, flipped: false) { rect in
+            base.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            tint.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        img.isTemplate = false
+        return img
     }
 
     private func makeButton(symbol: String, tooltip: String, action: @escaping () -> Void) -> NSButton {
         let btn = ToolbarButton()
-        btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
-            ?? NSImage(systemSymbolName: "questionmark", accessibilityDescription: tooltip)
+        btn.image = Self.tintedSymbol(symbol, appearance: effectiveAppearance)
         btn.imagePosition = .imageOnly
-        btn.contentTintColor = Self.iconTint
         btn.bezelStyle = .texturedRounded
         btn.isBordered = true
         btn.toolTip = tooltip
