@@ -126,29 +126,31 @@ enum AppSettings {
         }
     }
 
-    // MARK: - Per-type color persistence
+    // MARK: - Per-type color persistence (per-appearance)
 
-    /// Read the custom color for a category, or nil if none is set.
-    static func typeColor(for cat: TypeCategory) -> NSColor? {
-        guard let dict = UserDefaults.standard.dictionary(forKey: "TypeColors") as? [String: String],
+    private static func udKey(dark: Bool) -> String { dark ? "TypeColors.dark" : "TypeColors.light" }
+
+    /// Read the custom color for a category in the given appearance, or nil if none is set.
+    static func typeColor(for cat: TypeCategory, dark: Bool) -> NSColor? {
+        guard let dict = UserDefaults.standard.dictionary(forKey: udKey(dark: dark)) as? [String: String],
               let hex = dict[cat.rawValue] else { return nil }
         return NSColor(hexString: hex)
     }
 
-    /// Write (or clear) the custom color for a category.
-    static func setTypeColor(_ color: NSColor?, for cat: TypeCategory) {
-        var dict = (UserDefaults.standard.dictionary(forKey: "TypeColors") as? [String: String]) ?? [:]
+    /// Write (or clear) the custom color for a category in the given appearance.
+    static func setTypeColor(_ color: NSColor?, for cat: TypeCategory, dark: Bool) {
+        var dict = (UserDefaults.standard.dictionary(forKey: udKey(dark: dark)) as? [String: String]) ?? [:]
         if let color = color, let srgb = color.usingColorSpace(.sRGB) {
             dict[cat.rawValue] = srgb.hexString
         } else {
             dict.removeValue(forKey: cat.rawValue)
         }
-        UserDefaults.standard.set(dict, forKey: "TypeColors")
+        UserDefaults.standard.set(dict, forKey: udKey(dark: dark))
     }
 
-    /// Remove all custom type colors, restoring defaults.
-    static func resetTypeColors() {
-        UserDefaults.standard.removeObject(forKey: "TypeColors")
+    /// Remove all custom type colors for the given appearance, restoring defaults.
+    static func resetTypeColors(dark: Bool) {
+        UserDefaults.standard.removeObject(forKey: udKey(dark: dark))
     }
 }
 
@@ -198,26 +200,29 @@ enum TypeCategory: String, CaseIterable {
         }
     }
 
-    var defaultColor: NSColor {
-        // Dark-on-dark types get a brighter variant in dark mode for legibility,
-        // the standard system color in light mode. Already-bright types
-        // (orange / pink / white) stay as adaptive system colors.
-        switch self {
-        case .folder:     return Self.dynamic(dark: NSColor(srgbRed: 0.42, green: 0.72, blue: 1.00, alpha: 1), light: .systemBlue)
-        case .symlink:    return Self.dynamic(dark: NSColor(srgbRed: 0.36, green: 0.85, blue: 0.82, alpha: 1), light: .systemTeal)
-        case .executable: return Self.dynamic(dark: NSColor(srgbRed: 1.00, green: 0.48, blue: 0.45, alpha: 1), light: .systemRed)
-        case .image:      return Self.dynamic(dark: NSColor(srgbRed: 0.80, green: 0.60, blue: 1.00, alpha: 1), light: .systemPurple)
-        case .code:       return Self.dynamic(dark: NSColor(srgbRed: 0.46, green: 0.88, blue: 0.52, alpha: 1), light: .systemGreen)
-        case .archive:    return .systemOrange
-        case .media:      return .systemPink
-        case .document:   return .labelColor
-        }
-    }
-
-    /// A color that resolves to `dark` in a dark appearance, `light` otherwise.
-    private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
-        NSColor(name: nil) { ap in
-            ap.bestMatch(from: [.darkAqua, .vibrantDark]) != nil ? dark : light
+    func defaultColor(dark: Bool) -> NSColor {
+        if dark {
+            switch self {
+            case .folder:     return NSColor(srgbRed: 0.42, green: 0.72, blue: 1.00, alpha: 1)
+            case .symlink:    return NSColor(srgbRed: 0.36, green: 0.85, blue: 0.82, alpha: 1)
+            case .executable: return NSColor(srgbRed: 1.00, green: 0.48, blue: 0.45, alpha: 1)
+            case .image:      return NSColor(srgbRed: 0.80, green: 0.60, blue: 1.00, alpha: 1)
+            case .code:       return NSColor(srgbRed: 0.46, green: 0.88, blue: 0.52, alpha: 1)
+            case .archive:    return .systemOrange
+            case .media:      return .systemPink
+            case .document:   return .white
+            }
+        } else {
+            switch self {
+            case .folder:     return NSColor(srgbRed: 0.00, green: 0.30, blue: 0.85, alpha: 1)
+            case .symlink:    return NSColor(srgbRed: 0.00, green: 0.50, blue: 0.50, alpha: 1)
+            case .executable: return NSColor(srgbRed: 0.75, green: 0.00, blue: 0.00, alpha: 1)
+            case .image:      return NSColor(srgbRed: 0.45, green: 0.10, blue: 0.70, alpha: 1)
+            case .code:       return NSColor(srgbRed: 0.00, green: 0.45, blue: 0.10, alpha: 1)
+            case .archive:    return NSColor(srgbRed: 0.80, green: 0.40, blue: 0.00, alpha: 1)
+            case .media:      return NSColor(srgbRed: 0.80, green: 0.00, blue: 0.40, alpha: 1)
+            case .document:   return NSColor(srgbRed: 0.00, green: 0.00, blue: 0.00, alpha: 1)
+            }
         }
     }
 }
@@ -250,6 +255,9 @@ enum FileTypeColor {
         guard let cat = category(name: name, isDirectory: isDirectory, isSymlink: isSymlink) else {
             return .labelColor
         }
-        return AppSettings.typeColor(for: cat) ?? cat.defaultColor
+        return NSColor(name: nil) { ap in
+            let isDark = ap.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            return AppSettings.typeColor(for: cat, dark: isDark) ?? cat.defaultColor(dark: isDark)
+        }
     }
 }
