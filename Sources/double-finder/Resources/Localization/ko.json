@@ -332,5 +332,14 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "\"%@\"이(가) 암호화되었거나 압축을 풀 수 없습니다. 암호를 입력하세요:",
   "“%@” is encrypted. Enter password to browse:": "\"%@\"이(가) 암호화되어 있습니다. 탐색하려면 암호를 입력하세요:",
   "“%@” was changed. Upload it back to %@?": "“%@”이(가) 변경되었습니다. %@(으)로 다시 업로드할까요?",
-  "… and %d more": "… 외 %d개"
+  "… and %d more": "… 외 %d개",
+  "Add Folder…": "폴더 추가…",
+  "Choose Folder to Add": "추가할 폴더 선택",
+  "Display": "표시",
+  "Operation": "동작",
+  "Panels": "패널",
+  "Reset All": "모두 초기화",
+  "Reset Defaults": "기본값으로 초기화",
+  "Shortcuts": "단축키",
+  "Toolbar": "도구 모음"
 }

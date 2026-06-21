@@ -332,5 +332,14 @@
   "“%@” is encrypted or could not be extracted. Enter password:": "« %@ » est chiffré ou n’a pas pu être extrait. Saisissez le mot de passe :",
   "“%@” is encrypted. Enter password to browse:": "« %@ » est chiffré. Saisissez le mot de passe pour parcourir :",
   "“%@” was changed. Upload it back to %@?": "« %@ » a été modifié. Le réuploader vers %@ ?",
-  "… and %d more": "… et %d de plus"
+  "… and %d more": "… et %d de plus",
+  "Add Folder…": "Ajouter un dossier…",
+  "Choose Folder to Add": "Choisir le dossier à ajouter",
+  "Display": "Affichage",
+  "Operation": "Opérations",
+  "Panels": "Panneaux",
+  "Reset All": "Tout réinitialiser",
+  "Reset Defaults": "Réinitialiser les valeurs par défaut",
+  "Shortcuts": "Raccourcis",
+  "Toolbar": "Barre d'outils"
 }
