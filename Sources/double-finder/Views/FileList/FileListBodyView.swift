@@ -537,15 +537,16 @@ final class FileListBodyView: NSView {
         }
 
         // --- Track mouse to distinguish drag from plain release ---
-        // This mirrors NCTableView's drag-detection loop. For now drag is a TODO
-        // (Task 8/9); we only use the release to decide whether to start a rename.
+        // Mirrors NCTableView: a release schedules an inline rename (slow-click); a
+        // movement past the threshold starts a file drag — but only for a row that
+        // is actually draggable (a real local file). For ".." / SFTP / archive rows
+        // the drag is suppressed (like the old view), so a slow click on them still
+        // reaches the rename path.
+        let draggable = item.name != ".." && FileManager.default.fileExists(atPath: item.path)
         let start = event.locationInWindow
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
             if next.type == .leftMouseUp {
                 // Slow-double-click → begin inline rename (Finder/TC style).
-                // The rename overlay itself is implemented in Task 7; for now we
-                // schedule a call to `beginRename(row:)` which Task 7 will add.
-                // If the method doesn't exist yet the work item is a no-op.
                 if wasCurrent, noChord, item.name != "..", fileDelegate != nil {
                     let wi = DispatchWorkItem { [weak self] in
                         self?.beginRename(row: row)
@@ -556,13 +557,15 @@ final class FileListBodyView: NSView {
                 }
                 return
             }
-            // Drag detection threshold (4 pt) — abort rename scheduling on drag.
-            let d = hypot(next.locationInWindow.x - start.x,
-                          next.locationInWindow.y - start.y)
-            if d > 4 {
-                renameWorkItem?.cancel(); renameWorkItem = nil
-                startFileDrag(originRow: row, event: next)
-                return
+            // Drag detection threshold (4 pt) — only for draggable rows.
+            if draggable {
+                let d = hypot(next.locationInWindow.x - start.x,
+                              next.locationInWindow.y - start.y)
+                if d > 4 {
+                    renameWorkItem?.cancel(); renameWorkItem = nil
+                    startFileDrag(originRow: row, event: next)
+                    return
+                }
             }
         }
     }
@@ -766,7 +769,7 @@ extension FileListBodyView: NSDraggingSource {
 
     /// Mirrors NCTableView.startFileDrag exactly: drag the whole selection if
     /// the origin row is in it, otherwise just the clicked row.
-    fileprivate func startFileDrag(originRow: Int, event: NSEvent) {
+    private func startFileDrag(originRow: Int, event: NSEvent) {
         let origin = items[originRow]
         let toDrag: [FileItem] = selectedItems.contains(origin.id)
             ? items.filter { selectedItems.contains($0.id) && $0.name != ".." }
