@@ -70,6 +70,17 @@ struct FileItem: Identifiable, Hashable {
         return archiveSuffixes.contains { lower.hasSuffix($0) }
     }
 
+    /// The archive file name with its archive extension removed — the default
+    /// folder name to extract into. Strips the LONGEST matching archive suffix so
+    /// "foo.tar.gz" → "foo" (not "foo.tar"), "foo.zip" → "foo".
+    static func archiveBaseName(of name: String) -> String {
+        let lower = name.lowercased()
+        if let suffix = archiveSuffixes.filter({ lower.hasSuffix($0) }).max(by: { $0.count < $1.count }) {
+            return String(name.dropLast(suffix.count))
+        }
+        return (name as NSString).deletingPathExtension
+    }
+
     /// Size used for sorting/totals: the computed recursive size if available.
     var effectiveSize: Int64 { calculatedSize ?? size }
 
