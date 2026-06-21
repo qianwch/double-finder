@@ -125,11 +125,15 @@ final class FileListBodyView: NSView {
 
         guard !items.isEmpty else { return }
 
-        // 2. Compute layout once per draw — NOT per row.
+        // 2. Compute layout once per draw — NOT per row. Read all UserDefaults-backed
+        // settings ONCE here, never inside the row loop (per-row UserDefaults reads
+        // are exactly the hot-loop cost this owner-drawn rewrite exists to remove).
         let geo = geometry  // already cached; just alias for clarity
+        let optionalIDs = AppSettings.visibleColumns
+        let colorByType = AppSettings.colorByType
         let layout = FileColumnLayout(
             totalWidth: bounds.width,
-            visibleOptionalIDs: AppSettings.visibleColumns,
+            visibleOptionalIDs: optionalIDs,
             widths: [:]
         )
         let viewWidth = bounds.width
@@ -207,7 +211,7 @@ final class FileListBodyView: NSView {
                 let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
 
                 var nameColor: NSColor
-                if AppSettings.colorByType {
+                if colorByType {
                     nameColor = FileTypeColor.color(name: item.name, isDirectory: item.isDirectory, isSymlink: item.isSymlink)
                 } else if item.isSymlink {
                     nameColor = .systemBlue
@@ -226,8 +230,7 @@ final class FileListBodyView: NSView {
                 (item.name as NSString).draw(in: textRect, withAttributes: nameAttr)
             }
 
-            // 4c. Visible optional columns.
-            let optionalIDs = AppSettings.visibleColumns
+            // 4c. Visible optional columns (uses the `optionalIDs` hoisted above).
             for colID in optionalIDs {
                 guard let xRange = layout.xRange(of: colID) else { continue }
                 let text = metaText(for: item, column: colID)
@@ -301,10 +304,6 @@ final class FileListBodyView: NSView {
         if window != nil {
             reloadLayout()
         }
-    }
-
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
     }
 
     // MARK: - Input (basic keyboard for bench)
