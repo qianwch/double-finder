@@ -126,6 +126,13 @@ final class ShortcutsSettingsView: NSView {
         recordingRow = nil
     }
 
+    /// Tears down an in-progress key capture. Called when the (non-modal) Settings
+    /// window closes — otherwise a "Record"-then-close-without-keypress would leave
+    /// the local key monitor installed and swallow the next keystroke app-wide.
+    func endRecordingIfActive() {
+        if monitor != nil { cancelRecording() }
+    }
+
     private func finishRecording(_ combo: KeyCombo) {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
         guard let row = recordingRow else { return }
