@@ -146,8 +146,7 @@ final class FileListView: NSScrollView {
         get { body.viewMode }
         set {
             body.viewMode = newValue
-            headerView.isHidden = (newValue != .full)
-            applyViewMode()
+            applyViewMode()   // sets headerView.isHidden + content insets
         }
     }
 
@@ -212,6 +211,19 @@ final class FileListView: NSScrollView {
 
     /// Forward clickedRow from body.
     var clickedRow: Int { body.clickedRow }
+
+    /// Local file URLs the context menu's Services submenu acts on (forwarded to
+    /// the body, which is the first responder and vends them via NSServicesMenuRequestor).
+    var serviceURLs: [URL] {
+        get { body.serviceURLs }
+        set { body.serviceURLs = newValue }
+    }
+
+    /// Rect of `row` in `firstResponderTarget` (= body) coordinates — used to pop
+    /// the keyboard-invoked context menu at the cursor row (mirrors NSTableView.rect(ofRow:)).
+    func rectOfRow(_ row: Int) -> NSRect {
+        body.geometry.rowRect(row, width: body.bounds.width)
+    }
 
     // --- Layout reload (mirrors FileTableView.reloadLayout) ---
 

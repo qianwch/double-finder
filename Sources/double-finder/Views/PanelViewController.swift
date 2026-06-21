@@ -22,7 +22,7 @@ class PanelViewController: NSViewController {
     private var tabBarHeightConstraint: NSLayoutConstraint!
     private var tabs: [PanelState] = []
     private var activeTab = 0
-    var fileTableView: FileTableView!
+    var fileTableView: FileListView!
     private var statusBar: NSTextField!
     private var headerView: AppearanceAwareView!
 
@@ -114,16 +114,16 @@ class PanelViewController: NSViewController {
         tabBar.onClose = { [weak self] i in self?.closeTab(at: i) }
         view.addSubview(tabBar)
 
-        // File table view
-        fileTableView = FileTableView()
+        // File list view (owner-drawn)
+        fileTableView = FileListView()
         fileTableView.translatesAutoresizingMaskIntoConstraints = false
         fileTableView.fileDelegate = self
         view.addSubview(fileTableView)
 
-        // Right-click context menu (NSTableView populates clickedRow for us).
+        // Right-click context menu (FileListBodyView populates clickedRow for us).
         let contextMenu = NSMenu()
         contextMenu.delegate = self
-        fileTableView.tableView.menu = contextMenu
+        fileTableView.contextMenu = contextMenu
 
         // Quick-filter bar (hidden until activated with Cmd+F)
         filterField = NSSearchField()
@@ -290,7 +290,7 @@ class PanelViewController: NSViewController {
         }
         filterField.isHidden = true
         filterHeightConstraint.constant = 0
-        view.window?.makeFirstResponder(fileTableView.tableView)
+        view.window?.makeFirstResponder(fileTableView.firstResponderTarget)
     }
 
     private var stateObservations: [Any] = []
@@ -684,7 +684,7 @@ extension PanelViewController: NSSearchFieldDelegate {
 // MARK: - NSMenuDelegate (context menu)
 extension PanelViewController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
-        let row = fileTableView.tableView.clickedRow
+        let row = fileTableView.clickedRow
         menu.removeAllItems()
         panelDelegate?.panelViewController(self, populateContextMenu: menu, forRow: row)
     }

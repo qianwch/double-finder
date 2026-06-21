@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// pass — the Double Commander (TDrawGrid) approach.  Only the dirty rect is
 /// iterated; cursor/selection changes invalidate only the affected row rects.
 ///
-/// **Current scope: Full-mode only.**  Brief and thumbnails are Task 5.
+/// Renders all three view modes (full / brief / thumbnails) in `draw(_:)`.
 final class FileListBodyView: NSView {
 
     // MARK: - Public model
@@ -62,6 +62,10 @@ final class FileListBodyView: NSView {
     var sortAscending: Bool = true
 
     weak var fileDelegate: FileTableViewDelegate?
+
+    /// Local file URLs the context menu's Services submenu should act on. Set by
+    /// the menu builder just before the menu shows; vended via NSServicesMenuRequestor.
+    var serviceURLs: [URL] = []
 
     // MARK: - Private state
 
@@ -751,7 +755,7 @@ final class FileListBodyView: NSView {
         }
     }
 
-    // MARK: - Bench callbacks (wired in CanvasBench; ignored in production)
+    // MARK: - Standalone callbacks (used when fileDelegate == nil; ignored in production)
 
     var onClickRow: ((_ row: Int, _ extend: Bool, _ toggle: Bool) -> Void)?
     var onDoubleClickRow: ((Int) -> Void)?
@@ -847,6 +851,43 @@ extension FileListBodyView {
         guard row >= 0, row < items.count else { return }
         scrollToVisible(geometry.rowRect(row, width: bounds.width))
     }
+}
+
+// MARK: - System Services support
+//
+// Lets the macOS Services menu (Finder-style) act on the selected files. The
+// body view is the first responder, so AppKit walks the responder chain here
+// to discover what the selection can vend and which services apply. The context
+// menu stashes the selection's local file URLs in `serviceURLs` (from the same
+// panelState selection the rest of the menu uses) just before showing.
+extension FileListBodyView: NSServicesMenuRequestor {
+    /// Legacy filenames pasteboard type — advertised/written alongside file-url so
+    /// services that declare only it (iTerm2, Double Commander, …) also appear.
+    private static let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?,
+                                 returnType: NSPasteboard.PasteboardType?) -> Any? {
+        if let sendType = sendType,
+           sendType == .fileURL || sendType == Self.filenamesType,
+           returnType == nil,
+           !serviceURLs.isEmpty {
+            return self
+        }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+
+    func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard !serviceURLs.isEmpty else { return false }
+        pboard.clearContents()
+        pboard.addTypes([Self.filenamesType], owner: nil)
+        var ok = pboard.writeObjects(serviceURLs as [NSURL])
+        if pboard.setPropertyList(serviceURLs.map { $0.path }, forType: Self.filenamesType) {
+            ok = true
+        }
+        return ok
+    }
+
+    func readSelection(from pboard: NSPasteboard) -> Bool { false }   // we only send, never receive
 }
 
 // MARK: - NSTextFieldDelegate (inline rename)

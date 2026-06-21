@@ -32,7 +32,6 @@ final class FileListHeaderView: NSView {
 
     // MARK: - Drawing constants
 
-    private let headerHeight: CGFloat = 22
     private let minColumnWidth: CGFloat = 40
     private let dividerTolerance: CGFloat = 4
 
@@ -93,11 +92,7 @@ final class FileListHeaderView: NSView {
         // Read UserDefaults once per draw (not per column).
         let layout = makeLayout()
 
-        // --- Background ---
-        NSColor.windowBackgroundColor.setFill()
-        bounds.fill()
-
-        // Apply a subtle gradient-like look similar to NSTableHeaderView.
+        // --- Background --- (subtle look similar to NSTableHeaderView)
         let headerColor: NSColor
         if effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
             headerColor = NSColor(white: 0.22, alpha: 1.0)

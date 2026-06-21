@@ -17,31 +17,6 @@ if let arc = ProcessInfo.processInfo.environment["NC_ARCHIVE_DIAG"] {
     exit(0)
 }
 
-// Owner-drawn file-list prototype bench: `DF_CANVAS_BENCH=/some/dir "Double Finder"`
-// Opens one window with CanvasFileListView on that directory so the per-cursor-move
-// redraw cost can be measured (logged to /tmp/df-canvas.txt) and felt, to A/B the
-// owner-drawn (Double Commander–style) approach against NSTableView on old hardware.
-if let dir = ProcessInfo.processInfo.environment["DF_CANVAS_BENCH"] {
-    CanvasBench.run(dir: dir, app: app)
-}
-
-// FileListBodyView bench: `DF_FILELIST_BENCH=/some/dir "Double Finder"`
-// Opens one window with the new FileListBodyView (full-mode owner-drawn rendering,
-// Task 4) for GUI verification: icon + name + size + date columns, cursor highlight,
-// arrow-key navigation.
-if let dir = ProcessInfo.processInfo.environment["DF_FILELIST_BENCH"] {
-    CanvasBench.runFileListBench(dir: dir, app: app)
-}
-
-// FileListView bench: `DF_FILELISTVIEW_BENCH=/some/dir "Double Finder"`
-// Opens one window with the Task-10 FileListView composite (header + body together)
-// for GUI verification: header shows in .full / hides in .brief/.thumbnails, column
-// alignment, scrolling, sort indicator, header column click → didClickColumn,
-// divider resize reflows header + body together. Keys 1/2/3 switch view modes.
-if let dir = ProcessInfo.processInfo.environment["DF_FILELISTVIEW_BENCH"] {
-    CanvasBench.runFileListViewBench(dir: dir, app: app)
-}
-
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)
