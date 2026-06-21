@@ -73,7 +73,7 @@ final class SettingsWindowController2: NSWindowController {
                 ToolbarSettingsView(onChanged: { self?.onToolbarChanged?() })
             },
             SettingsCategory(id: "shortcuts", title: tr("Shortcuts"), symbol: "keyboard") { [weak self] in
-                self?.makePlaceholder(title: tr("Shortcuts")) ?? NSView()
+                ShortcutsSettingsView(onChanged: { self?.onShortcutsChanged?() })
             },
             SettingsCategory(id: "favorites", title: tr("Favorites"), symbol: "bookmark") { [weak self] in
                 self?.makePlaceholder(title: tr("Favorites")) ?? NSView()
