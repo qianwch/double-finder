@@ -341,5 +341,14 @@
   "Reset All": "Tout réinitialiser",
   "Reset Defaults": "Réinitialiser les valeurs par défaut",
   "Shortcuts": "Raccourcis",
-  "Toolbar": "Barre d'outils"
+  "Toolbar": "Barre d'outils",
+  "Colors": "Couleurs",
+  "Folders": "Dossiers",
+  "Symbolic Links": "Liens symboliques",
+  "Executables": "Exécutables",
+  "Images": "Images",
+  "Audio / Video": "Audio / Vidéo",
+  "Source Code": "Code source",
+  "Documents": "Documents",
+  "Reset to Defaults": "Réinitialiser"
 }

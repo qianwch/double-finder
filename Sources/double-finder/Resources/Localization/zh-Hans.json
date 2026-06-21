@@ -341,5 +341,14 @@
   "Reset All": "全部重置",
   "Reset Defaults": "恢复默认值",
   "Shortcuts": "快捷键",
-  "Toolbar": "工具栏"
+  "Toolbar": "工具栏",
+  "Colors": "颜色",
+  "Folders": "文件夹",
+  "Symbolic Links": "符号链接",
+  "Executables": "可执行文件",
+  "Images": "图片",
+  "Audio / Video": "音频 / 视频",
+  "Source Code": "源代码",
+  "Documents": "文档",
+  "Reset to Defaults": "重置为默认"
 }

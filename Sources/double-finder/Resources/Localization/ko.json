@@ -341,5 +341,14 @@
   "Reset All": "모두 초기화",
   "Reset Defaults": "기본값으로 초기화",
   "Shortcuts": "단축키",
-  "Toolbar": "도구 모음"
+  "Toolbar": "도구 모음",
+  "Colors": "색상",
+  "Folders": "폴더",
+  "Symbolic Links": "심볼릭 링크",
+  "Executables": "실행 파일",
+  "Images": "이미지",
+  "Audio / Video": "오디오 / 비디오",
+  "Source Code": "소스 코드",
+  "Documents": "문서",
+  "Reset to Defaults": "기본값으로 재설정"
 }
