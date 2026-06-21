@@ -51,7 +51,7 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "FoldersFirst") }
     }
 
-    /// Which optional columns are shown (ids from FileTableView.optionalColumns).
+    /// Which optional columns are shown (ids from FileColumnLayout.optionalColumns).
     static var visibleColumns: [String] {
         get { UserDefaults.standard.stringArray(forKey: "VisibleColumns") ?? ["size", "date"] }
         set { UserDefaults.standard.set(newValue, forKey: "VisibleColumns") }

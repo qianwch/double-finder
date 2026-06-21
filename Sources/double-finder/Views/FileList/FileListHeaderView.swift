@@ -246,7 +246,7 @@ final class FileListHeaderView: NSView {
     private func buildChooserMenu() -> NSMenu {
         let menu = NSMenu()
         let visible = Set(AppSettings.visibleColumns)
-        for spec in FileTableView.optionalColumns {
+        for spec in FileColumnLayout.optionalColumns {
             let item = NSMenuItem(title: tr(spec.title), action: #selector(toggleColumn(_:)),
                                   keyEquivalent: "")
             item.representedObject = spec.id
@@ -264,7 +264,7 @@ final class FileListHeaderView: NSView {
             visible.removeAll { $0 == colID }
         } else {
             // Maintain the canonical order from optionalColumns.
-            let canonicalOrder = FileTableView.optionalColumns.map { $0.id }
+            let canonicalOrder = FileColumnLayout.optionalColumns.map { $0.id }
             visible.append(colID)
             visible.sort { canonicalOrder.firstIndex(of: $0) ?? 0 < canonicalOrder.firstIndex(of: $1) ?? 0 }
         }

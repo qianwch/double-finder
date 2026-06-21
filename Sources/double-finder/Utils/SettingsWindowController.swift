@@ -146,7 +146,7 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         let visible = Set(AppSettings.visibleColumns)
         var y: CGFloat = 124
         var x: CGFloat = 44
-        for (i, col) in FileTableView.optionalColumns.enumerated() {
+        for (i, col) in FileColumnLayout.optionalColumns.enumerated() {
             let b = NSButton(checkboxWithTitle: tr(col.title), target: self, action: #selector(toggleColumn(_:)))
             b.state = visible.contains(col.id) ? .on : .off
             b.identifier = NSUserInterfaceItemIdentifier(col.id)
