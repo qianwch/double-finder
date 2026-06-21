@@ -199,21 +199,25 @@ enum TypeCategory: String, CaseIterable {
     }
 
     var defaultColor: NSColor {
+        // Dark-on-dark types get a brighter variant in dark mode for legibility,
+        // the standard system color in light mode. Already-bright types
+        // (orange / pink / white) stay as adaptive system colors.
         switch self {
-        case .folder:
-            // Brighter blue in dark mode for legibility
-            return NSColor(name: nil) { ap in
-                ap.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
-                    ? NSColor(srgbRed: 0.42, green: 0.72, blue: 1.0, alpha: 1)
-                    : .systemBlue
-            }
-        case .symlink:    return .systemTeal
-        case .executable: return .systemRed
+        case .folder:     return Self.dynamic(dark: NSColor(srgbRed: 0.42, green: 0.72, blue: 1.00, alpha: 1), light: .systemBlue)
+        case .symlink:    return Self.dynamic(dark: NSColor(srgbRed: 0.36, green: 0.85, blue: 0.82, alpha: 1), light: .systemTeal)
+        case .executable: return Self.dynamic(dark: NSColor(srgbRed: 1.00, green: 0.48, blue: 0.45, alpha: 1), light: .systemRed)
+        case .image:      return Self.dynamic(dark: NSColor(srgbRed: 0.80, green: 0.60, blue: 1.00, alpha: 1), light: .systemPurple)
+        case .code:       return Self.dynamic(dark: NSColor(srgbRed: 0.46, green: 0.88, blue: 0.52, alpha: 1), light: .systemGreen)
         case .archive:    return .systemOrange
-        case .image:      return .systemPurple
         case .media:      return .systemPink
-        case .code:       return .systemGreen
         case .document:   return .labelColor
+        }
+    }
+
+    /// A color that resolves to `dark` in a dark appearance, `light` otherwise.
+    private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
+        NSColor(name: nil) { ap in
+            ap.bestMatch(from: [.darkAqua, .vibrantDark]) != nil ? dark : light
         }
     }
 }

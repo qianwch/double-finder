@@ -1,7 +1,7 @@
 import AppKit
 
 /// Total-Commander-style Settings window (master-detail).
-/// The sole Settings window: sidebar of 7 categories + embedded detail panes,
+/// The sole Settings window: sidebar of 8 categories + embedded detail panes,
 /// opened directly (⌘,) or deep-linked via `show(select:)`.
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
