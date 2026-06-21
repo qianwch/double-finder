@@ -182,7 +182,10 @@ final class FileListView: NSScrollView {
         guard count > 0 else { return }
         let target = max(0, min(row, count - 1))
         let geo = body.geometry
-        let rowY = CGFloat(target) * geo.rowHeight
+        // Subtract the top content inset (the floating header's height in .full
+        // mode) so the row lands just BELOW the header, not under it. Without this,
+        // scrolling row 0 to the top hid the ".." entry beneath the header.
+        let rowY = CGFloat(target) * geo.rowHeight - contentInsets.top
         let clipView = contentView
         let newOrigin = NSPoint(x: 0, y: rowY)
         clipView.scroll(to: clipView.constrainBoundsRect(NSRect(origin: newOrigin, size: clipView.bounds.size)).origin)
