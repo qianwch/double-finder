@@ -341,5 +341,14 @@
   "Reset All": "Alle zurücksetzen",
   "Reset Defaults": "Standards wiederherstellen",
   "Shortcuts": "Tastenkürzel",
-  "Toolbar": "Symbolleiste"
+  "Toolbar": "Symbolleiste",
+  "Colors": "Farben",
+  "Folders": "Ordner",
+  "Symbolic Links": "Symbolische Links",
+  "Executables": "Ausführbare Dateien",
+  "Images": "Bilder",
+  "Audio / Video": "Audio / Video",
+  "Source Code": "Quellcode",
+  "Documents": "Dokumente",
+  "Reset to Defaults": "Auf Standard zurücksetzen"
 }

@@ -125,7 +125,100 @@ enum AppSettings {
             UserDefaults.standard.set(raw, forKey: "ColumnWidths")
         }
     }
+
+    // MARK: - Per-type color persistence
+
+    /// Read the custom color for a category, or nil if none is set.
+    static func typeColor(for cat: TypeCategory) -> NSColor? {
+        guard let dict = UserDefaults.standard.dictionary(forKey: "TypeColors") as? [String: String],
+              let hex = dict[cat.rawValue] else { return nil }
+        return NSColor(hexString: hex)
+    }
+
+    /// Write (or clear) the custom color for a category.
+    static func setTypeColor(_ color: NSColor?, for cat: TypeCategory) {
+        var dict = (UserDefaults.standard.dictionary(forKey: "TypeColors") as? [String: String]) ?? [:]
+        if let color = color, let srgb = color.usingColorSpace(.sRGB) {
+            dict[cat.rawValue] = srgb.hexString
+        } else {
+            dict.removeValue(forKey: cat.rawValue)
+        }
+        UserDefaults.standard.set(dict, forKey: "TypeColors")
+    }
+
+    /// Remove all custom type colors, restoring defaults.
+    static func resetTypeColors() {
+        UserDefaults.standard.removeObject(forKey: "TypeColors")
+    }
 }
+
+// MARK: - NSColor hex helpers
+
+private extension NSColor {
+    convenience init?(hexString: String) {
+        guard hexString.count == 6,
+              let r = UInt8(hexString.prefix(2), radix: 16),
+              let g = UInt8(hexString.dropFirst(2).prefix(2), radix: 16),
+              let b = UInt8(hexString.dropFirst(4).prefix(2), radix: 16) else { return nil }
+        self.init(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
+    }
+
+    var hexString: String {
+        guard let c = usingColorSpace(.sRGB) else { return "808080" }
+        let r = Int(max(0, min(1, c.redComponent)) * 255 + 0.5)
+        let g = Int(max(0, min(1, c.greenComponent)) * 255 + 0.5)
+        let b = Int(max(0, min(1, c.blueComponent)) * 255 + 0.5)
+        return String(format: "%02X%02X%02X", r, g, b)
+    }
+}
+
+// MARK: - TypeCategory
+
+/// File type categories used for color-coding. Each maps to a default color and a UI label.
+enum TypeCategory: String, CaseIterable {
+    case folder
+    case symlink
+    case executable
+    case archive
+    case image
+    case media
+    case code
+    case document
+
+    var titleKey: String {
+        switch self {
+        case .folder:     return "Folders"
+        case .symlink:    return "Symbolic Links"
+        case .executable: return "Executables"
+        case .archive:    return "Archives"
+        case .image:      return "Images"
+        case .media:      return "Audio / Video"
+        case .code:       return "Source Code"
+        case .document:   return "Documents"
+        }
+    }
+
+    var defaultColor: NSColor {
+        switch self {
+        case .folder:
+            // Brighter blue in dark mode for legibility
+            return NSColor(name: nil) { ap in
+                ap.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+                    ? NSColor(srgbRed: 0.42, green: 0.72, blue: 1.0, alpha: 1)
+                    : .systemBlue
+            }
+        case .symlink:    return .systemTeal
+        case .executable: return .systemRed
+        case .archive:    return .systemOrange
+        case .image:      return .systemPurple
+        case .media:      return .systemPink
+        case .code:       return .systemGreen
+        case .document:   return .labelColor
+        }
+    }
+}
+
+// MARK: - FileTypeColor
 
 /// Total Commander-style coloring of file names by type.
 enum FileTypeColor {
@@ -135,16 +228,24 @@ enum FileTypeColor {
     private static let docs: Set<String> = ["pdf","doc","docx","xls","xlsx","ppt","pptx","txt","md","rtf","pages","numbers","key","csv"]
     private static let executable: Set<String> = ["app","exe","sh","bash","command","bin","run","msi","pkg","dmg"]
 
-    static func color(name: String, isDirectory: Bool, isSymlink: Bool) -> NSColor {
-        if isSymlink { return .systemTeal }
-        if isDirectory { return .systemBlue }
+    /// Classify a file into a TypeCategory, or return nil for plain files.
+    static func category(name: String, isDirectory: Bool, isSymlink: Bool) -> TypeCategory? {
+        if isSymlink { return .symlink }
+        if isDirectory { return .folder }
         let ext = (name as NSString).pathExtension.lowercased()
-        if executable.contains(ext) { return .systemRed }
-        if FileItem.isArchiveFileName(name) { return .systemOrange }
-        if images.contains(ext) { return .systemPurple }
-        if media.contains(ext) { return .systemPink }
-        if code.contains(ext) { return .systemGreen }
-        if docs.contains(ext) { return .labelColor }
-        return .labelColor
+        if executable.contains(ext) { return .executable }
+        if FileItem.isArchiveFileName(name) { return .archive }
+        if images.contains(ext) { return .image }
+        if media.contains(ext) { return .media }
+        if code.contains(ext) { return .code }
+        if docs.contains(ext) { return .document }
+        return nil
+    }
+
+    static func color(name: String, isDirectory: Bool, isSymlink: Bool) -> NSColor {
+        guard let cat = category(name: name, isDirectory: isDirectory, isSymlink: isSymlink) else {
+            return .labelColor
+        }
+        return AppSettings.typeColor(for: cat) ?? cat.defaultColor
     }
 }

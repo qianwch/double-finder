@@ -341,5 +341,14 @@
   "Reset All": "すべてリセット",
   "Reset Defaults": "デフォルトに戻す",
   "Shortcuts": "ショートカット",
-  "Toolbar": "ツールバー"
+  "Toolbar": "ツールバー",
+  "Colors": "カラー",
+  "Folders": "フォルダ",
+  "Symbolic Links": "シンボリックリンク",
+  "Executables": "実行ファイル",
+  "Images": "画像",
+  "Audio / Video": "オーディオ / ビデオ",
+  "Source Code": "ソースコード",
+  "Documents": "書類",
+  "Reset to Defaults": "デフォルトにリセット"
 }
