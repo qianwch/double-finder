@@ -1,7 +1,7 @@
 import AppKit
 
 /// Total-Commander-style Settings window (master-detail).
-/// The sole Settings window: sidebar of 8 categories + embedded detail panes,
+/// The sole Settings window: sidebar of 6 categories + embedded detail panes,
 /// opened directly (⌘,) or deep-linked via `show(select:)`.
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
@@ -66,19 +66,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildCategories() {
         categories = [
             SettingsCategory(id: "general", title: tr("General"), symbol: "gearshape") { [weak self] in
-                GeneralSettingsView(onChange: { self?.onChange?() })
+                GeneralSettingsView(onChange: { self?.onChange?() }, terminals: self?.installedTerminalsValue ?? ["Terminal"])
             },
             SettingsCategory(id: "appearance", title: tr("Appearance"), symbol: "circle.lefthalf.filled") { [weak self] in
                 AppearanceSettingsView(onChange: { self?.onChange?() })
             },
-            SettingsCategory(id: "display", title: tr("Display"), symbol: "square.grid.2x2") { [weak self] in
-                DisplaySettingsView(onChange: { self?.onChange?() })
-            },
             SettingsCategory(id: "panels", title: tr("Panels"), symbol: "sidebar.squares.left") { [weak self] in
                 PanelsSettingsView(onChange: { self?.onChange?() })
-            },
-            SettingsCategory(id: "operation", title: tr("Operation"), symbol: "slider.horizontal.3") { [weak self] in
-                OperationSettingsView(onChange: { self?.onChange?() }, terminals: self?.installedTerminalsValue ?? ["Terminal"])
             },
             SettingsCategory(id: "toolbar", title: tr("Toolbar"), symbol: "wrench.and.screwdriver") { [weak self] in
                 ToolbarSettingsView(onChanged: { self?.onToolbarChanged?() })
