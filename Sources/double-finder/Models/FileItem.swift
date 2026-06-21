@@ -85,14 +85,19 @@ struct FileItem: Identifiable, Hashable {
     var effectiveSize: Int64 { calculatedSize ?? size }
 
     var formattedSize: String {
+        if let computed = calculatedSize { return Self.sizeString(computed) }
+        if isDirectory { return "<DIR>" }
+        return Self.sizeString(size)
+    }
+
+    /// Compact size string. Under 1 KB shows the exact byte count (e.g. "512 B")
+    /// instead of rounding to "0 KB"; otherwise KB / MB / GB.
+    static func sizeString(_ bytes: Int64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file
-        if let computed = calculatedSize {
-            return formatter.string(fromByteCount: computed)
-        }
-        if isDirectory { return "<DIR>" }
-        return formatter.string(fromByteCount: size)
+        return formatter.string(fromByteCount: bytes)
     }
 
     var formattedDate: String {
