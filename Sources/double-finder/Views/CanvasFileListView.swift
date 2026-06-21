@@ -176,11 +176,63 @@ final class CanvasFileListView: NSView {
 
 // MARK: - Prototype bench harness
 
-/// Stands up a single window with `CanvasFileListView` over a directory so the
-/// owner-drawn redraw cost can be measured + felt. Launched by the DF_CANVAS_BENCH
-/// env var; never returns (runs its own app loop).
+/// Stands up a single window with `CanvasFileListView` (or `FileListBodyView`)
+/// over a directory so the owner-drawn redraw cost can be measured + felt.
+///
+/// - `DF_CANVAS_BENCH=/dir` — uses the original `CanvasFileListView`.
+/// - `DF_FILELIST_BENCH=/dir` — uses the new `FileListBodyView` (Task 4+).
+///
+/// Never returns (runs its own app loop).
 enum CanvasBench {
     private static var keepAlive: [AnyObject] = []
+
+    // MARK: FileListBodyView bench (DF_FILELIST_BENCH)
+
+    static func runFileListBench(dir: String, app: NSApplication) {
+        let items = loadDir(dir)
+        let win = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 760, height: 760),
+                           styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        win.title = "FileListBodyView bench — \(dir) (\(items.count) items)"
+
+        let scroll = NSScrollView(frame: win.contentLayoutRect)
+        scroll.hasVerticalScroller = true
+        scroll.autoresizingMask = [.width, .height]
+
+        let list = FileListBodyView(frame: NSRect(x: 0, y: 0, width: 760, height: 10))
+        list.viewMode = .full
+        list.isActivePanel = true
+        list.items = items          // triggers reloadLayout + icon prefetch
+        scroll.documentView = list
+        win.contentView = scroll
+
+        list.onArrow = { [weak list, weak scroll] delta in
+            guard let list = list, let scroll = scroll else { return }
+            let n = list.items.count
+            list.cursorIndex = max(0, min(n - 1, list.cursorIndex + delta))
+            // Scroll the new cursor row into the visible clip rect.
+            let clipH = scroll.contentView.bounds.height
+            let rowH = list.geometry.rowHeight
+            let rowY = CGFloat(list.cursorIndex) * rowH
+            if rowY < scroll.contentView.bounds.minY {
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, rowY)))
+                scroll.reflectScrolledClipView(scroll.contentView)
+            } else if rowY + rowH > scroll.contentView.bounds.maxY {
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: rowY + rowH - clipH))
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+        }
+        list.onClickRow = { [weak list] row, _, _ in list?.cursorIndex = row }
+
+        keepAlive = [win, scroll, list]
+        win.makeKeyAndOrderFront(nil)
+        win.makeFirstResponder(list)
+        app.setActivationPolicy(.regular)
+        app.activate(ignoringOtherApps: true)
+        app.run()
+        exit(0)
+    }
+
+    // MARK: Original CanvasFileListView bench (DF_CANVAS_BENCH)
 
     static func run(dir: String, app: NSApplication) {
         let items = loadDir(dir)
