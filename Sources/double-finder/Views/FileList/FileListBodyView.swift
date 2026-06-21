@@ -407,7 +407,9 @@ final class FileListBodyView: NSView {
     private func metaText(for item: FileItem, column: String) -> String {
         if item.name == ".." { return "" }
         switch column {
-        case "size":    return item.isDirectory ? "" : item.formattedSize
+        // Directories show no size until one is computed (Space → recursive size);
+        // once `calculatedSize` is set, formattedSize renders it.
+        case "size":    return (item.isDirectory && item.calculatedSize == nil) ? "" : item.formattedSize
         case "date":    return item.formattedDate
         case "added":   return item.formatted(item.dateAdded)
         case "created": return item.formatted(item.dateCreated)
