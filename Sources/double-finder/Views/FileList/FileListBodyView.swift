@@ -456,6 +456,14 @@ final class FileListBodyView: NSView {
         if fileDelegate != nil {
             // In production: forward the entire event up the responder chain so
             // MainViewController.handleKeyDown can handle arrows/enter/space/etc.
+            // Bench shortcut: unmodified 'r' calls beginRename when onModeSwitch is
+            // wired (which only happens in the bench harness, never in production).
+            if event.keyCode == 15,
+               event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty,
+               onModeSwitch != nil {
+                beginRename(row: cursorIndex)
+                return
+            }
             nextResponder?.keyDown(with: event)
         } else {
             // Bench path (no delegate wired): handle arrow keys + view-mode switches
@@ -466,6 +474,8 @@ final class FileListBodyView: NSView {
             case 18: onModeSwitch?(.full)               // key "1" → Full
             case 19: onModeSwitch?(.brief)              // key "2" → Brief
             case 20: onModeSwitch?(.thumbnails)         // key "3" → Thumbnails
+            case 15:                                    // key "r" → trigger rename at cursor (bench)
+                beginRename(row: cursorIndex)
             default:  super.keyDown(with: event)
             }
         }
@@ -580,14 +590,159 @@ final class FileListBodyView: NSView {
         super.rightMouseDown(with: event)
     }
 
-    // MARK: - Inline rename stub (Task 7 provides the full overlay)
+    // MARK: - Inline rename (Task 7)
 
-    /// Starts an inline rename for `row`. Task 7 replaces this stub with the full
-    /// overlay editor. Callers (rename timer + `F2` key) should always go through
-    /// this method so Task 7's implementation is automatically picked up.
-    func beginRename(row: Int) {
-        // TODO (Task 7): implement the rename text-field overlay.
-        // The stub is intentionally empty so existing callers compile today.
+    /// The live NSTextField overlay while a rename is in progress.
+    private var renameField: NSTextField?
+    /// Row currently being renamed (-1 means none).
+    private var renamingRow: Int = -1
+    /// Original name captured when the rename started.
+    private var renamingOriginalName: String = ""
+    /// Local key monitor removed when the rename ends.
+    private var renameKeyMonitor: Any?
+
+    /// Starts an inline rename for `row`.
+    ///
+    /// - Positions an `NSTextField` overlay exactly over the drawn name text.
+    /// - Commits on Return, cancels on Esc or focus-loss.
+    /// - If another rename is already in progress it is committed first.
+    /// - Only one field at a time; no rename for "..".
+    public func beginRename(row: Int) {
+        guard row >= 0, row < items.count else { return }
+        let item = items[row]
+        guard item.name != ".." else { return }
+
+        // If already renaming a different row, commit it first.
+        if renamingRow >= 0 { endRename(commit: true) }
+
+        // Make sure the row is scrolled into view so we can position the field.
+        scrollToRowVisible(row)
+
+        // --- Compute the text field frame ---
+        // We reproduce the same origin/size as the name-text string in draw().
+        let viewWidth = bounds.width
+        let geo = geometry
+        let rowRect = geo.rowRect(row, width: viewWidth)
+
+        // Determine how far the icon starts (matches draw logic for each mode).
+        let iconLeft: CGFloat
+        if viewMode != .thumbnails {
+            if item.isDirectory && item.name != ".." {
+                let triRect = geo.disclosureRect(row: row, depth: item.depth)
+                iconLeft = triRect.maxX + 2
+            } else {
+                let leadingMargin: CGFloat = 2
+                let indentPerLevel: CGFloat = 12
+                iconLeft = leadingMargin + CGFloat(item.depth) * indentPerLevel
+            }
+        } else {
+            // Thumbnails: icon lives on the left with a 4-pt margin.
+            iconLeft = 4
+        }
+
+        let iconSide = (viewMode == .thumbnails) ? CGFloat(44) : iconSizePoints
+        // Text starts right after the icon (parity with all three draw* methods).
+        let textLeft = (item.name == "..") ? iconLeft : (iconLeft + iconSide + 4)
+
+        // Right boundary depends on the view mode.
+        let textRight: CGFloat
+        if viewMode == .full {
+            // Use the name column's right boundary (FileColumnLayout).
+            let optionalIDs = AppSettings.visibleColumns
+            let layout = FileColumnLayout(totalWidth: viewWidth,
+                                         visibleOptionalIDs: optionalIDs,
+                                         widths: [:])
+            if let nameRange = layout.xRange(of: "name") {
+                textRight = nameRange.upperBound - 4
+            } else {
+                textRight = viewWidth - 4
+            }
+        } else {
+            textRight = viewWidth - 4
+        }
+
+        let fieldWidth = max(40, textRight - textLeft)
+        // Align with where the name baseline is drawn (parity with draw()).
+        let fieldHeight: CGFloat = 20
+        let fieldY = rowRect.minY + (geo.rowHeight - fieldHeight) / 2
+
+        let fieldFrame = NSRect(x: textLeft, y: fieldY, width: fieldWidth, height: fieldHeight)
+
+        // --- Build the NSTextField ---
+        let tf = NSTextField(frame: fieldFrame)
+        tf.stringValue = item.name
+        tf.font = item.isDirectory
+            ? NSFont.boldSystemFont(ofSize: 12)
+            : NSFont.systemFont(ofSize: 12)
+        tf.isBordered = true
+        tf.bezelStyle = .squareBezel
+        tf.drawsBackground = true
+        tf.backgroundColor = .textBackgroundColor
+        tf.textColor = .labelColor
+        tf.focusRingType = .default
+        tf.delegate = self          // self conforms via the extension below
+        addSubview(tf)
+
+        renamingRow = row
+        renamingOriginalName = item.name
+        renameField = tf
+        window?.makeFirstResponder(tf)
+
+        // Select the base name (without extension) for files — Finder/TC style.
+        // For directories select the full name (no extension concept).
+        if let editor = tf.currentEditor() {
+            let ns = item.name as NSString
+            let base = ns.deletingPathExtension
+            let selLen: Int
+            if item.isDirectory || base.isEmpty || base == item.name {
+                selLen = item.name.count
+            } else {
+                selLen = base.count
+            }
+            editor.selectedRange = NSRange(location: 0, length: selLen)
+        }
+
+        // Function-key monitor: F3-F8 during rename cancel + forward the key.
+        renameKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self, self.renamingRow >= 0 else { return event }
+            let fnKeys: Set<UInt16> = [99, 118, 96, 97, 98, 100]   // F3 F4 F5 F6 F7 F8
+            guard fnKeys.contains(event.keyCode) else { return event }
+            self.endRename(commit: false)
+            // Forward after tear-down so the panel gets the key event.
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, let win = self.window else { return }
+                _ = (win.contentViewController as? MainViewController)?.handleKeyDown(event)
+            }
+            return nil
+        }
+    }
+
+    // MARK: - Rename end helpers
+
+    /// Commits or cancels the current rename and removes the overlay field.
+    private func endRename(commit: Bool) {
+        guard let tf = renameField, renamingRow >= 0 else { return }
+
+        let original = renamingOriginalName
+        let newName = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let row = renamingRow
+
+        // Clear state before callbacks so re-entrant calls are no-ops.
+        renamingRow = -1
+        renamingOriginalName = ""
+        renameField = nil
+        if let m = renameKeyMonitor { NSEvent.removeMonitor(m); renameKeyMonitor = nil }
+
+        tf.delegate = nil
+        tf.removeFromSuperview()
+
+        // Restore keyboard focus to this view (mirrors FileCellView.endRename).
+        window?.makeFirstResponder(self)
+
+        if commit, !newName.isEmpty, newName != original,
+           row < items.count {
+            fileDelegate?.fileTableView(self, didRename: items[row], to: newName)
+        }
     }
 
     // MARK: - Bench callbacks (wired in CanvasBench; ignored in production)
@@ -606,5 +761,29 @@ extension FileListBodyView {
     func scrollToRowVisible(_ row: Int) {
         guard row >= 0, row < items.count else { return }
         scrollToVisible(geometry.rowRect(row, width: bounds.width))
+    }
+}
+
+// MARK: - NSTextFieldDelegate (inline rename)
+
+extension FileListBodyView: NSTextFieldDelegate {
+
+    /// Return/Enter → commit.
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy selector: Selector) -> Bool {
+        if selector == #selector(NSResponder.insertNewline(_:)) {
+            endRename(commit: true)
+            return true
+        }
+        if selector == #selector(NSResponder.cancelOperation(_:)) {
+            endRename(commit: false)
+            return true
+        }
+        return false
+    }
+
+    /// Focus-loss → commit (matches FileCellView.controlTextDidEndEditing).
+    func controlTextDidEndEditing(_ obj: Notification) {
+        if renamingRow >= 0 { endRename(commit: true) }
     }
 }
