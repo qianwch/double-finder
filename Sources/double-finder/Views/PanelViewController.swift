@@ -379,7 +379,7 @@ class PanelViewController: NSViewController {
             fileTableView.items = panelState.items
             lastFedItemsVersion = panelState.itemsVersion
         }
-        // selectedItems/cursorIndex/isActivePanel are cheap and needed every call.
+        // selectedItems/cursorIndex are cheap and needed every call.
         fileTableView.selectedItems = panelState.selectedItems
         fileTableView.cursorIndex = panelState.cursorIndex
         // statusText is now O(1); always set it.

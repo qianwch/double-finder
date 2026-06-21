@@ -590,6 +590,10 @@ class PanelState: ObservableObject {
             await MainActor.run {
                 if let i = self.items.firstIndex(where: { $0.id == id }) {
                     self.items[i].calculatedSize = size
+                    // Bump explicitly: updateDisplay gates the list re-feed on
+                    // itemsVersion, so the async folder-size result must mark the
+                    // list dirty or the Size column would stay blank.
+                    self.itemsVersion &+= 1
                     self.onChange?()
                 }
             }
