@@ -223,6 +223,13 @@ enum CanvasBench {
         }
         list.onClickRow = { [weak list] row, _, _ in list?.cursorIndex = row }
 
+        // Number keys 1/2/3 → switch viewMode for GUI verification of Task 5.
+        list.onModeSwitch = { [weak list, weak win] mode in
+            guard let list = list, let win = win else { return }
+            list.viewMode = mode
+            win.title = "FileListBodyView bench — \(dir) (\(items.count) items) [mode: \(mode.title)]"
+        }
+
         keepAlive = [win, scroll, list]
         win.makeKeyAndOrderFront(nil)
         win.makeFirstResponder(list)
