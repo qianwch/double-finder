@@ -191,29 +191,10 @@ extension FavoritesSettingsView: NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let path = items[row]
         let id = NSUserInterfaceItemIdentifier("favCell")
-        let cell = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView ?? {
-            let c = NSTableCellView(); c.identifier = id
-            let title = NSTextField(labelWithString: ""); title.font = .systemFont(ofSize: 12)
-            title.translatesAutoresizingMaskIntoConstraints = false
-            let sub = NSTextField(labelWithString: ""); sub.font = .systemFont(ofSize: 10)
-            sub.textColor = .secondaryLabelColor; sub.lineBreakMode = .byTruncatingMiddle
-            sub.translatesAutoresizingMaskIntoConstraints = false
-            c.addSubview(title); c.addSubview(sub)
-            c.textField = title
-            title.tag = 1; sub.tag = 2
-            NSLayoutConstraint.activate([
-                title.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 4),
-                title.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -4),
-                title.topAnchor.constraint(equalTo: c.topAnchor, constant: 3),
-                sub.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 4),
-                sub.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -4),
-                sub.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
-            ])
-            return c
-        }()
+        let cell = (tableView.makeView(withIdentifier: id, owner: nil) as? FavCellView) ?? FavCellView(identifier: id)
         let name = (path as NSString).lastPathComponent
-        (cell.viewWithTag(1) as? NSTextField)?.stringValue = name.isEmpty ? path : name
-        (cell.viewWithTag(2) as? NSTextField)?.stringValue = path
+        cell.nameField.stringValue = name.isEmpty ? path : name
+        cell.pathField.stringValue = path
         return cell
     }
 
@@ -243,4 +224,37 @@ extension FavoritesSettingsView: NSTableViewDataSource, NSTableViewDelegate {
         applyLive()
         return true
     }
+}
+
+// MARK: - Favorite row cell
+
+/// Two-line favorite cell (folder name + full path) with explicit field
+/// references — avoids the fragile `viewWithTag` / NSTableCellView.textField
+/// pattern that left rows blank.
+private final class FavCellView: NSTableCellView {
+    let nameField = NSTextField(labelWithString: "")
+    let pathField = NSTextField(labelWithString: "")
+
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+        nameField.font = .systemFont(ofSize: 12)
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+        pathField.font = .systemFont(ofSize: 10)
+        pathField.textColor = .secondaryLabelColor
+        pathField.lineBreakMode = .byTruncatingMiddle
+        pathField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(nameField)
+        addSubview(pathField)
+        textField = nameField
+        NSLayoutConstraint.activate([
+            nameField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            nameField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            nameField.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            pathField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            pathField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            pathField.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 1),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 }
