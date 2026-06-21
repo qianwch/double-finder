@@ -70,7 +70,7 @@ final class SettingsWindowController2: NSWindowController {
                 OperationSettingsView(onChange: { self?.onChange?() }, terminals: self?.installedTerminalsValue ?? ["Terminal"])
             },
             SettingsCategory(id: "toolbar", title: tr("Toolbar"), symbol: "wrench.and.screwdriver") { [weak self] in
-                self?.makePlaceholder(title: tr("Toolbar")) ?? NSView()
+                ToolbarSettingsView(onChanged: { self?.onToolbarChanged?() })
             },
             SettingsCategory(id: "shortcuts", title: tr("Shortcuts"), symbol: "keyboard") { [weak self] in
                 self?.makePlaceholder(title: tr("Shortcuts")) ?? NSView()
