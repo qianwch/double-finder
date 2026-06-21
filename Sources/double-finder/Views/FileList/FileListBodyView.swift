@@ -181,7 +181,9 @@ final class FileListBodyView: NSView {
         let layout = FileColumnLayout(
             totalWidth: viewWidth,
             visibleOptionalIDs: optionalIDs,
-            widths: [:]
+            // Honor user-resized widths so the body's columns stay aligned with the
+            // header (FileListHeaderView builds its layout from the same dictionary).
+            widths: AppSettings.columnWidths
         )
         let metaAttr: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
