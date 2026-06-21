@@ -102,11 +102,20 @@ final class ToolbarBar: NSView {
         gearButton?.toolTip = tr("Customize Toolbar…")
     }
 
+    /// Toolbar icon tint: a light gray in dark mode (the default accent renders as a
+    /// low-contrast deep blue there), the standard accent color in light mode.
+    private static let iconTint = NSColor(name: nil) { ap in
+        ap.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(white: 0.78, alpha: 1.0)
+            : .controlAccentColor
+    }
+
     private func makeButton(symbol: String, tooltip: String, action: @escaping () -> Void) -> NSButton {
         let btn = ToolbarButton()
         btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
             ?? NSImage(systemSymbolName: "questionmark", accessibilityDescription: tooltip)
         btn.imagePosition = .imageOnly
+        btn.contentTintColor = Self.iconTint
         btn.bezelStyle = .texturedRounded
         btn.isBordered = true
         btn.toolTip = tooltip
