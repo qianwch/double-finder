@@ -17,6 +17,14 @@ if let arc = ProcessInfo.processInfo.environment["NC_ARCHIVE_DIAG"] {
     exit(0)
 }
 
+// Owner-drawn file-list prototype bench: `DF_CANVAS_BENCH=/some/dir "Double Finder"`
+// Opens one window with CanvasFileListView on that directory so the per-cursor-move
+// redraw cost can be measured (logged to /tmp/df-canvas.txt) and felt, to A/B the
+// owner-drawn (Double Commander–style) approach against NSTableView on old hardware.
+if let dir = ProcessInfo.processInfo.environment["DF_CANVAS_BENCH"] {
+    CanvasBench.run(dir: dir, app: app)
+}
+
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)
