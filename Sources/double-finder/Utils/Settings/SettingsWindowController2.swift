@@ -76,7 +76,7 @@ final class SettingsWindowController2: NSWindowController {
                 ShortcutsSettingsView(onChanged: { self?.onShortcutsChanged?() })
             },
             SettingsCategory(id: "favorites", title: tr("Favorites"), symbol: "bookmark") { [weak self] in
-                self?.makePlaceholder(title: tr("Favorites")) ?? NSView()
+                FavoritesSettingsView(onChanged: { self?.onFavoritesChanged?() })
             },
         ]
     }
