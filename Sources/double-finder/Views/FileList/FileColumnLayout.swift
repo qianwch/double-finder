@@ -4,6 +4,14 @@ import CoreGraphics
 /// No AppKit views, no UserDefaults — fully deterministic and unit-testable.
 struct FileColumnLayout {
 
+    /// Optional columns (beyond Name) the user can show/hide via the header menu.
+    /// Tuple: column id, header title, default width.
+    static let optionalColumns: [(id: String, title: String, width: CGFloat)] = [
+        ("size", "Size", 80), ("date", "Modified", 130),
+        ("added", "Date Added", 130), ("created", "Date Created", 130),
+        ("kind", "Kind", 130), ("perms", "Permissions", 100),
+    ]
+
     struct Col {
         let id: String
         let title: String
@@ -20,10 +28,10 @@ struct FileColumnLayout {
     // MARK: - Init
 
     init(totalWidth: CGFloat, visibleOptionalIDs: [String], widths: [String: CGFloat]) {
-        // Build lookup from FileTableView.optionalColumns (same module, static let).
+        // Build lookup from optionalColumns (same struct, static let).
         let optMeta: [String: (title: String, defaultWidth: CGFloat)] = {
             var d: [String: (String, CGFloat)] = [:]
-            for col in FileTableView.optionalColumns {
+            for col in Self.optionalColumns {
                 d[col.id] = (col.title, col.width)
             }
             return d
