@@ -3,7 +3,13 @@ import Foundation
 @MainActor
 class PanelState: ObservableObject {
     @Published var currentPath: String
-    @Published var items: [FileItem] = []
+    @Published var items: [FileItem] = [] {
+        didSet { itemsVersion &+= 1 }
+    }
+    /// Monotonically increasing counter incremented on every `items` assignment.
+    /// Views can compare against a cached value to skip redundant list reloads on
+    /// cursor-only moves (where items don't change).
+    private(set) var itemsVersion: Int = 0
     @Published var selectedItems: Set<UUID> = []
     @Published var sortColumn: SortColumn = .name
     @Published var sortAscending: Bool = true
@@ -756,12 +762,14 @@ class PanelState: ObservableObject {
     }
 
     var statusText: String {
-        let total = items.filter { $0.name != ".." }.count
+        // O(1): avoid iterating items to count -- ".." is always first when present.
+        let total = items.count - (items.first?.name == ".." ? 1 : 0)
         let searchNote = searchResults != nil ? "  ·  " + tr("search results (Backspace to exit)") : ""
         let selCount = selectedItems.count
-        let selSize = items.filter { selectedItems.contains($0.id) }.reduce(0) { $0 + $1.effectiveSize }
         let filterNote = filter.isEmpty ? "" : "  ·  " + tr("filter: “%@” (%d/%d)", filter, total, allLoadedItems.count)
         if selCount > 0 {
+            // O(n) only when something is selected -- cursor moves skip this.
+            let selSize = items.filter { selectedItems.contains($0.id) }.reduce(0) { $0 + $1.effectiveSize }
             let formatter = ByteCountFormatter()
             formatter.allowedUnits = [.useKB, .useMB, .useGB]
             formatter.countStyle = .file
@@ -771,19 +779,36 @@ class PanelState: ObservableObject {
         return tr("%d items", total) + "\(filterNote)\(searchNote)\(diskNote)"
     }
 
+    /// Cache for diskNote: (path, note). Recomputed only when currentPath changes.
+    private var diskNoteCache: (path: String, note: String)?
+
     /// Free / total space of the volume backing the current path. Empty for
     /// remote (SFTP) or in-archive listings, where it doesn't apply (TC shows
     /// the same kind of drive-space note above each panel).
     private var diskNote: String {
-        guard sftp == nil, PanelState.archiveRoot(in: currentPath) == nil else { return "" }
-        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
-        guard let vals = try? URL(fileURLWithPath: currentPath).resourceValues(forKeys: keys),
-              let total = vals.volumeTotalCapacity, total > 0 else { return "" }
-        let free = vals.volumeAvailableCapacityForImportantUsage ?? 0
-        let fmt = ByteCountFormatter()
-        fmt.allowedUnits = [.useGB, .useTB]
-        fmt.countStyle = .file
-        return "  ·  " + tr("%@ free of %@", fmt.string(fromByteCount: free), fmt.string(fromByteCount: Int64(total)))
+        // Return cached value when path hasn't changed -- avoids a syscall on
+        // every cursor move.
+        if let cached = diskNoteCache, cached.path == currentPath {
+            return cached.note
+        }
+        let note: String
+        if sftp != nil || PanelState.archiveRoot(in: currentPath) != nil {
+            note = ""
+        } else {
+            let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
+            if let vals = try? URL(fileURLWithPath: currentPath).resourceValues(forKeys: keys),
+               let total = vals.volumeTotalCapacity, total > 0 {
+                let free = vals.volumeAvailableCapacityForImportantUsage ?? 0
+                let fmt = ByteCountFormatter()
+                fmt.allowedUnits = [.useGB, .useTB]
+                fmt.countStyle = .file
+                note = "  ·  " + tr("%@ free of %@", fmt.string(fromByteCount: free), fmt.string(fromByteCount: Int64(total)))
+            } else {
+                note = ""
+            }
+        }
+        diskNoteCache = (path: currentPath, note: note)
+        return note
     }
 
     var currentItem: FileItem? {

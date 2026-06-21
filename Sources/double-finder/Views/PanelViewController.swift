@@ -337,6 +337,12 @@ class PanelViewController: NSViewController {
     private var scrollMemory: [String: Int] = [:]   // path → top visible row
     private var lastDisplayedPath: String?
 
+    /// Cached itemsVersion from the last time we fed items to the file list.
+    /// Sentinel -1 ensures items are fed on the very first updateDisplay.
+    private var lastFedItemsVersion: Int = -1
+    /// Cached path from the last time we called pathBar.setPath.
+    private var lastPathBarPath: String?
+
     /// Rebinds this view controller to a different PanelState (used when swapping
     /// the two panels). Re-wires the change callback and does a full refresh.
     func rebind(to newState: PanelState) {
@@ -345,6 +351,8 @@ class PanelViewController: NSViewController {
         panelState.onNeedsPassword = { [weak self] archivePath in self?.handleArchivePassword(archivePath) }
         panelState.onError = { [weak self] error in self?.presentLoadError(error) }
         lastDisplayedPath = nil
+        lastFedItemsVersion = -1
+        lastPathBarPath = nil
         updateDisplay()
     }
 
@@ -364,11 +372,24 @@ class PanelViewController: NSViewController {
         if pathChanged { updateDriveSelection() }   // re-highlight current volume
 
         fileTableView.expandedPaths = panelState.expandedPaths
-        fileTableView.items = panelState.items
+        // Only feed items to the file list when the underlying array actually
+        // changed (itemsVersion bump). Cursor moves don't change items, so
+        // skipping the reassignment avoids rebuilding the whole list each move.
+        if panelState.itemsVersion != lastFedItemsVersion {
+            fileTableView.items = panelState.items
+            lastFedItemsVersion = panelState.itemsVersion
+        }
+        // selectedItems/cursorIndex/isActivePanel are cheap and needed every call.
         fileTableView.selectedItems = panelState.selectedItems
         fileTableView.cursorIndex = panelState.cursorIndex
+        // statusText is now O(1); always set it.
         statusBar.stringValue = panelState.statusText
-        pathBar.setPath(panelState.currentPath)
+        // pathBar.setPath rebuilds the breadcrumb — skip when path hasn't changed.
+        let currentPathRaw = panelState.currentPath
+        if currentPathRaw != lastPathBarPath {
+            pathBar.setPath(currentPathRaw)
+            lastPathBarPath = currentPathRaw
+        }
         panelDelegate?.panelViewControllerDidChangePath(self)
         fileTableView.updateSortIndicator(column: panelState.sortColumn.columnIdentifier,
                                            ascending: panelState.sortAscending)
