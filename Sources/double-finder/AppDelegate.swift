@@ -175,7 +175,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cmdMenu.addItem(.separator())
         cmdMenu.addItem(NSMenuItem(title: tr("Focus Command Line"), action: #selector(menuFocusCommandLine), keyEquivalent: "l"))
         cmdMenu.addItem(NSMenuItem(title: tr("Customize Shortcuts…"), action: #selector(menuCustomizeShortcuts), keyEquivalent: ""))
-        cmdMenu.addItem(NSMenuItem(title: tr("7-Zip Location…"), action: #selector(menuSevenZipLocation), keyEquivalent: ""))
 
         // Favorites menu (populated dynamically via menuNeedsUpdate)
         let favMenuItem = NSMenuItem(title: tr("Favorites"), action: nil, keyEquivalent: "")
@@ -401,9 +400,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func menuCustomizeShortcuts() {
         mainVC()?.perform(#selector(MainViewController.customizeShortcuts_menu))
-    }
-    @objc private func menuSevenZipLocation() {
-        mainVC()?.perform(#selector(MainViewController.sevenZipLocation_menu))
     }
     @objc private func menuSettings() {
         mainVC()?.perform(#selector(MainViewController.openSettings_menu))
