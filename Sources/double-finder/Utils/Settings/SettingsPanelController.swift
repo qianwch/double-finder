@@ -68,11 +68,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             SettingsCategory(id: "general", title: tr("General"), symbol: "gearshape") { [weak self] in
                 GeneralSettingsView(onChange: { self?.onChange?() })
             },
+            SettingsCategory(id: "appearance", title: tr("Appearance"), symbol: "circle.lefthalf.filled") { [weak self] in
+                AppearanceSettingsView(onChange: { self?.onChange?() })
+            },
             SettingsCategory(id: "display", title: tr("Display"), symbol: "square.grid.2x2") { [weak self] in
                 DisplaySettingsView(onChange: { self?.onChange?() })
-            },
-            SettingsCategory(id: "colors", title: tr("Colors"), symbol: "paintpalette") { [weak self] in
-                ColorsSettingsView(onChange: { self?.onChange?() })
             },
             SettingsCategory(id: "panels", title: tr("Panels"), symbol: "sidebar.squares.left") { [weak self] in
                 PanelsSettingsView(onChange: { self?.onChange?() })

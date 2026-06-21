@@ -15,16 +15,8 @@ final class GeneralSettingsView: NSView {
         }
         langPop.target = self; langPop.action = #selector(changeLanguage(_:))
 
-        let appPop = NSPopUpButton()
-        appPop.addItems(withTitles: [tr("Follow System"), tr("Light"), tr("Dark")])
-        if let idx = AppAppearance.allCases.firstIndex(of: AppSettings.appearance) {
-            appPop.selectItem(at: idx)
-        }
-        appPop.target = self; appPop.action = #selector(changeAppearance(_:))
-
         let grid = NSGridView(views: [
             [NSTextField(labelWithString: tr("Language:")), langPop],
-            [NSTextField(labelWithString: tr("Appearance:")), appPop],
         ])
         grid.column(at: 0).xPlacement = .trailing
         grid.rowSpacing = 10; grid.columnSpacing = 8
@@ -43,10 +35,5 @@ final class GeneralSettingsView: NSView {
         let chosen = langs[s.indexOfSelectedItem]
         Localizer.shared.setLanguage(chosen)
         onChange()
-    }
-
-    @objc private func changeAppearance(_ s: NSPopUpButton) {
-        AppSettings.appearance = AppAppearance.allCases[s.indexOfSelectedItem]
-        AppSettings.applyAppearance()
     }
 }
