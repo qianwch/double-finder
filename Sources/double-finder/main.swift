@@ -33,6 +33,15 @@ if let dir = ProcessInfo.processInfo.environment["DF_FILELIST_BENCH"] {
     CanvasBench.runFileListBench(dir: dir, app: app)
 }
 
+// FileListView bench: `DF_FILELISTVIEW_BENCH=/some/dir "Double Finder"`
+// Opens one window with the Task-10 FileListView composite (header + body together)
+// for GUI verification: header shows in .full / hides in .brief/.thumbnails, column
+// alignment, scrolling, sort indicator, header column click → didClickColumn,
+// divider resize reflows header + body together. Keys 1/2/3 switch view modes.
+if let dir = ProcessInfo.processInfo.environment["DF_FILELISTVIEW_BENCH"] {
+    CanvasBench.runFileListViewBench(dir: dir, app: app)
+}
+
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)

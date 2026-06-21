@@ -375,6 +375,74 @@ private final class BenchFileDelegate: FileTableViewDelegate {
 
 // Reopen the enum so the compiler sees it as a continuation.
 extension CanvasBench {
+
+    // MARK: FileListView bench (DF_FILELISTVIEW_BENCH)
+    //
+    // Uses the Task-10 FileListView composite (header + body composed together)
+    // so GUI verification can confirm:
+    //   • Header visible in .full / hidden in .brief + .thumbnails
+    //   • Columns in header align with body rows
+    //   • Scrolling works, sort indicator shows, clicking a column fires didClickColumn
+    //   • Resizing a divider reflows header + body together
+    //
+    // Keys 1/2/3 switch view modes; arrow keys navigate; 'r' renames at cursor.
+
+    static func runFileListViewBench(dir: String, app: NSApplication) {
+        let items = loadDir(dir)
+        let winRect = NSRect(x: 120, y: 120, width: 760, height: 760)
+        let win = NSWindow(contentRect: winRect,
+                           styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        win.title = "FileListView bench — \(dir) (\(items.count) items)"
+
+        // FileListView fills the full window content area.
+        let flv = FileListView(frame: win.contentLayoutRect)
+        flv.autoresizingMask = [.width, .height]
+        flv.viewMode = .full
+        flv.isActivePanel = true
+        flv.items = items
+
+        // Sort indicator starts on "name" ascending.
+        flv.updateSortIndicator(column: "name", ascending: true)
+
+        // --- Stub delegate wired to the composite view ---
+        let stub = BenchFileListViewDelegate(flv: flv)
+        flv.fileDelegate = stub
+
+        // Mode-switch keys 1/2/3.
+        // Note: the body only handles these when fileDelegate == nil.
+        // With a delegate set, key events go up the responder chain.
+        // The FileListView bench wires the body's onModeSwitch AND installs
+        // a local event monitor to intercept mode keys at the app level.
+        flv.body.onModeSwitch = { [weak flv, weak win] mode in
+            guard let flv = flv, let win = win else { return }
+            flv.viewMode = mode
+            win.title = "FileListView bench — \(dir) (\(items.count) items) [mode: \(mode.title)]"
+        }
+
+        // Local key monitor: intercept 1/2/3 (keyCodes 18/19/20) while this
+        // bench window is key, and drive mode-switch via onModeSwitch directly.
+        let modeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak flv, weak win] event in
+            guard let flv = flv, let win = win, win.isKeyWindow else { return event }
+            guard event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty else { return event }
+            let modeMap: [UInt16: FileViewMode] = [18: .full, 19: .brief, 20: .thumbnails]
+            if let mode = modeMap[event.keyCode] {
+                flv.viewMode = mode
+                win.title = "FileListView bench — \(dir) (\(items.count) items) [mode: \(mode.title)]"
+                return nil   // consume
+            }
+            return event
+        }
+
+        win.contentView = flv
+        keepAlive.append(contentsOf: [win, flv, stub, modeMonitor as AnyObject] as [AnyObject])
+        win.makeKeyAndOrderFront(nil)
+        win.makeFirstResponder(flv.firstResponderTarget)
+        app.setActivationPolicy(.regular)
+        app.activate(ignoringOtherApps: true)
+        app.run()
+        exit(0)
+    }
+
     // (bench helpers below)
 
     // MARK: Original CanvasFileListView bench (DF_CANVAS_BENCH)
@@ -443,5 +511,89 @@ extension CanvasFileListView {
     }
     private func rowRectPublic(_ row: Int) -> NSRect {
         NSRect(x: 0, y: CGFloat(row) * rowHeight, width: bounds.width, height: rowHeight)
+    }
+}
+
+// MARK: - Stub delegate for the FileListView bench (Task 10)
+
+/// Drives cursor/selection and logs each callback to /tmp/df-filelistview.txt.
+/// Wires arrow-key navigation through `ensureRowVisible` via the `FileListView` shell.
+private final class BenchFileListViewDelegate: FileTableViewDelegate {
+    private weak var flv: FileListView?
+
+    init(flv: FileListView) {
+        self.flv = flv
+        log("=== BenchFileListViewDelegate attached — FileListView (Task 10) ===")
+    }
+
+    private func log(_ msg: String) {
+        let line = msg + "\n"
+        let url = URL(fileURLWithPath: "/tmp/df-filelistview.txt")
+        if let fh = try? FileHandle(forWritingTo: url) {
+            fh.seekToEndOfFile()
+            fh.write(line.data(using: .utf8)!)
+            try? fh.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func fileTableView(_ tableView: NSView, didClickRow row: Int, extend: Bool, toggle: Bool) {
+        log("didClickRow row=\(row) extend=\(extend) toggle=\(toggle)")
+        guard let flv = flv else { return }
+        flv.cursorIndex = row
+        if !extend && !toggle { flv.selectedItems = [flv.items[row].id] }
+        flv.ensureRowVisible(row)
+    }
+
+    func fileTableView(_ tableView: NSView, didDoubleClickItem item: FileItem) {
+        log("didDoubleClickItem item=\(item.name)")
+    }
+
+    func fileTableView(_ tableView: NSView, didPressEnterOnItem item: FileItem) {
+        log("didPressEnterOnItem item=\(item.name)")
+    }
+
+    func fileTableViewDidChangeCursor(_ tableView: NSView, to index: Int) {
+        log("didChangeCursor to=\(index)")
+        flv?.cursorIndex = index
+        flv?.ensureRowVisible(index)
+    }
+
+    func fileTableViewWantsActivation(_ tableView: NSView) {
+        log("fileTableViewWantsActivation")
+    }
+
+    func fileTableView(_ tableView: NSView, didPressSpaceOnIndex index: Int) {
+        log("didPressSpaceOnIndex index=\(index)")
+    }
+
+    func fileTableView(_ tableView: NSView, didClickColumn identifier: String) {
+        log("didClickColumn identifier=\(identifier)")
+        guard let flv = flv else { return }
+        // Toggle sort direction on the same column; switch to ascending for a new column.
+        if flv.body.sortColumnID == identifier {
+            flv.updateSortIndicator(column: identifier, ascending: !flv.body.sortAscending)
+        } else {
+            flv.updateSortIndicator(column: identifier, ascending: true)
+        }
+    }
+
+    func fileTableView(_ tableView: NSView, didToggleExpand item: FileItem) {
+        log("didToggleExpand item=\(item.name)")
+        guard let flv = flv else { return }
+        if flv.expandedPaths.contains(item.path) {
+            flv.expandedPaths.remove(item.path)
+        } else {
+            flv.expandedPaths.insert(item.path)
+        }
+    }
+
+    func fileTableView(_ tableView: NSView, didRename item: FileItem, to newName: String) {
+        log("didRename item=\(item.name) to=\(newName)")
+    }
+
+    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool) {
+        log("didDropFiles count=\(urls.count) move=\(move)")
     }
 }
