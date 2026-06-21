@@ -441,37 +441,160 @@ final class FileListBodyView: NSView {
         }
     }
 
-    // MARK: - Input (basic keyboard for bench)
+    // MARK: - Inline-rename timer (mirrors NCTableView.renameWorkItem)
+
+    private var renameWorkItem: DispatchWorkItem?
+
+    // MARK: - Right-click tracking
+
+    /// Index of the last right-clicked (or context-menu) row — mirrors NSTableView.clickedRow.
+    var clickedRow: Int = -1
+
+    // MARK: - Input — keyboard
 
     override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 125: onArrow?(1)                       // down
-        case 126: onArrow?(-1)                      // up
-        case 18: onModeSwitch?(.full)               // key "1" → Full
-        case 19: onModeSwitch?(.brief)              // key "2" → Brief
-        case 20: onModeSwitch?(.thumbnails)         // key "3" → Thumbnails
-        default:  super.keyDown(with: event)
+        if fileDelegate != nil {
+            // In production: forward the entire event up the responder chain so
+            // MainViewController.handleKeyDown can handle arrows/enter/space/etc.
+            nextResponder?.keyDown(with: event)
+        } else {
+            // Bench path (no delegate wired): handle arrow keys + view-mode switches
+            // directly so the bench stays interactive.
+            switch event.keyCode {
+            case 125: onArrow?(1)                       // down
+            case 126: onArrow?(-1)                      // up
+            case 18: onModeSwitch?(.full)               // key "1" → Full
+            case 19: onModeSwitch?(.brief)              // key "2" → Brief
+            case 20: onModeSwitch?(.thumbnails)         // key "3" → Thumbnails
+            default:  super.keyDown(with: event)
+            }
         }
     }
 
+    // MARK: - Input — mouse (left button)
+
     override func mouseDown(with event: NSEvent) {
+        renameWorkItem?.cancel(); renameWorkItem = nil
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)
-        if let row = geometry.rowAt(y: p.y, count: items.count) {
-            if event.clickCount == 2 {
-                onDoubleClickRow?(row)
-            } else {
-                onClickRow?(row,
-                            event.modifierFlags.contains(.shift),
-                            event.modifierFlags.contains(.command))
+
+        guard let row = geometry.rowAt(y: p.y, count: items.count) else {
+            // Click below the last row: activate this panel.
+            if let d = fileDelegate {
+                d.fileTableViewWantsActivation(self)
+            }
+            return
+        }
+
+        let item = items[row]
+
+        // --- Disclosure triangle hit-test (full / brief only; not thumbnails) ---
+        if viewMode != .thumbnails,
+           item.isDirectory, item.name != "..",
+           let d = fileDelegate {
+            let triRect = geometry.disclosureRect(row: row, depth: item.depth)
+            if triRect.contains(p) {
+                d.fileTableView(self, didToggleExpand: item)
+                return
             }
         }
+
+        // --- Double-click ---
+        if event.clickCount == 2 {
+            if let d = fileDelegate {
+                d.fileTableView(self, didDoubleClickItem: item)
+            } else {
+                onDoubleClickRow?(row)
+            }
+            return
+        }
+
+        // --- Single click ---
+        // Capture pre-click state for the slow-double-click rename check.
+        let wasCurrent = row == cursorIndex && selectedItems.count <= 1
+        let mods = event.modifierFlags
+        let noChord = mods.intersection([.command, .shift, .control, .option]).isEmpty
+
+        if let d = fileDelegate {
+            d.fileTableView(self, didClickRow: row,
+                            extend: mods.contains(.shift),
+                            toggle: mods.contains(.command))
+        } else {
+            onClickRow?(row, mods.contains(.shift), mods.contains(.command))
+        }
+
+        // --- Track mouse to distinguish drag from plain release ---
+        // This mirrors NCTableView's drag-detection loop. For now drag is a TODO
+        // (Task 8/9); we only use the release to decide whether to start a rename.
+        let start = event.locationInWindow
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp {
+                // Slow-double-click → begin inline rename (Finder/TC style).
+                // The rename overlay itself is implemented in Task 7; for now we
+                // schedule a call to `beginRename(row:)` which Task 7 will add.
+                // If the method doesn't exist yet the work item is a no-op.
+                if wasCurrent, noChord, item.name != "..", fileDelegate != nil {
+                    let wi = DispatchWorkItem { [weak self] in
+                        self?.beginRename(row: row)
+                    }
+                    renameWorkItem = wi
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + NSEvent.doubleClickInterval, execute: wi)
+                }
+                return
+            }
+            // Drag detection threshold (4 pt) — abort rename scheduling on drag.
+            let d = hypot(next.locationInWindow.x - start.x,
+                          next.locationInWindow.y - start.y)
+            if d > 4 {
+                renameWorkItem?.cancel(); renameWorkItem = nil
+                // TODO (Task 8): startFileDrag(originRow: row, event: next)
+                return
+            }
+        }
+    }
+
+    // MARK: - Input — right mouse (context menu setup)
+
+    override func rightMouseDown(with event: NSEvent) {
+        renameWorkItem?.cancel(); renameWorkItem = nil
+        window?.makeFirstResponder(self)
+        let p = convert(event.locationInWindow, from: nil)
+
+        if let row = geometry.rowAt(y: p.y, count: items.count) {
+            clickedRow = row
+            // Move cursor to right-clicked row and activate this panel.
+            if let d = fileDelegate {
+                d.fileTableView(self, didClickRow: row, extend: false, toggle: false)
+                d.fileTableViewWantsActivation(self)
+            } else {
+                onClickRow?(row, false, false)
+            }
+        } else {
+            clickedRow = -1
+            fileDelegate?.fileTableViewWantsActivation(self)
+        }
+
+        // The context NSMenu is built + attached by FileListView (Task 10).
+        // For now, fall through to the default right-click / menu handling.
+        super.rightMouseDown(with: event)
+    }
+
+    // MARK: - Inline rename stub (Task 7 provides the full overlay)
+
+    /// Starts an inline rename for `row`. Task 7 replaces this stub with the full
+    /// overlay editor. Callers (rename timer + `F2` key) should always go through
+    /// this method so Task 7's implementation is automatically picked up.
+    func beginRename(row: Int) {
+        // TODO (Task 7): implement the rename text-field overlay.
+        // The stub is intentionally empty so existing callers compile today.
     }
 
     // MARK: - Bench callbacks (wired in CanvasBench; ignored in production)
 
     var onClickRow: ((_ row: Int, _ extend: Bool, _ toggle: Bool) -> Void)?
     var onDoubleClickRow: ((Int) -> Void)?
+    /// Arrow-key callback used by the bench when `fileDelegate == nil`.
     var onArrow: ((_ delta: Int) -> Void)?
     /// Called when the bench requests a view mode switch (keys 1/2/3).
     var onModeSwitch: ((_ mode: FileViewMode) -> Void)?
