@@ -276,7 +276,7 @@ class MainViewController: NSViewController {
 
     /// Returns focus to the active panel's file list.
     private func focusActiveList() {
-        view.window?.makeFirstResponder(activePanelVC.fileTableView?.tableView)
+        view.window?.makeFirstResponder(activePanelVC.fileTableView?.firstResponderTarget)
     }
 
     /// Runs a command typed in the command line, in the active panel's directory.
@@ -651,7 +651,8 @@ class MainViewController: NSViewController {
         appState.switchPanel()
         updateActivePanelHighlight()
         // Give focus to the new active panel's table
-        activePanelVC.fileTableView?.tableView.window?.makeFirstResponder(activePanelVC.fileTableView?.tableView)
+        let target = activePanelVC.fileTableView?.firstResponderTarget
+        target?.window?.makeFirstResponder(target)
     }
 
     /// A local directory that the system treats as a file package (e.g. `.app`,
@@ -1551,13 +1552,14 @@ class MainViewController: NSViewController {
 
     /// Opens the row context menu at the cursor (keyboard alternative to right-click).
     func showContextMenuAtCursor() {
-        guard let tableView = activePanelVC.fileTableView?.tableView else { return }
+        guard let listView = activePanelVC.fileTableView else { return }
+        let target = listView.firstResponderTarget
         let row = activePanelVC.panelState.cursorIndex
         let menu = NSMenu()
         panelViewController(activePanelVC, populateContextMenu: menu, forRow: row)
-        let rowRect = tableView.rect(ofRow: row)
+        let rowRect = listView.rectOfRow(row)
         let point = NSPoint(x: rowRect.minX + 40, y: rowRect.maxY)
-        menu.popUp(positioning: nil, at: point, in: tableView)
+        menu.popUp(positioning: nil, at: point, in: target)
     }
 
     // MARK: - Compare & synchronize
@@ -2093,12 +2095,12 @@ extension MainViewController: PanelViewControllerDelegate {
             let serviceURLs = targets
                 .filter { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }
                 .map { URL(fileURLWithPath: $0.path) }
-            if let table = vc.fileTableView?.tableView, !serviceURLs.isEmpty {
-                table.serviceURLs = serviceURLs
-                vc.view.window?.makeFirstResponder(table)
+            if let listView = vc.fileTableView, !serviceURLs.isEmpty {
+                listView.serviceURLs = serviceURLs
+                vc.view.window?.makeFirstResponder(listView.firstResponderTarget)
             }
         } else {
-            vc.fileTableView?.tableView.serviceURLs = []
+            vc.fileTableView?.serviceURLs = []
             add(tr("Paste"), #selector(ctxPasteFiles), key: "v", mask: [.command])
             add(tr("Copy Path"), #selector(actionCopyPath_menu), key: "c", mask: [.command, .shift])
             add(tr("Open in Terminal"), #selector(actionOpenTerminal))
