@@ -1,10 +1,10 @@
 import AppKit
 
-/// New Total-Commander-style Settings window (master-detail).
-/// Named `SettingsWindowController2` while the old tab-based controller
-/// (`Utils/SettingsWindowController.swift`) still exists; Task 6 renames this.
+/// Total-Commander-style Settings window (master-detail).
+/// The sole Settings window: sidebar of 7 categories + embedded detail panes,
+/// opened directly (⌘,) or deep-linked via `show(select:)`.
 @MainActor
-final class SettingsWindowController2: NSWindowController {
+final class SettingsWindowController: NSWindowController {
 
     // MARK: - Callbacks (same contract as old controller)
     var onChange: (() -> Void)?
@@ -199,7 +199,7 @@ final class SettingsWindowController2: NSWindowController {
 
 // MARK: - NSTableViewDataSource
 
-extension SettingsWindowController2: NSTableViewDataSource {
+extension SettingsWindowController: NSTableViewDataSource {
     func numberOfRows(in tableView: NSTableView) -> Int {
         categories.count
     }
@@ -207,7 +207,7 @@ extension SettingsWindowController2: NSTableViewDataSource {
 
 // MARK: - NSTableViewDelegate
 
-extension SettingsWindowController2: NSTableViewDelegate {
+extension SettingsWindowController: NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cat = categories[row]
 

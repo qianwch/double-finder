@@ -1,8 +1,8 @@
 import AppKit
 
-/// Embedded favorites-editor pane for the Settings window (Task 5).
-/// Mirrors the body of `FavoritesSheet` but lives inside an NSView
-/// rather than a modal sheet, and applies every change immediately (no OK/Cancel).
+/// Embedded favorites-editor pane for the Settings window.
+/// Lives inside an NSView (not a modal sheet) and applies every change
+/// immediately (no OK/Cancel) — writing `Favorites.setAll` and calling `onChanged`.
 final class FavoritesSettingsView: NSView {
 
     // MARK: - State

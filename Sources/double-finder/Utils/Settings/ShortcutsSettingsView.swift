@@ -1,8 +1,8 @@
 import AppKit
 
-/// Embedded keyboard-shortcuts editor for the Settings window (Task 4).
-/// Mirrors the body of `ShortcutsSheet` but lives inside an NSView rather than
-/// a modal sheet, and applies every change immediately (no OK/Cancel/Done).
+/// Embedded keyboard-shortcuts editor for the Settings window.
+/// Lives inside an NSView (not a modal sheet) and applies every change
+/// immediately (no OK/Cancel/Done).
 final class ShortcutsSettingsView: NSView {
 
     // MARK: - State
@@ -156,7 +156,7 @@ final class ShortcutsSettingsView: NSView {
         for cmd in AppCommand.allCases {
             KeyBindings.set(nil, for: cmd)
         }
-        tableView.reloadData()
+        // cancelRecording() above already reset recordingRow → didSet reloadData()
         onChanged()
     }
 }
