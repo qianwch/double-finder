@@ -258,3 +258,14 @@ private final class FavCellView: NSTableCellView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 }
+
+// MARK: - Reload on show
+
+extension FavoritesSettingsView: SettingsPaneReloadable {
+    /// Re-read the favorites list (the pane is cached, so a favorite added via the
+    /// panel menu while this pane wasn't visible would otherwise not appear).
+    func reloadFromModel() {
+        items = Favorites.all()
+        tableView.reloadData()
+    }
+}
