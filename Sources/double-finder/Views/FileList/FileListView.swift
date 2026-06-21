@@ -220,4 +220,26 @@ final class FileListView: NSScrollView {
         body.needsDisplay = true
         headerView.needsDisplay = true
     }
+
+    // --- Parity helpers PanelViewController / MainViewController call ---
+
+    /// Re-applies the active language to the column header titles. The owner-drawn
+    /// header draws each title through `tr()` on every draw, so a redraw is all that
+    /// is needed (mirrors FileTableView.relocalize, called on a live language switch).
+    func relocalize() {
+        headerView.needsDisplay = true
+    }
+
+    /// Moves the cursor to the first item whose name starts with `char` (type-ahead).
+    /// Mirrors FileTableView.jumpToLetter.
+    func jumpToLetter(_ char: Character) {
+        let lower = char.lowercased().first ?? char
+        for (i, item) in body.items.enumerated()
+        where item.name != ".." && item.name.lowercased().first == lower {
+            body.cursorIndex = i
+            fileDelegate?.fileTableViewDidChangeCursor(firstResponderTarget, to: i)
+            ensureRowVisible(i)
+            return
+        }
+    }
 }
