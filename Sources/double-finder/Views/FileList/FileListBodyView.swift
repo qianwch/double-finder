@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - FileListBodyView
 
@@ -81,6 +82,8 @@ final class FileListBodyView: NSView {
         iconProvider.onReady = { [weak self] path in
             self?.invalidateRows(forPath: path)
         }
+        // Accept file drops from Finder / other apps / the other panel.
+        registerForDraggedTypes([.fileURL])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -558,7 +561,7 @@ final class FileListBodyView: NSView {
                           next.locationInWindow.y - start.y)
             if d > 4 {
                 renameWorkItem?.cancel(); renameWorkItem = nil
-                // TODO (Task 8): startFileDrag(originRow: row, event: next)
+                startFileDrag(originRow: row, event: next)
                 return
             }
         }
@@ -753,6 +756,85 @@ final class FileListBodyView: NSView {
     var onArrow: ((_ delta: Int) -> Void)?
     /// Called when the bench requests a view mode switch (keys 1/2/3).
     var onModeSwitch: ((_ mode: FileViewMode) -> Void)?
+    /// Drop callback used by the bench when `fileDelegate == nil`.
+    var onDropFiles: ((_ urls: [URL], _ move: Bool) -> Void)?
+}
+
+// MARK: - Drag source (NSDraggingSource)
+
+extension FileListBodyView: NSDraggingSource {
+
+    /// Mirrors NCTableView.startFileDrag exactly: drag the whole selection if
+    /// the origin row is in it, otherwise just the clicked row.
+    fileprivate func startFileDrag(originRow: Int, event: NSEvent) {
+        let origin = items[originRow]
+        let toDrag: [FileItem] = selectedItems.contains(origin.id)
+            ? items.filter { selectedItems.contains($0.id) && $0.name != ".." }
+            : (origin.name != ".." ? [origin] : [])
+        let valid = toDrag.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !valid.isEmpty else { return }   // SFTP/archive entries have no real file URL
+
+        var dragItems: [NSDraggingItem] = []
+        for fileItem in valid {
+            let di = NSDraggingItem(pasteboardWriter: NSURL(fileURLWithPath: fileItem.path))
+            let icon = NSWorkspace.shared.icon(forFile: fileItem.path)
+            icon.size = NSSize(width: 28, height: 28)
+            // Position the drag image at the item's row rect origin.
+            if let rowIdx = items.firstIndex(where: { $0.id == fileItem.id }) {
+                var frame = geometry.rowRect(rowIdx, width: bounds.width)
+                frame.size = NSSize(width: 28, height: 28)
+                di.setDraggingFrame(frame, contents: icon)
+            }
+            dragItems.append(di)
+        }
+        beginDraggingSession(with: dragItems, event: event, source: self)
+    }
+
+    /// Mirrors NCTableView: copy+move within app, copy-only outside.
+    public func draggingSession(_ session: NSDraggingSession,
+                                sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? [.copy, .move] : .copy
+    }
+}
+
+// MARK: - Drop destination (NSDraggingDestination)
+
+extension FileListBodyView {
+
+    private func canAcceptDrop(_ sender: NSDraggingInfo) -> Bool {
+        sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
+                                                options: [.urlReadingFileURLsOnly: true])
+    }
+
+    /// Mirrors NCTableView.dropOperation(for:) exactly.
+    private func dropOperation(for sender: NSDraggingInfo) -> NSDragOperation {
+        guard canAcceptDrop(sender) else { return [] }
+        let mask = sender.draggingSourceOperationMask
+        // Cmd forces move within the app; default is copy.
+        if NSEvent.modifierFlags.contains(.command), mask.contains(.move) { return .move }
+        return mask.contains(.copy) ? .copy : (mask.contains(.move) ? .move : .copy)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(for: sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(for: sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty else { return false }
+        let move = dropOperation(for: sender) == .move
+        if let d = fileDelegate {
+            d.fileTableView(self, didDropFiles: urls, move: move)
+        } else {
+            onDropFiles?(urls, move)
+        }
+        return true
+    }
 }
 
 // MARK: - Scroll helper (used by bench)
