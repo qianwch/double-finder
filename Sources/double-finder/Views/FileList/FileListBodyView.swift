@@ -129,13 +129,8 @@ final class FileListBodyView: NSView {
         // settings ONCE here, never inside the row loop (per-row UserDefaults reads
         // are exactly the hot-loop cost this owner-drawn rewrite exists to remove).
         let geo = geometry  // already cached; just alias for clarity
-        let optionalIDs = AppSettings.visibleColumns
+        let currentViewMode = viewMode
         let colorByType = AppSettings.colorByType
-        let layout = FileColumnLayout(
-            totalWidth: bounds.width,
-            visibleOptionalIDs: optionalIDs,
-            widths: [:]
-        )
         let viewWidth = bounds.width
 
         // 3. Visible rows.
@@ -144,13 +139,48 @@ final class FileListBodyView: NSView {
         // Shared text attributes.
         let para = NSMutableParagraphStyle()
         para.lineBreakMode = .byTruncatingTail
+
+        let side = iconSizePoints
+        // Thumbnail side for .thumbnails mode (match FileTableView's 44pt side).
+        let thumbSide: CGFloat = 44
+
+        switch currentViewMode {
+        case .full:
+            drawFull(range: range, geo: geo, para: para, side: side,
+                     colorByType: colorByType, viewWidth: viewWidth)
+        case .brief:
+            drawBrief(range: range, geo: geo, para: para, side: side,
+                      colorByType: colorByType, viewWidth: viewWidth)
+        case .thumbnails:
+            drawThumbnails(range: range, geo: geo, para: para, thumbSide: thumbSide,
+                           colorByType: colorByType, viewWidth: viewWidth)
+        }
+
+        // 5. Post-draw: prefetch visible icons/thumbnails, cancel offscreen.
+        let visibleItems = Array(items[range])
+        let visiblePaths = Set(visibleItems.map { $0.path })
+        let wantThumbs = (currentViewMode == .thumbnails)
+        let prefetchSide = wantThumbs ? thumbSide : side
+        iconProvider.prefetch(visibleItems, side: prefetchSide, thumbnails: wantThumbs)
+        iconProvider.cancelOffscreen(keepPaths: visiblePaths)
+    }
+
+    // MARK: - Full mode drawing
+
+    private func drawFull(range: ClosedRange<Int>, geo: FileRowGeometry,
+                          para: NSMutableParagraphStyle, side: CGFloat,
+                          colorByType: Bool, viewWidth: CGFloat) {
+        let optionalIDs = AppSettings.visibleColumns
+        let layout = FileColumnLayout(
+            totalWidth: viewWidth,
+            visibleOptionalIDs: optionalIDs,
+            widths: [:]
+        )
         let metaAttr: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
             .foregroundColor: NSColor.secondaryLabelColor,
             .paragraphStyle: para
         ]
-
-        let side = iconSizePoints
 
         for row in range {
             let item = items[row]
@@ -158,22 +188,20 @@ final class FileListBodyView: NSView {
             let selected = selectedItems.contains(item.id)
             let cursor = row == cursorIndex
 
-            // 4a. Row highlight.
+            // Row highlight.
             if let bg = rowBackground(selected: selected, cursor: cursor,
                                        active: isActivePanel, odd: row % 2 == 1) {
                 bg.setFill()
                 rowRect.fill()
             }
 
-            // 4b. Name column.
+            // Name column.
             if let nameRange = layout.xRange(of: "name") {
                 let nameLeft = nameRange.lowerBound
-                // Disclosure triangle (expandable directories, not "..").
                 var iconLeft = nameLeft
                 if item.isDirectory && item.name != ".." {
                     let triRect = geo.disclosureRect(row: row, depth: item.depth)
                     iconLeft = triRect.maxX + 2
-                    // Draw SF Symbol chevron.
                     let isExpanded = expandedPaths.contains(item.path)
                     let symbolName = isExpanded ? "chevron.down" : "chevron.right"
                     if let sym = NSImage(systemSymbolName: symbolName,
@@ -188,13 +216,11 @@ final class FileListBodyView: NSView {
                         sym.draw(in: symRect, from: .zero, operation: .sourceOver, fraction: 1.0)
                     }
                 } else {
-                    // For ".." and files, still indent by depth (usually 0).
                     let leadingMargin: CGFloat = 2
                     let indentPerLevel: CGFloat = 12
                     iconLeft = nameLeft + leadingMargin + CGFloat(item.depth) * indentPerLevel
                 }
 
-                // Icon.
                 let yMid = rowRect.minY + (geo.rowHeight - side) / 2
                 if item.name != ".." {
                     let iconImg = iconProvider.icon(for: item, side: side, wantThumbnail: false)
@@ -203,34 +229,17 @@ final class FileListBodyView: NSView {
                     iconImg.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: alpha)
                 }
 
-                // Name text.
                 let textLeft = iconLeft + side + 4
                 let textRight = nameRange.upperBound - 4
                 let textWidth = max(0, textRight - textLeft)
                 let textY = rowRect.minY + (geo.rowHeight - 14) / 2
                 let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
 
-                var nameColor: NSColor
-                if colorByType {
-                    nameColor = FileTypeColor.color(name: item.name, isDirectory: item.isDirectory, isSymlink: item.isSymlink)
-                } else if item.isSymlink {
-                    nameColor = .systemBlue
-                } else {
-                    nameColor = .labelColor
-                }
-                let nameAlpha: CGFloat = item.isHidden ? 0.5 : 1.0
-                let nameFont: NSFont = item.isDirectory
-                    ? NSFont.boldSystemFont(ofSize: 12)
-                    : NSFont.systemFont(ofSize: 12)
-                let nameAttr: [NSAttributedString.Key: Any] = [
-                    .font: nameFont,
-                    .foregroundColor: nameColor.withAlphaComponent(nameColor.alphaComponent * nameAlpha),
-                    .paragraphStyle: para
-                ]
+                let nameAttr = makeNameAttr(item: item, para: para, colorByType: colorByType)
                 (item.name as NSString).draw(in: textRect, withAttributes: nameAttr)
             }
 
-            // 4c. Visible optional columns (uses the `optionalIDs` hoisted above).
+            // Visible optional columns.
             for colID in optionalIDs {
                 guard let xRange = layout.xRange(of: colID) else { continue }
                 let text = metaText(for: item, column: colID)
@@ -249,12 +258,138 @@ final class FileListBodyView: NSView {
                 (text as NSString).draw(in: colRect, withAttributes: attr)
             }
         }
+    }
 
-        // 5. Post-draw: prefetch visible icons, cancel offscreen.
-        let visibleItems = Array(items[range])
-        let visiblePaths = Set(visibleItems.map { $0.path })
-        iconProvider.prefetch(visibleItems, side: side, thumbnails: false)
-        iconProvider.cancelOffscreen(keepPaths: visiblePaths)
+    // MARK: - Brief mode drawing (icon + name only, compact rows)
+
+    private func drawBrief(range: ClosedRange<Int>, geo: FileRowGeometry,
+                           para: NSMutableParagraphStyle, side: CGFloat,
+                           colorByType: Bool, viewWidth: CGFloat) {
+        for row in range {
+            let item = items[row]
+            let rowRect = geo.rowRect(row, width: viewWidth)
+            let selected = selectedItems.contains(item.id)
+            let cursor = row == cursorIndex
+
+            // Row highlight.
+            if let bg = rowBackground(selected: selected, cursor: cursor,
+                                       active: isActivePanel, odd: row % 2 == 1) {
+                bg.setFill()
+                rowRect.fill()
+            }
+
+            // Disclosure triangle for directories.
+            var iconLeft: CGFloat
+            if item.isDirectory && item.name != ".." {
+                let triRect = geo.disclosureRect(row: row, depth: item.depth)
+                iconLeft = triRect.maxX + 2
+                let isExpanded = expandedPaths.contains(item.path)
+                let symbolName = isExpanded ? "chevron.down" : "chevron.right"
+                if let sym = NSImage(systemSymbolName: symbolName,
+                                     accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold)) {
+                    let symSize = sym.size
+                    let symRect = NSRect(
+                        x: triRect.midX - symSize.width / 2,
+                        y: triRect.midY - symSize.height / 2,
+                        width: symSize.width, height: symSize.height
+                    )
+                    sym.draw(in: symRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                }
+            } else {
+                let leadingMargin: CGFloat = 2
+                let indentPerLevel: CGFloat = 12
+                iconLeft = leadingMargin + CGFloat(item.depth) * indentPerLevel
+            }
+
+            // Icon.
+            let yMid = rowRect.minY + (geo.rowHeight - side) / 2
+            if item.name != ".." {
+                let iconImg = iconProvider.icon(for: item, side: side, wantThumbnail: false)
+                let iconRect = NSRect(x: iconLeft, y: yMid, width: side, height: side)
+                let alpha: CGFloat = item.isHidden ? 0.5 : 1.0
+                iconImg.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: alpha)
+            }
+
+            // Name text — spans full remaining width.
+            let textLeft = iconLeft + side + 4
+            let textRight = viewWidth - 4
+            let textWidth = max(0, textRight - textLeft)
+            let textY = rowRect.minY + (geo.rowHeight - 14) / 2
+            let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
+
+            let nameAttr = makeNameAttr(item: item, para: para, colorByType: colorByType)
+            (item.name as NSString).draw(in: textRect, withAttributes: nameAttr)
+        }
+    }
+
+    // MARK: - Thumbnails mode drawing (large rows with async QL thumbnails)
+
+    private func drawThumbnails(range: ClosedRange<Int>, geo: FileRowGeometry,
+                                para: NSMutableParagraphStyle, thumbSide: CGFloat,
+                                colorByType: Bool, viewWidth: CGFloat) {
+        let leadingMargin: CGFloat = 4
+        let iconTextGap: CGFloat = 8
+
+        for row in range {
+            let item = items[row]
+            let rowRect = geo.rowRect(row, width: viewWidth)
+            let selected = selectedItems.contains(item.id)
+            let cursor = row == cursorIndex
+
+            // Row highlight.
+            if let bg = rowBackground(selected: selected, cursor: cursor,
+                                       active: isActivePanel, odd: row % 2 == 1) {
+                bg.setFill()
+                rowRect.fill()
+            }
+
+            // Thumbnail (or placeholder) — centered vertically in the row.
+            let thumbX = leadingMargin
+            let thumbY = rowRect.minY + (geo.rowHeight - thumbSide) / 2
+            let thumbRect = NSRect(x: thumbX, y: thumbY, width: thumbSide, height: thumbSide)
+
+            if item.name != ".." {
+                // wantThumbnail: true triggers QL thumbnail resolution asynchronously.
+                let iconImg = iconProvider.icon(for: item, side: thumbSide, wantThumbnail: !item.isDirectory)
+                let alpha: CGFloat = item.isHidden ? 0.5 : 1.0
+                iconImg.draw(in: thumbRect, from: .zero, operation: .sourceOver, fraction: alpha)
+            }
+
+            // Name text — drawn to the right of the thumbnail.
+            let textLeft = thumbX + thumbSide + iconTextGap
+            let textRight = viewWidth - 4
+            let textWidth = max(0, textRight - textLeft)
+            // Centre the text vertically in the tall row.
+            let textY = rowRect.minY + (geo.rowHeight - 14) / 2
+            let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
+
+            let nameAttr = makeNameAttr(item: item, para: para, colorByType: colorByType)
+            (item.name as NSString).draw(in: textRect, withAttributes: nameAttr)
+        }
+    }
+
+    // MARK: - Shared name attribute builder
+
+    private func makeNameAttr(item: FileItem, para: NSMutableParagraphStyle,
+                              colorByType: Bool) -> [NSAttributedString.Key: Any] {
+        var nameColor: NSColor
+        if colorByType {
+            nameColor = FileTypeColor.color(name: item.name, isDirectory: item.isDirectory, isSymlink: item.isSymlink)
+        } else if item.isSymlink {
+            nameColor = .systemBlue
+        } else {
+            nameColor = .labelColor
+        }
+        let nameAlpha: CGFloat = item.isHidden ? 0.5 : 1.0
+        let nameFont: NSFont = item.isDirectory
+            ? NSFont.boldSystemFont(ofSize: 12)
+            : NSFont.systemFont(ofSize: 12)
+        return [
+            .font: nameFont,
+            .foregroundColor: nameColor.withAlphaComponent(nameColor.alphaComponent * nameAlpha),
+            .paragraphStyle: para
+        ]
     }
 
     // MARK: - Highlight colour helper (verbatim parity with NCRowView.drawBackground)
@@ -310,8 +445,11 @@ final class FileListBodyView: NSView {
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
-        case 125: onArrow?(1)     // down
-        case 126: onArrow?(-1)    // up
+        case 125: onArrow?(1)                       // down
+        case 126: onArrow?(-1)                      // up
+        case 18: onModeSwitch?(.full)               // key "1" → Full
+        case 19: onModeSwitch?(.brief)              // key "2" → Brief
+        case 20: onModeSwitch?(.thumbnails)         // key "3" → Thumbnails
         default:  super.keyDown(with: event)
         }
     }
@@ -335,6 +473,8 @@ final class FileListBodyView: NSView {
     var onClickRow: ((_ row: Int, _ extend: Bool, _ toggle: Bool) -> Void)?
     var onDoubleClickRow: ((Int) -> Void)?
     var onArrow: ((_ delta: Int) -> Void)?
+    /// Called when the bench requests a view mode switch (keys 1/2/3).
+    var onModeSwitch: ((_ mode: FileViewMode) -> Void)?
 }
 
 // MARK: - Scroll helper (used by bench)
