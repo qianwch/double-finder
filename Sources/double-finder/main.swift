@@ -25,6 +25,14 @@ if let dir = ProcessInfo.processInfo.environment["DF_CANVAS_BENCH"] {
     CanvasBench.run(dir: dir, app: app)
 }
 
+// FileListBodyView bench: `DF_FILELIST_BENCH=/some/dir "Double Finder"`
+// Opens one window with the new FileListBodyView (full-mode owner-drawn rendering,
+// Task 4) for GUI verification: icon + name + size + date columns, cursor highlight,
+// arrow-key navigation.
+if let dir = ProcessInfo.processInfo.environment["DF_FILELIST_BENCH"] {
+    CanvasBench.runFileListBench(dir: dir, app: app)
+}
+
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)
