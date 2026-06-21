@@ -172,6 +172,48 @@ final class FileListBodyView: NSView {
         iconProvider.cancelOffscreen(keepPaths: visiblePaths)
     }
 
+    // MARK: - Shared row leading (disclosure triangle + icon)
+
+    /// Draws the disclosure triangle (expandable folders only) and the row icon,
+    /// reserving the triangle gutter for EVERY row so icons line up whether or not
+    /// the row has a triangle (files used to sit ~14pt left of folders). Returns the
+    /// x at which the name text should start. Used by both full and brief modes.
+    private func drawLeading(item: FileItem, row: Int, geo: FileRowGeometry,
+                             side: CGFloat) -> CGFloat {
+        // The triangle slot is reserved for all rows; the icon always begins just
+        // past it, so files and folders align.
+        let triRect = geo.disclosureRect(row: row, depth: item.depth)
+        let iconLeft = triRect.maxX + 2
+
+        if item.isDirectory && item.name != ".." {
+            let isExpanded = expandedPaths.contains(item.path)
+            let symbolName = isExpanded ? "chevron.down" : "chevron.right"
+            // Tint the chevron so it has real contrast on the row background — a
+            // plain template symbol draws near-black and is invisible in dark mode.
+            let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [.secondaryLabelColor]))
+            if let sym = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                let s = sym.size
+                let r = NSRect(x: triRect.midX - s.width / 2, y: triRect.midY - s.height / 2,
+                               width: s.width, height: s.height)
+                // respectFlipped: this view is flipped; the palette-colored (bitmap)
+                // chevron would otherwise draw upside-down (chevron.down → up).
+                sym.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1.0,
+                         respectFlipped: true, hints: nil)
+            }
+        }
+
+        if item.name != ".." {
+            let yMid = geo.rowRect(row, width: bounds.width).minY + (geo.rowHeight - side) / 2
+            let iconImg = iconProvider.icon(for: item, side: side, wantThumbnail: false)
+            let alpha: CGFloat = item.isHidden ? 0.5 : 1.0
+            iconImg.draw(in: NSRect(x: iconLeft, y: yMid, width: side, height: side),
+                         from: .zero, operation: .sourceOver, fraction: alpha)
+        }
+        return iconLeft + side + 4
+    }
+
     // MARK: - Full mode drawing
 
     private func drawFull(range: ClosedRange<Int>, geo: FileRowGeometry,
@@ -206,39 +248,7 @@ final class FileListBodyView: NSView {
 
             // Name column.
             if let nameRange = layout.xRange(of: "name") {
-                let nameLeft = nameRange.lowerBound
-                var iconLeft = nameLeft
-                if item.isDirectory && item.name != ".." {
-                    let triRect = geo.disclosureRect(row: row, depth: item.depth)
-                    iconLeft = triRect.maxX + 2
-                    let isExpanded = expandedPaths.contains(item.path)
-                    let symbolName = isExpanded ? "chevron.down" : "chevron.right"
-                    if let sym = NSImage(systemSymbolName: symbolName,
-                                         accessibilityDescription: nil)?
-                        .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold)) {
-                        let symSize = sym.size
-                        let symRect = NSRect(
-                            x: triRect.midX - symSize.width / 2,
-                            y: triRect.midY - symSize.height / 2,
-                            width: symSize.width, height: symSize.height
-                        )
-                        sym.draw(in: symRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-                    }
-                } else {
-                    let leadingMargin: CGFloat = 2
-                    let indentPerLevel: CGFloat = 12
-                    iconLeft = nameLeft + leadingMargin + CGFloat(item.depth) * indentPerLevel
-                }
-
-                let yMid = rowRect.minY + (geo.rowHeight - side) / 2
-                if item.name != ".." {
-                    let iconImg = iconProvider.icon(for: item, side: side, wantThumbnail: false)
-                    let iconRect = NSRect(x: iconLeft, y: yMid, width: side, height: side)
-                    let alpha: CGFloat = item.isHidden ? 0.5 : 1.0
-                    iconImg.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: alpha)
-                }
-
-                let textLeft = iconLeft + side + 4
+                let textLeft = drawLeading(item: item, row: row, geo: geo, side: side)
                 let textRight = nameRange.upperBound - 4
                 let textWidth = max(0, textRight - textLeft)
                 let textY = rowRect.minY + (geo.rowHeight - 14) / 2
@@ -287,41 +297,10 @@ final class FileListBodyView: NSView {
                 rowRect.fill()
             }
 
-            // Disclosure triangle for directories.
-            var iconLeft: CGFloat
-            if item.isDirectory && item.name != ".." {
-                let triRect = geo.disclosureRect(row: row, depth: item.depth)
-                iconLeft = triRect.maxX + 2
-                let isExpanded = expandedPaths.contains(item.path)
-                let symbolName = isExpanded ? "chevron.down" : "chevron.right"
-                if let sym = NSImage(systemSymbolName: symbolName,
-                                     accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold)) {
-                    let symSize = sym.size
-                    let symRect = NSRect(
-                        x: triRect.midX - symSize.width / 2,
-                        y: triRect.midY - symSize.height / 2,
-                        width: symSize.width, height: symSize.height
-                    )
-                    sym.draw(in: symRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-                }
-            } else {
-                let leadingMargin: CGFloat = 2
-                let indentPerLevel: CGFloat = 12
-                iconLeft = leadingMargin + CGFloat(item.depth) * indentPerLevel
-            }
-
-            // Icon.
-            let yMid = rowRect.minY + (geo.rowHeight - side) / 2
-            if item.name != ".." {
-                let iconImg = iconProvider.icon(for: item, side: side, wantThumbnail: false)
-                let iconRect = NSRect(x: iconLeft, y: yMid, width: side, height: side)
-                let alpha: CGFloat = item.isHidden ? 0.5 : 1.0
-                iconImg.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: alpha)
-            }
+            // Disclosure triangle + icon (gutter reserved for all rows so they align).
+            let textLeft = drawLeading(item: item, row: row, geo: geo, side: side)
 
             // Name text — spans full remaining width.
-            let textLeft = iconLeft + side + 4
             let textRight = viewWidth - 4
             let textWidth = max(0, textRight - textLeft)
             let textY = rowRect.minY + (geo.rowHeight - 14) / 2
