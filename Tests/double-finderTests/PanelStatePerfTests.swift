@@ -54,8 +54,11 @@ final class PanelStatePerfTests: XCTestCase {
         state.items = [parent, makeFile("a"), makeFile("b"), makeFile("c")]
         // 4 items but ".." should not count → total = 3
         let text = state.statusText
-        XCTAssertTrue(text.contains("3"), "statusText should report 3 items (excluding '..'): \(text)")
-        XCTAssertFalse(text.contains("4"), "statusText should NOT report 4 items: \(text)")
+        // The count is always the prefix; the disk-free note (with arbitrary
+        // digits) is appended at the end. Assert on the prefix so the test is
+        // robust to both the active UI language and the disk-note digits.
+        XCTAssertTrue(text.hasPrefix("3"), "statusText should start with count 3 (excluding '..'): \(text)")
+        XCTAssertFalse(text.hasPrefix("4"), "statusText count should be 3, not 4: \(text)")
     }
 
     func testStatusTextNoSelectionUsesSimpleForm() {
