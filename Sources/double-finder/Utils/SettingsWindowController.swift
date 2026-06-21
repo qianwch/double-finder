@@ -3,7 +3,7 @@ import AppKit
 /// A standard macOS-style Settings window (⌘,) that gathers the app's options
 /// into three tabs: General, Appearance, Tools. Changes apply live via `onChange`;
 /// the "Customize…" buttons defer to the existing sheets via their callbacks.
-class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
+class SettingsWindowController: NSWindowController {
     /// Called after any setting changes so the panels can re-apply them.
     var onChange: (() -> Void)?
     var onCustomizeToolbar: (() -> Void)?
@@ -11,8 +11,6 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     var onOrganizeFavorites: (() -> Void)?
 
     private let terminals: [String]
-    private var sevenZipField: NSTextField!
-    private var sevenZipDetected: NSTextField!
 
     init(installedTerminals: [String]) {
         self.terminals = installedTerminals.isEmpty ? ["Terminal"] : installedTerminals
@@ -188,32 +186,14 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         term.target = self; term.action = #selector(changeTerminal(_:))
         v.addSubview(term)
 
-        // 7-Zip
-        v.addSubview(label(tr("7-Zip (only used for encrypted .7z):"), x: 24, y: 222, w: 320, secondary: true))
-        v.addSubview(label(tr("Auto-detected:"), x: 24, y: 198, w: 110))
-        sevenZipDetected = label(SevenZip.autoDetect() ?? tr("Not found"), x: 130, y: 198, w: 340)
-        sevenZipDetected.lineBreakMode = .byTruncatingMiddle
-        if SevenZip.autoDetect() == nil { sevenZipDetected.textColor = .systemRed }
-        v.addSubview(sevenZipDetected)
-
-        v.addSubview(label(tr("Custom path:"), x: 24, y: 168, w: 110))
-        sevenZipField = NSTextField(frame: NSRect(x: 130, y: 166, width: 250, height: 22))
-        sevenZipField.bezelStyle = .roundedBezel
-        sevenZipField.placeholderString = tr("(empty → auto-detect)")
-        sevenZipField.stringValue = SevenZip.configuredPath ?? ""
-        sevenZipField.target = self; sevenZipField.action = #selector(applySevenZip)
-        sevenZipField.delegate = self
-        v.addSubview(sevenZipField)
-        let browse = NSButton(title: tr("Browse…"), target: self, action: #selector(browseSevenZip))
-        browse.bezelStyle = .rounded
-        browse.frame = NSRect(x: 386, y: 164, width: 86, height: 26)
-        v.addSubview(browse)
+        // (Encrypted .7z uses the bundled 7zz, falling back to any system 7z — no
+        //  setting needed, so there is no 7-Zip configuration here.)
 
         // Customize entry points
-        let sep = NSBox(frame: NSRect(x: 24, y: 120, width: 448, height: 1))
+        let sep = NSBox(frame: NSRect(x: 24, y: 222, width: 448, height: 1))
         sep.boxType = .separator
         v.addSubview(sep)
-        v.addSubview(label(tr("Customize:"), x: 24, y: 92, w: 110))
+        v.addSubview(label(tr("Customize:"), x: 24, y: 194, w: 110))
         let actions: [(String, Selector)] = [
             (tr("Toolbar…"), #selector(openToolbar)),
             (tr("Shortcuts…"), #selector(openShortcuts)),
@@ -223,7 +203,7 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         for (title, sel) in actions {
             let b = NSButton(title: title, target: self, action: sel)
             b.bezelStyle = .rounded
-            b.frame = NSRect(x: x, y: 86, width: 110, height: 28)
+            b.frame = NSRect(x: x, y: 188, width: 110, height: 28)
             v.addSubview(b)
             x += 116
         }
@@ -234,31 +214,6 @@ class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         AppSettings.terminalApp = s.titleOfSelectedItem ?? "Terminal"
     }
 
-    @objc private func applySevenZip() {
-        let p = sevenZipField.stringValue.trimmingCharacters(in: .whitespaces)
-        if !p.isEmpty && !FileManager.default.isExecutableFile(atPath: p) {
-            NSSound.beep()
-            return
-        }
-        SevenZip.configuredPath = p.isEmpty ? nil : p
-    }
-
-    func controlTextDidEndEditing(_ obj: Notification) { applySevenZip() }
-
-    @objc private func browseSevenZip() {
-        guard let window = window else { return }
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.showsHiddenFiles = true
-        panel.treatsFilePackagesAsDirectories = true
-        panel.directoryURL = URL(fileURLWithPath: SevenZip.searchDirs.first { FileManager.default.fileExists(atPath: $0) } ?? "/usr/local/bin")
-        panel.beginSheetModal(for: window) { [weak self] resp in
-            guard resp == .OK, let url = panel.url, let self = self else { return }
-            self.sevenZipField.stringValue = url.path
-            self.applySevenZip()
-        }
-    }
 
     @objc private func openToolbar() { onCustomizeToolbar?() }
     @objc private func openShortcuts() { onCustomizeShortcuts?() }

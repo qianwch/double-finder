@@ -1632,13 +1632,6 @@ class MainViewController: NSViewController {
         sheet.beginSheet(on: window) { [weak self] in self?.activeFavoritesSheet = nil }
     }
 
-    private var activeSevenZipSheet: SevenZipLocationSheet?
-    @objc func sevenZipLocation_menu() {
-        guard let window = view.window else { return }
-        let sheet = SevenZipLocationSheet()
-        activeSevenZipSheet = sheet
-        sheet.beginSheet(on: window) { [weak self] in self?.activeSevenZipSheet = nil }
-    }
 
     private var helpWindow: HelpWindowController?
     @objc func actionShowHelp_menu() {
