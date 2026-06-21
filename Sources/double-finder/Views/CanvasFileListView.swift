@@ -205,32 +205,20 @@ enum CanvasBench {
         scroll.documentView = list
         win.contentView = scroll
 
-        list.onArrow = { [weak list, weak scroll] delta in
-            guard let list = list, let scroll = scroll else { return }
-            let n = list.items.count
-            list.cursorIndex = max(0, min(n - 1, list.cursorIndex + delta))
-            // Scroll the new cursor row into the visible clip rect.
-            let clipH = scroll.contentView.bounds.height
-            let rowH = list.geometry.rowHeight
-            let rowY = CGFloat(list.cursorIndex) * rowH
-            if rowY < scroll.contentView.bounds.minY {
-                scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, rowY)))
-                scroll.reflectScrolledClipView(scroll.contentView)
-            } else if rowY + rowH > scroll.contentView.bounds.maxY {
-                scroll.contentView.scroll(to: NSPoint(x: 0, y: rowY + rowH - clipH))
-                scroll.reflectScrolledClipView(scroll.contentView)
-            }
-        }
-        list.onClickRow = { [weak list] row, _, _ in list?.cursorIndex = row }
+        // --- Stub delegate: logs every callback to /tmp/df-filelist.txt ---
+        let stub = BenchFileDelegate(list: list, scroll: scroll)
+        list.fileDelegate = stub
 
         // Number keys 1/2/3 → switch viewMode for GUI verification of Task 5.
+        // (Still goes through the bench onModeSwitch path since fileDelegate != nil
+        //  only affects mouseDown/keyDown paths; mode-switch keys are unrelated.)
         list.onModeSwitch = { [weak list, weak win] mode in
             guard let list = list, let win = win else { return }
             list.viewMode = mode
             win.title = "FileListBodyView bench — \(dir) (\(items.count) items) [mode: \(mode.title)]"
         }
 
-        keepAlive = [win, scroll, list]
+        keepAlive = [win, scroll, list, stub]
         win.makeKeyAndOrderFront(nil)
         win.makeFirstResponder(list)
         app.setActivationPolicy(.regular)
@@ -238,6 +226,105 @@ enum CanvasBench {
         app.run()
         exit(0)
     }
+}
+
+// MARK: - Stub delegate for the FileListBodyView bench
+
+/// Logs each FileTableViewDelegate callback to /tmp/df-filelist.txt and also
+/// drives the cursor/selection so the bench remains interactive.
+private final class BenchFileDelegate: FileTableViewDelegate {
+    private weak var list: FileListBodyView?
+    private weak var scroll: NSScrollView?
+
+    init(list: FileListBodyView, scroll: NSScrollView) {
+        self.list = list
+        self.scroll = scroll
+        log("=== BenchFileDelegate attached ===")
+    }
+
+    private func log(_ msg: String) {
+        let line = msg + "\n"
+        let url = URL(fileURLWithPath: "/tmp/df-filelist.txt")
+        if let fh = try? FileHandle(forWritingTo: url) {
+            fh.seekToEndOfFile()
+            fh.write(line.data(using: .utf8)!)
+            try? fh.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func fileTableView(_ tableView: NSView, didClickRow row: Int, extend: Bool, toggle: Bool) {
+        log("didClickRow row=\(row) extend=\(extend) toggle=\(toggle)")
+        guard let list = list else { return }
+        // Drive cursor & selection so the bench stays interactive.
+        list.cursorIndex = row
+        if !extend && !toggle { list.selectedItems = [list.items[row].id] }
+        scrollRowVisible(row)
+    }
+
+    func fileTableView(_ tableView: NSView, didDoubleClickItem item: FileItem) {
+        log("didDoubleClickItem item=\(item.name)")
+    }
+
+    func fileTableView(_ tableView: NSView, didPressEnterOnItem item: FileItem) {
+        log("didPressEnterOnItem item=\(item.name)")
+    }
+
+    func fileTableViewDidChangeCursor(_ tableView: NSView, to index: Int) {
+        log("didChangeCursor to=\(index)")
+        list?.cursorIndex = index
+        scrollRowVisible(index)
+    }
+
+    func fileTableViewWantsActivation(_ tableView: NSView) {
+        log("fileTableViewWantsActivation")
+    }
+
+    func fileTableView(_ tableView: NSView, didPressSpaceOnIndex index: Int) {
+        log("didPressSpaceOnIndex index=\(index)")
+    }
+
+    func fileTableView(_ tableView: NSView, didClickColumn identifier: String) {
+        log("didClickColumn identifier=\(identifier)")
+    }
+
+    func fileTableView(_ tableView: NSView, didToggleExpand item: FileItem) {
+        log("didToggleExpand item=\(item.name)")
+        guard let list = list else { return }
+        if list.expandedPaths.contains(item.path) {
+            list.expandedPaths.remove(item.path)
+        } else {
+            list.expandedPaths.insert(item.path)
+        }
+    }
+
+    func fileTableView(_ tableView: NSView, didRename item: FileItem, to newName: String) {
+        log("didRename item=\(item.name) to=\(newName)")
+    }
+
+    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool) {
+        log("didDropFiles count=\(urls.count) move=\(move)")
+    }
+
+    private func scrollRowVisible(_ row: Int) {
+        guard let list = list, let scroll = scroll else { return }
+        let clipH = scroll.contentView.bounds.height
+        let rowH = list.geometry.rowHeight
+        let rowY = CGFloat(row) * rowH
+        if rowY < scroll.contentView.bounds.minY {
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, rowY)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        } else if rowY + rowH > scroll.contentView.bounds.maxY {
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: rowY + rowH - clipH))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+    }
+}
+
+// Reopen the enum so the compiler sees it as a continuation.
+extension CanvasBench {
+    // (bench helpers below)
 
     // MARK: Original CanvasFileListView bench (DF_CANVAS_BENCH)
 

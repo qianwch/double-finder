@@ -562,21 +562,21 @@ class PanelViewController: NSViewController {
 
 // MARK: - FileTableViewDelegate
 extension PanelViewController: FileTableViewDelegate {
-    func fileTableView(_ tableView: FileTableView, didDoubleClickItem item: FileItem) {
+    func fileTableView(_ tableView: NSView, didDoubleClickItem item: FileItem) {
         panelDelegate?.panelViewController(self, didOpenItem: item)
     }
 
-    func fileTableView(_ tableView: FileTableView, didPressEnterOnItem item: FileItem) {
+    func fileTableView(_ tableView: NSView, didPressEnterOnItem item: FileItem) {
         panelDelegate?.panelViewController(self, didOpenItem: item)
     }
 
-    func fileTableViewDidChangeCursor(_ tableView: FileTableView, to index: Int) {
+    func fileTableViewDidChangeCursor(_ tableView: NSView, to index: Int) {
         panelState.cursorIndex = index
         panelState.selectionAnchor = index
         panelDelegate?.panelViewControllerWantsActivation(self)
     }
 
-    func fileTableView(_ tableView: FileTableView, didClickRow row: Int, extend: Bool, toggle: Bool) {
+    func fileTableView(_ tableView: NSView, didClickRow row: Int, extend: Bool, toggle: Bool) {
         panelDelegate?.panelViewControllerWantsActivation(self)
         if extend {
             panelState.moveCursor(to: row, extendingSelection: true)
@@ -588,25 +588,25 @@ extension PanelViewController: FileTableViewDelegate {
         }
     }
 
-    func fileTableViewWantsActivation(_ tableView: FileTableView) {
+    func fileTableViewWantsActivation(_ tableView: NSView) {
         panelDelegate?.panelViewControllerWantsActivation(self)
     }
 
-    func fileTableView(_ tableView: FileTableView, didPressSpaceOnIndex index: Int) {
+    func fileTableView(_ tableView: NSView, didPressSpaceOnIndex index: Int) {
         toggleSelectionAtCursor()
     }
 
-    func fileTableView(_ tableView: FileTableView, didClickColumn identifier: String) {
+    func fileTableView(_ tableView: NSView, didClickColumn identifier: String) {
         guard let column = PanelState.SortColumn(columnIdentifier: identifier) else { return }
         panelState.applySort(column: column)
     }
 
-    func fileTableView(_ tableView: FileTableView, didToggleExpand item: FileItem) {
+    func fileTableView(_ tableView: NSView, didToggleExpand item: FileItem) {
         panelDelegate?.panelViewControllerWantsActivation(self)
         panelState.toggleExpand(item)
     }
 
-    func fileTableView(_ tableView: FileTableView, didRename item: FileItem, to newName: String) {
+    func fileTableView(_ tableView: NSView, didRename item: FileItem, to newName: String) {
         let state = panelState
         Task {
             do {
@@ -631,7 +631,7 @@ extension PanelViewController: FileTableViewDelegate {
         fileTableView.beginRename(row: panelState.cursorIndex)
     }
 
-    func fileTableView(_ tableView: FileTableView, didDropFiles urls: [URL], move: Bool) {
+    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool) {
         panelDelegate?.panelViewController(self, didDropFiles: urls, move: move)
     }
 

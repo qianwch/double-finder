@@ -2,17 +2,22 @@ import AppKit
 import UniformTypeIdentifiers
 import QuickLookThumbnailing
 
+/// Interaction delegate shared by the old NSTableView-backed `FileTableView` and the
+/// new owner-drawn `FileListBodyView`.  The `tableView` parameter is typed as `NSView`
+/// so both implementations can call the same delegate without a protocol split.
+/// None of the `PanelViewController` implementations use the `tableView` argument,
+/// so the change is source-compatible: just update the parameter label in conformances.
 protocol FileTableViewDelegate: AnyObject {
-    func fileTableView(_ tableView: FileTableView, didDoubleClickItem item: FileItem)
-    func fileTableView(_ tableView: FileTableView, didPressEnterOnItem item: FileItem)
-    func fileTableViewDidChangeCursor(_ tableView: FileTableView, to index: Int)
-    func fileTableView(_ tableView: FileTableView, didClickRow row: Int, extend: Bool, toggle: Bool)
-    func fileTableViewWantsActivation(_ tableView: FileTableView)
-    func fileTableView(_ tableView: FileTableView, didPressSpaceOnIndex index: Int)
-    func fileTableView(_ tableView: FileTableView, didClickColumn identifier: String)
-    func fileTableView(_ tableView: FileTableView, didToggleExpand item: FileItem)
-    func fileTableView(_ tableView: FileTableView, didRename item: FileItem, to newName: String)
-    func fileTableView(_ tableView: FileTableView, didDropFiles urls: [URL], move: Bool)
+    func fileTableView(_ tableView: NSView, didDoubleClickItem item: FileItem)
+    func fileTableView(_ tableView: NSView, didPressEnterOnItem item: FileItem)
+    func fileTableViewDidChangeCursor(_ tableView: NSView, to index: Int)
+    func fileTableView(_ tableView: NSView, didClickRow row: Int, extend: Bool, toggle: Bool)
+    func fileTableViewWantsActivation(_ tableView: NSView)
+    func fileTableView(_ tableView: NSView, didPressSpaceOnIndex index: Int)
+    func fileTableView(_ tableView: NSView, didClickColumn identifier: String)
+    func fileTableView(_ tableView: NSView, didToggleExpand item: FileItem)
+    func fileTableView(_ tableView: NSView, didRename item: FileItem, to newName: String)
+    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool)
 }
 
 class FileTableView: NSScrollView {
