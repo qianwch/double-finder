@@ -1326,9 +1326,16 @@ class MainViewController: NSViewController {
         alert.addButton(withTitle: tr("Extract"))
         alert.addButton(withTitle: tr("Cancel"))
 
+        let baseDir = inactivePanelVC.panelState.currentPath
+        // Default to a folder named after the archive (extension stripped). For a
+        // single archive show its full target dir; for several, show the parent and
+        // extract each into its own named subfolder.
+        let intoSubfolders = items.count > 1
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.bezelStyle = .roundedBezel
-        field.stringValue = inactivePanelVC.panelState.currentPath
+        field.stringValue = items.count == 1
+            ? (baseDir as NSString).appendingPathComponent(FileItem.archiveBaseName(of: items[0].name))
+            : baseDir
         alert.accessoryView = field
 
         beginSheet(alert, focusing: field, on: window) { [weak self] response in
@@ -1339,14 +1346,16 @@ class MainViewController: NSViewController {
             // The user may have typed a path that doesn't exist yet — create it.
             try? FileManager.default.createDirectory(
                 atPath: dest, withIntermediateDirectories: true)
-            self.runExtractOperation(items, to: dest, password: nil)
+            self.runExtractOperation(items, to: dest, password: nil, intoSubfolders: intoSubfolders)
         }
     }
 
     /// Runs an extract through the standard progress sheet, then re-prompts for a
     /// password and retries any archives that failed (typically encrypted).
-    private func runExtractOperation(_ items: [FileItem], to dest: String, password: String?) {
-        let op = ExtractProvider().makeOperation(items: items, destPath: dest, password: password)
+    private func runExtractOperation(_ items: [FileItem], to dest: String, password: String?,
+                                     intoSubfolders: Bool = false) {
+        let op = ExtractProvider().makeOperation(items: items, destPath: dest, password: password,
+                                                 intoSubfolders: intoSubfolders)
         // We handle failures ourselves via the password-retry prompt, so suppress
         // the generic “X items could not be copied” alert that runOperation would
         // otherwise surface. The user sees ONLY the password prompt, not both.
@@ -1365,7 +1374,7 @@ class MainViewController: NSViewController {
                 : tr("%d archives could not be extracted. Enter password:", failed.count)
             self.promptForPassword(message: msg) { [weak self] pw in
                 guard let self = self, let pw = pw, !pw.isEmpty else { return }
-                self.runExtractOperation(failed, to: dest, password: pw)
+                self.runExtractOperation(failed, to: dest, password: pw, intoSubfolders: intoSubfolders)
             }
         }
     }
