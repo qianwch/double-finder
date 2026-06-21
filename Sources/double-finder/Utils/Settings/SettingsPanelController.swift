@@ -4,7 +4,14 @@ import AppKit
 /// The sole Settings window: sidebar of 7 categories + embedded detail panes,
 /// opened directly (⌘,) or deep-linked via `show(select:)`.
 @MainActor
-final class SettingsWindowController: NSWindowController {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+
+    /// When the window closes, tear down any in-progress shortcut key-capture so a
+    /// dangling local key monitor can't swallow the next keystroke app-wide.
+    func windowWillClose(_ notification: Notification) {
+        (built["shortcuts"] as? ShortcutsSettingsView)?.endRecordingIfActive()
+    }
+
 
     // MARK: - Callbacks (same contract as old controller)
     var onChange: (() -> Void)?
@@ -47,6 +54,7 @@ final class SettingsWindowController: NSWindowController {
         window.minSize = NSSize(width: 500, height: 380)
         super.init(window: window)
 
+        window.delegate = self
         buildCategories()
         buildUI(window: window)
     }
