@@ -23,6 +23,10 @@ final class SettingsWindowController2: NSWindowController {
 
     // MARK: - Pane cache
     private var built: [String: NSView] = [:]
+    private var currentPaneID: String?
+
+    // MARK: - Terminals
+    private let installedTerminalsValue: [String]
 
     // MARK: - UI
     private let sidebarWidth: CGFloat = 170
@@ -32,6 +36,7 @@ final class SettingsWindowController2: NSWindowController {
     // MARK: - Init
 
     init(installedTerminals: [String]) {
+        self.installedTerminalsValue = installedTerminals.isEmpty ? ["Terminal"] : installedTerminals
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 460),
             styleMask: [.titled, .closable, .resizable],
@@ -39,6 +44,7 @@ final class SettingsWindowController2: NSWindowController {
             defer: false
         )
         window.title = tr("Settings")
+        window.minSize = NSSize(width: 500, height: 380)
         super.init(window: window)
 
         buildCategories()
@@ -50,24 +56,29 @@ final class SettingsWindowController2: NSWindowController {
     // MARK: - Category registry builder
 
     private func buildCategories() {
-        let specs: [(id: String, titleKey: String, symbol: String)] = [
-            ("general",   "General",   "gearshape"),
-            ("display",   "Display",   "square.grid.2x2"),
-            ("panels",    "Panels",    "sidebar.squares.left"),
-            ("operation", "Operation", "slider.horizontal.3"),
-            ("toolbar",   "Toolbar",   "wrench.and.screwdriver"),
-            ("shortcuts", "Shortcuts", "keyboard"),
-            ("favorites", "Favorites", "bookmark"),
+        categories = [
+            SettingsCategory(id: "general", title: tr("General"), symbol: "gearshape") { [weak self] in
+                GeneralSettingsView(onChange: { self?.onChange?() })
+            },
+            SettingsCategory(id: "display", title: tr("Display"), symbol: "square.grid.2x2") { [weak self] in
+                DisplaySettingsView(onChange: { self?.onChange?() })
+            },
+            SettingsCategory(id: "panels", title: tr("Panels"), symbol: "sidebar.squares.left") { [weak self] in
+                PanelsSettingsView(onChange: { self?.onChange?() })
+            },
+            SettingsCategory(id: "operation", title: tr("Operation"), symbol: "slider.horizontal.3") { [weak self] in
+                OperationSettingsView(onChange: { self?.onChange?() }, terminals: self?.installedTerminalsValue ?? ["Terminal"])
+            },
+            SettingsCategory(id: "toolbar", title: tr("Toolbar"), symbol: "wrench.and.screwdriver") { [weak self] in
+                self?.makePlaceholder(title: tr("Toolbar")) ?? NSView()
+            },
+            SettingsCategory(id: "shortcuts", title: tr("Shortcuts"), symbol: "keyboard") { [weak self] in
+                self?.makePlaceholder(title: tr("Shortcuts")) ?? NSView()
+            },
+            SettingsCategory(id: "favorites", title: tr("Favorites"), symbol: "bookmark") { [weak self] in
+                self?.makePlaceholder(title: tr("Favorites")) ?? NSView()
+            },
         ]
-        categories = specs.map { spec in
-            // Capture id/titleKey by value so the closure is self-contained.
-            let id = spec.id
-            let titleKey = spec.titleKey
-            let symbol = spec.symbol
-            return SettingsCategory(id: id, title: tr(titleKey), symbol: symbol) { [weak self] in
-                self?.makePlaceholder(title: tr(titleKey)) ?? makeFallbackPlaceholder(title: tr(titleKey))
-            }
-        }
     }
 
     private func makePlaceholder(title: String) -> NSView {
@@ -87,7 +98,9 @@ final class SettingsWindowController2: NSWindowController {
 
     private func buildUI(window: NSWindow) {
         guard let contentView = window.contentView else { return }
-        contentView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Use autoresizing masks for top-level layout so NSWindow controls the frame.
+        let bounds = contentView.bounds
 
         // -- Sidebar (NSScrollView + NSTableView) --
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Category"))
@@ -99,48 +112,28 @@ final class SettingsWindowController2: NSWindowController {
         tv.selectionHighlightStyle = .sourceList
         tv.dataSource = self
         tv.delegate = self
-        tv.translatesAutoresizingMaskIntoConstraints = false
         self.tableView = tv
 
-        let scrollView = NSScrollView()
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: sidebarWidth, height: bounds.height))
         scrollView.documentView = tv
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        // -- Detail container --
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        self.containerView = container
+        scrollView.autoresizingMask = [.height]
 
         // -- Divider --
-        let divider = NSBox()
+        let divider = NSBox(frame: NSRect(x: sidebarWidth, y: 0, width: 1, height: bounds.height))
         divider.boxType = .separator
-        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.autoresizingMask = [.height]
+
+        // -- Detail container --
+        let containerX = sidebarWidth + 1
+        let container = NSView(frame: NSRect(x: containerX, y: 0, width: bounds.width - containerX, height: bounds.height))
+        container.autoresizingMask = [.width, .height]
+        self.containerView = container
 
         contentView.addSubview(scrollView)
         contentView.addSubview(divider)
         contentView.addSubview(container)
-
-        NSLayoutConstraint.activate([
-            // Sidebar
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            scrollView.widthAnchor.constraint(equalToConstant: sidebarWidth),
-
-            // Divider
-            divider.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            divider.topAnchor.constraint(equalTo: contentView.topAnchor),
-            divider.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            divider.widthAnchor.constraint(equalToConstant: 1),
-
-            // Detail container
-            container.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-            container.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            container.topAnchor.constraint(equalTo: contentView.topAnchor),
-            container.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
 
         // Select first row
         tv.reloadData()
@@ -156,6 +149,10 @@ final class SettingsWindowController2: NSWindowController {
         guard index >= 0 && index < categories.count else { return }
         let cat = categories[index]
 
+        // Skip if this pane is already showing
+        if cat.id == currentPaneID { return }
+        currentPaneID = cat.id
+
         // Build lazily and cache
         let pane: NSView
         if let cached = built[cat.id] {
@@ -168,14 +165,9 @@ final class SettingsWindowController2: NSWindowController {
         // Remove old subviews
         containerView.subviews.forEach { $0.removeFromSuperview() }
 
-        pane.translatesAutoresizingMaskIntoConstraints = false
+        pane.frame = containerView.bounds
+        pane.autoresizingMask = [.width, .height]
         containerView.addSubview(pane)
-        NSLayoutConstraint.activate([
-            pane.topAnchor.constraint(equalTo: containerView.topAnchor),
-            pane.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            pane.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            pane.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-        ])
     }
 
     // MARK: - Public show API
@@ -268,19 +260,4 @@ extension SettingsWindowController2: NSTableViewDelegate {
             showCategory(at: row)
         }
     }
-}
-
-// MARK: - Free function fallback (no self available)
-
-private func makeFallbackPlaceholder(title: String) -> NSView {
-    let label = NSTextField(labelWithString: title)
-    label.translatesAutoresizingMaskIntoConstraints = false
-    let view = NSView()
-    view.translatesAutoresizingMaskIntoConstraints = false
-    view.addSubview(label)
-    NSLayoutConstraint.activate([
-        label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-        label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-    ])
-    return view
 }
