@@ -87,6 +87,46 @@ final class ArchiveLogicTests: XCTestCase {
         XCTAssertEqual(LibArchive.decodeName(Data("folder/file.txt".utf8), encoding: nil), "folder/file.txt")
     }
 
+    // MARK: FileColumnLayout — Name divider resize (trade with first optional)
+
+    func testNameRightEdgeIsAResizeDivider() {
+        let l = FileColumnLayout(totalWidth: 600, visibleOptionalIDs: ["size", "date"], widths: [:])
+        // The divider at Name's right edge must be reported as the "name" divider.
+        XCTAssertEqual(l.resizeDivider(atX: l.nameWidth, tolerance: 4), "name")
+    }
+
+    func testShrinkingFirstOptionalWidensName() {
+        let wide = FileColumnLayout(totalWidth: 600, visibleOptionalIDs: ["size", "date"],
+                                    widths: ["size": 80])
+        let narrow = FileColumnLayout(totalWidth: 600, visibleOptionalIDs: ["size", "date"],
+                                      widths: ["size": 50])
+        // Name absorbs the 30pt the first optional gave up — the trade the Name
+        // divider performs. Total stays at the view width (no horizontal scroll).
+        XCTAssertEqual(narrow.nameWidth - wide.nameWidth, 30, accuracy: 0.01)
+    }
+
+    func testTradingTwoOptionalsKeepsNameWidthAndMovesDivider() {
+        // Dragging the size|date divider trades width between them only: size +30,
+        // date −30. Name (and every other column) must stay put, and the divider
+        // (size's right edge) must move right by exactly the traded 30pt — i.e.
+        // the grabbed edge follows the cursor, not the opposite side.
+        let before = FileColumnLayout(totalWidth: 600, visibleOptionalIDs: ["size", "date"],
+                                      widths: ["size": 80, "date": 120])
+        let after = FileColumnLayout(totalWidth: 600, visibleOptionalIDs: ["size", "date"],
+                                     widths: ["size": 110, "date": 90])
+        XCTAssertEqual(before.nameWidth, after.nameWidth, accuracy: 0.01)
+        let dBefore = before.xRange(of: "size")!.upperBound
+        let dAfter = after.xRange(of: "size")!.upperBound
+        XCTAssertEqual(dAfter - dBefore, 30, accuracy: 0.01)
+    }
+
+    func testNameStaysAtLeastMinimum() {
+        // Optionals wider than the view clamp Name to its 120 floor.
+        let l = FileColumnLayout(totalWidth: 200, visibleOptionalIDs: ["size", "date"],
+                                 widths: ["size": 130, "date": 130])
+        XCTAssertEqual(l.nameWidth, 120, accuracy: 0.01)
+    }
+
     // MARK: FileItem.parentEntry
 
     func testParentEntryPointsToContainingDirectory() {
