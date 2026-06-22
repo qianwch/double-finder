@@ -336,6 +336,7 @@ class PanelViewController: NSViewController {
 
     private var scrollMemory: [String: Int] = [:]   // path → top visible row
     private var lastDisplayedPath: String?
+    private var lastDisplayedRemote: Bool = false
 
     /// Cached itemsVersion from the last time we fed items to the file list.
     /// Sentinel -1 ensures items are fed on the very first updateDisplay.
@@ -369,7 +370,14 @@ class PanelViewController: NSViewController {
             scrollMemory[old] = previousTopRow   // remember where we were
         }
 
-        if pathChanged { updateDriveSelection() }   // re-highlight current volume
+        // Re-highlight the current volume on navigation, and also when toggling
+        // between local and remote (connecting to S3/SFTP at the same path
+        // string — e.g. "/" — wouldn't change `pathChanged`).
+        let remoteChanged = panelState.isRemote != lastDisplayedRemote
+        if pathChanged || remoteChanged {
+            lastDisplayedRemote = panelState.isRemote
+            updateDriveSelection()
+        }
 
         fileTableView.expandedPaths = panelState.expandedPaths
         // Only feed items to the file list when the underlying array actually
@@ -530,7 +538,8 @@ class PanelViewController: NSViewController {
         guard driveStack != nil else { return }
         driveStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard AppSettings.showDriveBar else { return }
-        let current = Volumes.containing(panelState.currentPath)?.url.path
+        // On a remote connection (SFTP/S3) no local volume is "current".
+        let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
         for vol in Volumes.mounted() {
             let b = NSButton(title: " " + vol.name, target: self, action: #selector(driveSelected(_:)))
             b.bezelStyle = .recessed
@@ -554,7 +563,7 @@ class PanelViewController: NSViewController {
     /// Drive dropdown: pops the same volume list as a menu.
     @objc private func showDriveMenu() {
         let menu = NSMenu()
-        let current = Volumes.containing(panelState.currentPath)?.url.path
+        let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
         for vol in Volumes.mounted() {
             let item = NSMenuItem(title: vol.menuTitle, action: #selector(driveMenuSelected(_:)), keyEquivalent: "")
             item.target = self
@@ -574,7 +583,7 @@ class PanelViewController: NSViewController {
     /// Updates only the highlighted volume (called on navigation).
     private func updateDriveSelection() {
         guard driveStack != nil, AppSettings.showDriveBar else { return }
-        let current = Volumes.containing(panelState.currentPath)?.url.path
+        let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
         for case let b as NSButton in driveStack.arrangedSubviews {
             b.state = (b.identifier?.rawValue == current) ? .on : .off
         }

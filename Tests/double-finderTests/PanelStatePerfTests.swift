@@ -44,6 +44,26 @@ final class PanelStatePerfTests: XCTestCase {
         XCTAssertEqual(v2, v0 + 2, "itemsVersion should increase by exactly 2 after two assignments")
     }
 
+    // MARK: - isRemote (drive bar shouldn't highlight a local volume when remote)
+
+    func testIsRemoteFalseForLocalPath() {
+        XCTAssertFalse(PanelState(path: "/").isRemote)
+        XCTAssertFalse(PanelState(path: "/Users/me").isRemote)
+    }
+
+    func testIsRemoteTrueWhenSFTPConnected() {
+        let state = PanelState(path: "/")
+        state.sftp = SFTPConnection(host: "h", user: "u")
+        XCTAssertTrue(state.isRemote)
+    }
+
+    func testIsRemoteTrueWhenS3Connected() {
+        let state = PanelState(path: "/")
+        state.s3 = S3Connection(name: "n", endpoint: "https://s3.example.com",
+                                region: "us-east-1", bucket: "", accessKey: "AK", pathStyle: true)
+        XCTAssertTrue(state.isRemote)
+    }
+
     // MARK: - statusText O(1) correctness
 
     func testStatusTextTotalExcludesParentEntry() {

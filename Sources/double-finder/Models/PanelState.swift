@@ -147,6 +147,11 @@ class PanelState: ObservableObject {
         return Self.fileSystem(for: currentPath)
     }
 
+    /// True when the panel is showing a remote location (SFTP / S3 / a remote
+    /// archive) rather than the local filesystem — so the UI shouldn't highlight
+    /// a local volume as "current".
+    var isRemote: Bool { sftp != nil || s3 != nil || remoteArchive != nil }
+
     /// The S3 client for the active S3 session, or nil if not connected to S3.
     var s3Client: S3Client? {
         guard let conn = s3 else { return nil }
