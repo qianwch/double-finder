@@ -36,10 +36,18 @@ final class FileListHeaderView: NSView {
     private let dividerTolerance: CGFloat = 4
 
     // MARK: - Drag state
+    //
+    // A divider is resized by trading width between its two adjacent columns:
+    // the left grows and the right shrinks by the same amount (so the divider
+    // tracks the cursor and every other column — including the flexible Name —
+    // stays put). The Name column auto-fills and has no stored width, so when
+    // it's the left side we only shrink the right neighbour (`dragLeftID` nil).
 
-    private var dragColumnID: String? = nil
+    private var dragLeftID: String? = nil    // left column (nil = flexible Name)
+    private var dragRightID: String? = nil   // right column (always an optional)
+    private var dragLeftStart: CGFloat = 0
+    private var dragRightStart: CGFloat = 0
     private var dragStartX: CGFloat = 0
-    private var dragStartWidth: CGFloat = 0
 
     // MARK: - Cursor tracking
 
@@ -184,11 +192,16 @@ final class FileListHeaderView: NSView {
         let layout = makeLayout()
 
         // Check for divider drag first
-        if let divID = layout.resizeDivider(atX: pt.x, tolerance: dividerTolerance) {
-            dragColumnID = divID
+        if let divID = layout.resizeDivider(atX: pt.x, tolerance: dividerTolerance),
+           let li = layout.columns.firstIndex(where: { $0.id == divID }),
+           li + 1 < layout.columns.count {
+            let left = layout.columns[li]
+            let right = layout.columns[li + 1]
             dragStartX = pt.x
-            let range = layout.xRange(of: divID)!
-            dragStartWidth = range.upperBound - range.lowerBound
+            dragLeftID = left.isName ? nil : left.id   // Name has no stored width
+            dragLeftStart = left.width
+            dragRightID = right.id
+            dragRightStart = right.width
             return
         }
 
@@ -199,14 +212,18 @@ final class FileListHeaderView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let divID = dragColumnID, !divID.isEmpty else { return }
+        guard let rightID = dragRightID else { return }
         let pt = convert(event.locationInWindow, from: nil)
-        let delta = pt.x - dragStartX
-        let newWidth = max(minColumnWidth, dragStartWidth + delta)
+        // Move the divider with the cursor: left += eff, right -= eff. Clamp the
+        // shared delta so neither column drops below the minimum (keeping the
+        // sum — and therefore the flexible Name column — unchanged).
+        var eff = pt.x - dragStartX
+        eff = min(eff, dragRightStart - minColumnWidth)            // right ≥ min
+        if dragLeftID != nil { eff = max(eff, minColumnWidth - dragLeftStart) }  // left ≥ min
 
-        // Update persisted widths
         var widths = AppSettings.columnWidths
-        widths[divID] = newWidth
+        if let leftID = dragLeftID { widths[leftID] = dragLeftStart + eff }
+        widths[rightID] = dragRightStart - eff
         AppSettings.columnWidths = widths
 
         needsDisplay = true
@@ -214,7 +231,8 @@ final class FileListHeaderView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        dragColumnID = nil
+        dragLeftID = nil
+        dragRightID = nil
     }
 
     override func mouseMoved(with event: NSEvent) {
