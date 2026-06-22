@@ -208,8 +208,11 @@ final class FileListBodyView: NSView {
             let yMid = geo.rowRect(row, width: bounds.width).minY + (geo.rowHeight - side) / 2
             let iconImg = iconProvider.icon(for: item, side: side, wantThumbnail: false)
             let alpha: CGFloat = item.isHidden ? 0.5 : 1.0
+            // respectFlipped: this view is flipped and the cached icon is a
+            // bitmap, which would otherwise draw upside-down.
             iconImg.draw(in: NSRect(x: iconLeft, y: yMid, width: side, height: side),
-                         from: .zero, operation: .sourceOver, fraction: alpha)
+                         from: .zero, operation: .sourceOver, fraction: alpha,
+                         respectFlipped: true, hints: nil)
         }
         return iconLeft + side + 4
     }
@@ -341,7 +344,8 @@ final class FileListBodyView: NSView {
                 // wantThumbnail: true triggers QL thumbnail resolution asynchronously.
                 let iconImg = iconProvider.icon(for: item, side: thumbSide, wantThumbnail: !item.isDirectory)
                 let alpha: CGFloat = item.isHidden ? 0.5 : 1.0
-                iconImg.draw(in: thumbRect, from: .zero, operation: .sourceOver, fraction: alpha)
+                iconImg.draw(in: thumbRect, from: .zero, operation: .sourceOver, fraction: alpha,
+                             respectFlipped: true, hints: nil)
             }
 
             // Name text — drawn to the right of the thumbnail.
