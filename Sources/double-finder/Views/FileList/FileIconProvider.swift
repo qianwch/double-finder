@@ -125,11 +125,21 @@ final class FileIconProvider {
 /// background `Operation.main()` without a concurrency error.
 func fileIconResized(_ source: NSImage, to side: CGFloat) -> NSImage {
     let size = NSSize(width: side, height: side)
+    // Flatten to a CGImage first (definite top-left orientation). System icons —
+    // folders in particular — are returned as flip-sensitive images that bake in
+    // upside-down when drawn straight into an NSImage focus, so the cached bitmap
+    // ended up inverted in our flipped list view. A CGImage-backed bitmap is a
+    // plain top-left bitmap that draws uprightly (with respectFlipped at the call
+    // site) the same way for every icon type.
+    var rect = NSRect(origin: .zero, size: size)
     let img = NSImage(size: size)
     img.lockFocus()
     NSGraphicsContext.current?.imageInterpolation = .high
-    source.draw(in: NSRect(origin: .zero, size: size),
-                from: .zero, operation: .sourceOver, fraction: 1.0)
+    if let cg = source.cgImage(forProposedRect: &rect, context: NSGraphicsContext.current, hints: nil) {
+        NSImage(cgImage: cg, size: size).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+    } else {
+        source.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+    }
     img.unlockFocus()
     return img
 }
