@@ -80,36 +80,60 @@ class ProgressSheet: NSWindowController {
         }
     }
 
-    private var lastSampleBytes: Int64 = 0
+    private var lastSampleValue: Double = 0
     private var lastSampleTime: TimeInterval = 0
-    private var smoothedSpeed: Double = 0   // bytes/sec
+    private var smoothedRate: Double = 0
     private static let byteFmt: ByteCountFormatter = {
         let f = ByteCountFormatter(); f.countStyle = .file; return f
     }()
 
+    /// Exponentially-smoothed rate of `current` per second, resampled every ≥0.4s.
+    /// Backs both the byte/sec and the files/sec speed readouts.
+    private func sampleRate(_ current: Double) -> Double {
+        let now = Date().timeIntervalSinceReferenceDate
+        if lastSampleTime == 0 { lastSampleTime = now; lastSampleValue = current }
+        let dt = now - lastSampleTime
+        if dt >= 0.4 {
+            let inst = max(0, (current - lastSampleValue) / dt)
+            smoothedRate = smoothedRate == 0 ? inst : smoothedRate * 0.6 + inst * 0.4
+            lastSampleValue = current
+            lastSampleTime = now
+        }
+        return smoothedRate
+    }
+
+    /// Speed readout for a transfer. When `totalBytes > 0` (sizes known) it's
+    /// byte/sec from `bytesRate`; otherwise it falls back to `filesRate` (files/s)
+    /// so a speed always shows. Pure → unit-tested (`ProgressSpeedTests`).
+    static func speedText(totalBytes: Int64, bytesRate: Double, filesRate: Double) -> String {
+        if totalBytes > 0 {
+            return bytesRate > 0 ? "\(byteFmt.string(fromByteCount: Int64(bytesRate)))/s" : "—"
+        }
+        return filesRate > 0 ? "\(Int(filesRate.rounded())) \(tr("files/s"))" : "—"
+    }
+
     @MainActor
     private func updateUI() {
         if let provider = operation.bytesTransferred, operation.totalBytes > 0 {
-            let now = Date().timeIntervalSinceReferenceDate
             let bytes = provider()
-            if lastSampleTime == 0 { lastSampleTime = now; lastSampleBytes = bytes }
-            let dt = now - lastSampleTime
-            if dt >= 0.4 {
-                let inst = max(0, Double(bytes - lastSampleBytes) / dt)
-                smoothedSpeed = smoothedSpeed == 0 ? inst : smoothedSpeed * 0.6 + inst * 0.4
-                lastSampleBytes = bytes
-                lastSampleTime = now
-            }
+            let speed = Self.speedText(totalBytes: operation.totalBytes,
+                                       bytesRate: sampleRate(Double(bytes)), filesRate: 0)
             progressBar.isIndeterminate = false
             progressBar.doubleValue = min(1.0, Double(bytes) / Double(operation.totalBytes))
-            let speedStr = smoothedSpeed > 0 ? "\(Self.byteFmt.string(fromByteCount: Int64(smoothedSpeed)))/s" : "—"
-            fileLabel.stringValue = "\(operation.currentFile)  ·  \(Self.byteFmt.string(fromByteCount: bytes)) / \(Self.byteFmt.string(fromByteCount: operation.totalBytes))  ·  \(speedStr)"
+            fileLabel.stringValue = "\(operation.currentFile)  ·  \(Self.byteFmt.string(fromByteCount: bytes)) / \(Self.byteFmt.string(fromByteCount: operation.totalBytes))  ·  \(speed)"
         } else if operation.totalUnits > 0 {
             progressBar.isIndeterminate = false
             progressBar.minValue = 0
             progressBar.maxValue = Double(operation.totalUnits)
             progressBar.doubleValue = Double(operation.completedUnits)
-            fileLabel.stringValue = "\(operation.currentFile)  ·  \(operation.completedUnits)/\(operation.totalUnits)"
+            // Sizes known (sync, S3) → byte/sec; otherwise files/sec. Sample the
+            // rate exactly ONCE per tick (sampleRate is stateful).
+            let hasBytes = operation.totalBytes > 0
+            let rate = sampleRate(Double(hasBytes ? operation.completedBytes : Int64(operation.completedUnits)))
+            let speed = Self.speedText(totalBytes: operation.totalBytes,
+                                       bytesRate: hasBytes ? rate : 0,
+                                       filesRate: hasBytes ? 0 : rate)
+            fileLabel.stringValue = "\(operation.currentFile)  ·  \(operation.completedUnits)/\(operation.totalUnits)  ·  \(speed)"
         } else {
             progressBar.doubleValue = operation.progress
             fileLabel.stringValue = operation.currentFile

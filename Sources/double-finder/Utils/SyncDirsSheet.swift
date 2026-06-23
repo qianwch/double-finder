@@ -312,7 +312,9 @@ final class SyncDirsSheet: NSWindowController {
             let (src, dst): (SyncEndpoint, SyncEndpoint) =
                 e.direction == .toRight ? (left, right) : (right, left)
             let rel = e.rel
-            return FileOperation.Unit(label: rel) { [weak self] in
+            // Source-side file size drives the byte/sec speed readout.
+            let bytes = (e.direction == .toRight ? e.leftSize : e.rightSize) ?? 0
+            return FileOperation.Unit(label: rel, bytes: bytes) { [weak self] in
                 guard let self = self else { return }
                 try await self.runFileTransfer(rel: rel, from: src, to: dst)
             }

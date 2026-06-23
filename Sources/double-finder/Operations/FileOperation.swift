@@ -37,15 +37,21 @@ class FileOperation: ObservableObject {
     /// rest of the batch; these are reported together once the operation ends.
     @Published var failures: [(path: String, error: Error)] = []
     @Published var completedUnits: Int = 0
+    /// Bytes finished so far across completed units (when units carry sizes).
+    /// Drives the byte/sec speed readout in unit-count mode.
+    @Published var completedBytes: Int64 = 0
     var totalUnits: Int = 0
     var concurrency: Int = 6
 
     /// One file-level unit of a concurrent transfer (e.g. one S3 getObject/putObject).
+    /// `bytes` is the file's size when known (0 if unknown) — used to show a
+    /// byte/sec transfer speed in the progress sheet's unit-count mode.
     struct Unit {
         let label: String
+        let bytes: Int64
         let body: () async throws -> Void
-        init(label: String, body: @escaping () async throws -> Void) {
-            self.label = label; self.body = body
+        init(label: String, bytes: Int64 = 0, body: @escaping () async throws -> Void) {
+            self.label = label; self.bytes = bytes; self.body = body
         }
     }
     /// When set, `start()` runs these units with bounded concurrency instead of
@@ -125,6 +131,7 @@ class FileOperation: ObservableObject {
                 let units = await provider()
                 self.transferUnits = units
                 self.totalUnits = units.count
+                if self.totalBytes == 0 { self.totalBytes = units.reduce(0) { $0 + $1.bytes } }
                 self.indeterminate = false
                 await self.runConcurrently(units)
                 self.progress = 1.0
@@ -135,6 +142,7 @@ class FileOperation: ObservableObject {
         }
         if let units = transferUnits {
             totalUnits = units.count
+            if totalBytes == 0 { totalBytes = units.reduce(0) { $0 + $1.bytes } }
             task = Task { @MainActor in
                 await runConcurrently(units)
                 progress = 1.0
@@ -209,6 +217,7 @@ class FileOperation: ObservableObject {
                     self.failures.append((unit.label, error))
                 }
                 self.completedUnits += 1
+                self.completedBytes += unit.bytes
                 self.progress = self.totalUnits > 0
                     ? Double(self.completedUnits) / Double(self.totalUnits) : 1
             }

@@ -212,9 +212,11 @@ struct S3TransferProvider: TransferProvider {
                     if item.isDirectory || key.hasSuffix("/") {
                         let folderKey = key.hasSuffix("/") ? key : key + "/"
                         // M3: surface listing failures instead of silently yielding zero units.
-                        let keys: [String]
+                        // listAllObjects (not listAllKeys) so each unit carries its byte
+                        // size for the progress sheet's transfer-speed readout.
+                        let objs: [S3ObjectInfo]
                         do {
-                            keys = try await capturedClient.listAllKeys(bucket: b, prefix: folderKey)
+                            objs = try await capturedClient.listAllObjects(bucket: b, prefix: folderKey)
                         } catch {
                             let capturedError = error
                             units.append(FileOperation.Unit(label: item.name) {
@@ -222,7 +224,8 @@ struct S3TransferProvider: TransferProvider {
                             })
                             continue
                         }
-                        for k in keys where !k.hasSuffix("/") {
+                        for o in objs where !o.key.hasSuffix("/") {
+                            let k = o.key
                             let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
                                                                             destDir: destPath)
                             // C1: reject keys that escape the destination directory.
@@ -232,7 +235,7 @@ struct S3TransferProvider: TransferProvider {
                                 })
                                 continue
                             }
-                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent) {
+                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent, bytes: o.size) {
                                 let dir = (local as NSString).deletingLastPathComponent
                                 try FileManager.default.createDirectory(atPath: dir,
                                                                         withIntermediateDirectories: true)
@@ -250,7 +253,7 @@ struct S3TransferProvider: TransferProvider {
                             continue
                         }
                         // M1: ensure parent directory exists before writing the file.
-                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent) {
+                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent, bytes: item.size) {
                             let dir = (local as NSString).deletingLastPathComponent
                             try FileManager.default.createDirectory(atPath: dir,
                                                                     withIntermediateDirectories: true)
@@ -277,14 +280,16 @@ struct S3TransferProvider: TransferProvider {
                         for f in files {
                             let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
                                                                   destPrefix: destPrefix)
-                            units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent) {
+                            units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent,
+                                                            bytes: FileOperation.sizeOnDisk(f)) {
                                 try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: f)
                             })
                         }
                     } else {
                         let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
                                                               destPrefix: destPrefix)
-                        units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent) {
+                        units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent,
+                                                        bytes: FileOperation.sizeOnDisk(item.path)) {
                             try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: item.path)
                         })
                     }
