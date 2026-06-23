@@ -126,6 +126,18 @@ final class SyncDirsSheet: NSWindowController {
 
     // MARK: - Compare
 
+    /// True for OS/metadata cruft that should never be synced (matched by basename).
+    static func isJunk(rel: String) -> Bool {
+        let name = (rel as NSString).lastPathComponent
+        if name.hasPrefix("._") { return true }          // AppleDouble resource forks
+        switch name {
+        case ".DS_Store", ".localized", "Thumbs.db", ".Spotlight-V100", ".Trashes":
+            return true
+        default:
+            return false
+        }
+    }
+
     @objc private func optionsChanged() { recompare() }
 
     private func recompare() {
