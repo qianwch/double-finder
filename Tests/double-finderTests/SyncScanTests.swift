@@ -33,4 +33,18 @@ final class SyncScanTests: XCTestCase {
         XCTAssertEqual(m["sub/b.jpg"]?.size, 200)
         XCTAssertNil(m[""])   // folder marker dropped
     }
+
+    func testScanLocalDir() async throws {
+        let tmp = NSTemporaryDirectory() + "synctest-\(ProcessInfo.processInfo.globallyUniqueString)"
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: tmp + "/sub", withIntermediateDirectories: true)
+        try "hi".write(toFile: tmp + "/a.txt", atomically: true, encoding: .utf8)
+        try "x".write(toFile: tmp + "/sub/b.txt", atomically: true, encoding: .utf8)
+        try Data().write(to: URL(fileURLWithPath: tmp + "/.DS_Store"))   // junk → filtered
+        defer { try? fm.removeItem(atPath: tmp) }
+
+        let m = try await SyncScan.scan(.local(base: tmp))
+        XCTAssertEqual(Set(m.keys), ["a.txt", "sub/b.txt"])   // .DS_Store dropped
+        XCTAssertEqual(m["a.txt"]?.size, 2)
+    }
 }
