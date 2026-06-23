@@ -1563,15 +1563,29 @@ class MainViewController: NSViewController {
     /// direction + one-click sync). Both Compare and Synchronize menus open it.
     func actionCompareDirectories() { actionSynchronize() }
 
+    /// Builds a sync endpoint from a panel. nil ⇒ unsupported (archive, or S3 without client).
+    private func makeSyncEndpoint(_ p: PanelState) -> SyncEndpoint? {
+        if PanelState.archiveRoot(in: p.currentPath) != nil { return nil }
+        if let conn = p.sftp { return .sftp(conn, base: p.currentPath) }
+        if p.s3 != nil {
+            guard let client = p.s3Client else { return nil }
+            let (bucket, key) = parseS3Path(p.currentPath)
+            guard let b = bucket else { return nil }     // bucket list root not syncable
+            let prefix = key.isEmpty ? "" : (key.hasSuffix("/") ? key : key + "/")
+            return .s3(client, bucket: b, prefix: prefix)
+        }
+        return .local(base: p.currentPath)
+    }
+
     func actionSynchronize() {
         let l = leftPanelVC.panelState, r = rightPanelVC.panelState
-        guard l.sftp == nil, r.sftp == nil,
-              PanelState.archiveRoot(in: l.currentPath) == nil,
-              PanelState.archiveRoot(in: r.currentPath) == nil else {
-            NSSound.beep(); return   // local folders only
+        guard let le = makeSyncEndpoint(l), let re = makeSyncEndpoint(r) else {
+            NSSound.beep(); return    // archive / S3 bucket root not supported
         }
+        // v1: local↔remote only — reject two remote sides.
+        guard !(le.isRemote && re.isRemote) else { NSSound.beep(); return }
         guard let window = view.window else { return }
-        let sheet = SyncDirsSheet(left: .local(base: l.currentPath), right: .local(base: r.currentPath),
+        let sheet = SyncDirsSheet(left: le, right: re,
                                   leftLabel: l.currentPath, rightLabel: r.currentPath)
         activeSyncSheet = sheet
         sheet.onRunOperation = { [weak self] op, done in
