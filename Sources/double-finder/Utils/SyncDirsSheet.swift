@@ -9,14 +9,14 @@ final class SyncDirsSheet: NSWindowController {
 
     struct Entry {
         let rel: String
-        let leftURL: URL?
-        let rightURL: URL?
-        let leftSize: Int64?
+        let leftSize: Int64?     // nil ⇒ absent on left
         let rightSize: Int64?
         let leftDate: Date?
         let rightDate: Date?
         let comparison: Comparison
         var direction: Direction
+        var leftExists: Bool { leftSize != nil }
+        var rightExists: Bool { rightSize != nil }
     }
 
     private let leftBase: String
@@ -142,10 +142,12 @@ final class SyncDirsSheet: NSWindowController {
 
     private func recompare() {
         statusLabel.stringValue = tr("Comparing…")
-        let left = leftBase, right = rightBase, deep = recurse.state == .on
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = SyncDirsSheet.compare(left: left, right: right, recurse: deep)
-            DispatchQueue.main.async {
+        let l = leftBase, r = rightBase
+        Task { [weak self] in
+            let lmap = (try? await SyncScan.scan(.local(base: l))) ?? [:]
+            let rmap = (try? await SyncScan.scan(.local(base: r))) ?? [:]
+            let result = SyncDirsSheet.compare(left: lmap, right: rmap, ignoreTime: false)
+            await MainActor.run {
                 guard let self = self else { return }
                 self.entries = result
                 self.applyFilter()
@@ -153,40 +155,23 @@ final class SyncDirsSheet: NSWindowController {
         }
     }
 
-    /// Recursively maps relative path → (size, date) for a directory's files.
-    private static func scan(_ base: String, recurse: Bool) -> [String: (size: Int64, date: Date, url: URL)] {
-        let fm = FileManager.default
-        var map: [String: (Int64, Date, URL)] = [:]
-        let baseURL = URL(fileURLWithPath: base)
-        let opts: FileManager.DirectoryEnumerationOptions = recurse ? [] : [.skipsSubdirectoryDescendants]
-        guard let en = fm.enumerator(at: baseURL,
-                                     includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
-                                     options: opts) else { return map }
-        let prefix = baseURL.path.hasSuffix("/") ? baseURL.path : baseURL.path + "/"
-        for case let url as URL in en {
-            let rv = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
-            if rv?.isDirectory == true { continue }   // compare files only
-            let rel = url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : url.lastPathComponent
-            map[rel] = (Int64(rv?.fileSize ?? 0), rv?.contentModificationDate ?? .distantPast, url)
-        }
-        return map
-    }
-
-    private static func compare(left: String, right: String, recurse: Bool) -> [Entry] {
-        let l = scan(left, recurse: recurse)
-        let r = scan(right, recurse: recurse)
+    /// Backend-agnostic compare of two rel → info maps. When `ignoreTime` is set,
+    /// files with equal sizes are treated as identical (used for S3, whose
+    /// LastModified ≠ content mtime).
+    static func compare(left: [String: SyncFileInfo], right: [String: SyncFileInfo], ignoreTime: Bool) -> [Entry] {
         var out: [Entry] = []
-        for rel in Set(l.keys).union(r.keys).sorted() {
-            let lv = l[rel], rv = r[rel]
+        for rel in Set(left.keys).union(right.keys).sorted() {
+            let lv = left[rel], rv = right[rel]
             let comp: Comparison
             let dir: Direction
             switch (lv, rv) {
             case let (lv?, rv?):
-                if lv.size == rv.size && abs(lv.date.timeIntervalSince(rv.date)) < 2 {
+                let sameTime = abs(lv.mtime.timeIntervalSince(rv.mtime)) < 2
+                if lv.size == rv.size && (ignoreTime || sameTime) {
                     comp = .equal; dir = .skip
-                } else if lv.date > rv.date.addingTimeInterval(2) {
+                } else if !ignoreTime && lv.mtime > rv.mtime.addingTimeInterval(2) {
                     comp = .leftNewer; dir = .toRight
-                } else if rv.date > lv.date.addingTimeInterval(2) {
+                } else if !ignoreTime && rv.mtime > lv.mtime.addingTimeInterval(2) {
                     comp = .rightNewer; dir = .toLeft
                 } else {
                     comp = .sizeDiffer; dir = .toRight
@@ -195,9 +180,8 @@ final class SyncDirsSheet: NSWindowController {
             case (nil, .some): comp = .rightOnly; dir = .toLeft
             default: continue
             }
-            out.append(Entry(rel: rel, leftURL: lv?.url, rightURL: rv?.url,
-                             leftSize: lv?.size, rightSize: rv?.size,
-                             leftDate: lv?.date, rightDate: rv?.date,
+            out.append(Entry(rel: rel, leftSize: lv?.size, rightSize: rv?.size,
+                             leftDate: lv?.mtime, rightDate: rv?.mtime,
                              comparison: comp, direction: dir))
         }
         return out
@@ -230,7 +214,7 @@ final class SyncDirsSheet: NSWindowController {
         let e = entries[idx]
         let next: Direction
         switch e.direction {
-        case .toRight: next = e.rightURL != nil || e.leftURL != nil ? .toLeft : .skip
+        case .toRight: next = e.rightExists || e.leftExists ? .toLeft : .skip
         case .toLeft: next = .skip
         case .skip: next = .toRight
         }
@@ -251,16 +235,16 @@ final class SyncDirsSheet: NSWindowController {
             let fm = FileManager.default
             var done = 0, failed = 0
             for e in jobs {
-                let src: URL?, destBase: String
-                if e.direction == .toRight { src = e.leftURL; destBase = rightBase }
-                else { src = e.rightURL; destBase = leftBase }
-                guard let s = src else { failed += 1; continue }
+                let srcBase: String, destBase: String
+                if e.direction == .toRight { srcBase = leftBase; destBase = rightBase }
+                else { srcBase = rightBase; destBase = leftBase }
+                let source = (srcBase as NSString).appendingPathComponent(e.rel)
                 let target = (destBase as NSString).appendingPathComponent(e.rel)
                 let targetDir = (target as NSString).deletingLastPathComponent
                 do {
                     try fm.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
                     if fm.fileExists(atPath: target) { try fm.removeItem(atPath: target) }
-                    try fm.copyItem(atPath: s.path, toPath: target)
+                    try fm.copyItem(atPath: source, toPath: target)
                     done += 1
                 } catch { failed += 1 }
             }
@@ -317,10 +301,10 @@ extension SyncDirsSheet: NSTableViewDataSource, NSTableViewDelegate {
             case .equal: color = .secondaryLabelColor
             }
         case "left":
-            text = e.leftURL == nil ? "—" : "\(sizeStr(e.leftSize))  \(dateStr(e.leftDate))"
+            text = !e.leftExists ? "—" : "\(sizeStr(e.leftSize))  \(dateStr(e.leftDate))"
             align = .right
         case "right":
-            text = e.rightURL == nil ? "—" : "\(sizeStr(e.rightSize))  \(dateStr(e.rightDate))"
+            text = !e.rightExists ? "—" : "\(sizeStr(e.rightSize))  \(dateStr(e.rightDate))"
         case "dir":
             switch e.direction {
             case .toRight: text = "→"
