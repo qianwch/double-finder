@@ -42,25 +42,27 @@ enum SyncScan {
         return map
     }
 
-    /// Scans an endpoint into rel → info, filtering OS junk. Always recursive.
-    static func scan(_ endpoint: SyncEndpoint) async throws -> [String: SyncFileInfo] {
+    /// Scans an endpoint into rel → info. Always recursive. When `filterJunk`
+    /// is set (default), OS/temp/VCS cruft is dropped via `SyncDirsSheet.isJunk`.
+    static func scan(_ endpoint: SyncEndpoint, filterJunk: Bool = true) async throws -> [String: SyncFileInfo] {
+        func keep(_ rel: String) -> Bool { !filterJunk || !SyncDirsSheet.isJunk(rel: rel) }
         switch endpoint {
         case .local(let base):
-            return scanLocal(base)
+            return scanLocal(base, filterJunk: filterJunk)
         case .sftp(let conn, let base):
             let cmd = "find \"\(base)\" -type f -printf '%P\\t%s\\t%T@\\n' 2>/dev/null"
             let out = try await SFTPFS(connection: conn).runCommand(cmd)
             let map = parseFindOutput(out)
             // Non-empty remote dir that yields nothing usually means find -printf is unsupported.
             if map.isEmpty && !out.isEmpty { throw SyncFindUnsupportedError() }
-            return map.filter { !SyncDirsSheet.isJunk(rel: $0.key) }
+            return map.filter { keep($0.key) }
         case .s3(let client, let bucket, let prefix):
             let objs = try await client.listAllObjects(bucket: bucket, prefix: prefix)
-            return s3RelMap(objs, prefix: prefix).filter { !SyncDirsSheet.isJunk(rel: $0.key) }
+            return s3RelMap(objs, prefix: prefix).filter { keep($0.key) }
         }
     }
 
-    private static func scanLocal(_ base: String) -> [String: SyncFileInfo] {
+    private static func scanLocal(_ base: String, filterJunk: Bool) -> [String: SyncFileInfo] {
         let fm = FileManager.default
         var map: [String: SyncFileInfo] = [:]
         // Canonicalize via realpath so the prefix matches the enumerator's child
@@ -80,7 +82,7 @@ enum SyncScan {
             let rv = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
             if rv?.isDirectory == true { continue }
             let rel = url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : url.lastPathComponent
-            if SyncDirsSheet.isJunk(rel: rel) { continue }
+            if filterJunk && SyncDirsSheet.isJunk(rel: rel) { continue }
             map[rel] = SyncFileInfo(size: Int64(rv?.fileSize ?? 0),
                                     mtime: rv?.contentModificationDate ?? .distantPast)
         }

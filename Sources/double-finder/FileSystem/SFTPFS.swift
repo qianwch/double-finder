@@ -109,7 +109,7 @@ class SFTPFS: VirtualFS {
     func copy(from: String, to: String, onProcess: ((Process) -> Void)?) async throws {
         let key = expandedKey, conn = connection
         try await Task.detached(priority: .userInitiated) {
-            try Self.scp(["-r", "-i", key, "-P", "\(conn.port)",
+            try Self.scp(["-r", "-p", "-i", key, "-P", "\(conn.port)",
                           "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
                           "\(conn.user)@\(conn.host):\(from)", to], onProcess: onProcess)
         }.value
@@ -123,7 +123,7 @@ class SFTPFS: VirtualFS {
     func upload(localPath: String, to remoteDir: String, onProcess: ((Process) -> Void)?) async throws {
         let key = expandedKey, conn = connection
         try await Task.detached(priority: .userInitiated) {
-            try Self.scp(["-r", "-i", key, "-P", "\(conn.port)",
+            try Self.scp(["-r", "-p", "-i", key, "-P", "\(conn.port)",
                           "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
                           localPath, "\(conn.user)@\(conn.host):\(remoteDir)"], onProcess: onProcess)
         }.value
