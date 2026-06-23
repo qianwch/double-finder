@@ -35,6 +35,8 @@ final class SyncDirsSheet: NSWindowController {
     private let syncButton = NSButton(title: "", target: nil, action: nil)
 
     var onClosed: (() -> Void)?
+    /// Runs the built sync operation (owner shows ProgressSheet), then calls back.
+    var onRunOperation: ((FileOperation, @escaping () -> Void) -> Void)?
 
     init(left: SyncEndpoint, right: SyncEndpoint, leftLabel: String, rightLabel: String) {
         self.left = left; self.right = right
@@ -243,40 +245,64 @@ final class SyncDirsSheet: NSWindowController {
 
     // MARK: - Synchronize
 
+    /// One file `rel` from `src` to `dst`. v1: one side is always local.
+    private func runFileTransfer(rel: String, from src: SyncEndpoint, to dst: SyncEndpoint) async throws {
+        let fm = FileManager.default
+        switch (src, dst) {
+        case (.local(let sb), .local(let db)):
+            let s = (sb as NSString).appendingPathComponent(rel)
+            let t = (db as NSString).appendingPathComponent(rel)
+            try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: t) { try fm.removeItem(atPath: t) }
+            try fm.copyItem(atPath: s, toPath: t)
+
+        case (.local(let sb), .sftp(let conn, let db)):
+            let s = (sb as NSString).appendingPathComponent(rel)
+            let remote = (db as NSString).appendingPathComponent(rel)
+            let remoteDir = (remote as NSString).deletingLastPathComponent
+            _ = try await SFTPFS(connection: conn).runCommand("mkdir -p \"\(remoteDir)\"")
+            try await SFTPFS(connection: conn).upload(localPath: s, to: remoteDir)
+
+        case (.sftp(let conn, let sb), .local(let db)):
+            let remote = (sb as NSString).appendingPathComponent(rel)
+            let t = (db as NSString).appendingPathComponent(rel)
+            let localDir = (t as NSString).deletingLastPathComponent
+            try fm.createDirectory(atPath: localDir, withIntermediateDirectories: true)
+            try await SFTPFS(connection: conn).copy(from: remote, to: localDir)
+
+        case (.local(let sb), .s3(let client, let bucket, let prefix)):
+            let s = (sb as NSString).appendingPathComponent(rel)
+            try await client.putObject(bucket: bucket, key: prefix + rel, fromLocalPath: s)
+
+        case (.s3(let client, let bucket, let prefix), .local(let db)):
+            let t = (db as NSString).appendingPathComponent(rel)
+            try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try await client.getObject(bucket: bucket, key: prefix + rel, toLocalPath: t)
+
+        default:
+            throw FSUnsupportedError(message: "Unsupported sync direction")
+        }
+    }
+
     @objc private func synchronize() {
         let jobs = entries.filter { $0.direction != .skip }
-        guard !jobs.isEmpty, let window = window else { return }
-        syncButton.isEnabled = false
-        statusLabel.stringValue = tr("Synchronizing %d…", jobs.count)
-        // Temporary local-only transfer; Task 6 replaces this with backend routing.
-        func base(_ ep: SyncEndpoint) -> String {
-            switch ep { case .local(let b), .sftp(_, let b): return b; case .s3(_, _, let p): return p }
-        }
-        let leftBase = base(left), rightBase = base(right)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let fm = FileManager.default
-            var done = 0, failed = 0
-            for e in jobs {
-                let srcBase: String, destBase: String
-                if e.direction == .toRight { srcBase = leftBase; destBase = rightBase }
-                else { srcBase = rightBase; destBase = leftBase }
-                let source = (srcBase as NSString).appendingPathComponent(e.rel)
-                let target = (destBase as NSString).appendingPathComponent(e.rel)
-                let targetDir = (target as NSString).deletingLastPathComponent
-                do {
-                    try fm.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
-                    if fm.fileExists(atPath: target) { try fm.removeItem(atPath: target) }
-                    try fm.copyItem(atPath: source, toPath: target)
-                    done += 1
-                } catch { failed += 1 }
-            }
-            DispatchQueue.main.async {
+        guard !jobs.isEmpty else { return }
+        let op = FileOperation(type: .copy, sources: [], destination: "")
+        op.customTitle = tr("Synchronizing")
+        op.totalUnits = jobs.count
+        op.transferUnits = jobs.map { e in
+            let (src, dst): (SyncEndpoint, SyncEndpoint) =
+                e.direction == .toRight ? (left, right) : (right, left)
+            let rel = e.rel
+            return FileOperation.Unit(label: rel) { [weak self] in
                 guard let self = self else { return }
-                let a = NSAlert()
-                a.messageText = done == 1 ? tr("Synchronized 1 file") : tr("Synchronized %d files", done)
-                if failed > 0 { a.informativeText = tr("%d failed.", failed) }
-                a.beginSheetModal(for: window) { _ in self.recompare() }
+                try await self.runFileTransfer(rel: rel, from: src, to: dst)
             }
+        }
+        syncButton.isEnabled = false
+        onRunOperation?(op) { [weak self] in
+            self?.recompare()
+            self?.syncButton.isEnabled = true
         }
     }
 
