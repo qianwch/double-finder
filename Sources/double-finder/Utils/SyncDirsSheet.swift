@@ -31,6 +31,7 @@ final class SyncDirsSheet: NSWindowController {
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let hideEqual = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let ignoreTemp = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let sizeOnly = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let syncButton = NSButton(title: "", target: nil, action: nil)
 
@@ -66,14 +67,17 @@ final class SyncDirsSheet: NSWindowController {
 
         statusLabel.stringValue = tr("Comparing…")
         hideEqual.title = tr("Hide identical")
+        ignoreTemp.title = tr("Ignore temporary files")
         sizeOnly.title = tr("Ignore timestamps")
         syncButton.title = tr("Synchronize")
         hideEqual.state = .on
+        ignoreTemp.state = .on           // skip junk by default (.DS_Store, node_modules, …)
         sizeOnly.state = anyS3 ? .on : .off
         sizeOnly.isEnabled = !anyS3      // S3 LastModified ≠ content mtime → force size-only
         hideEqual.target = self; hideEqual.action = #selector(optionsChanged)
+        ignoreTemp.target = self; ignoreTemp.action = #selector(optionsChanged)
         sizeOnly.target = self; sizeOnly.action = #selector(optionsChanged)
-        [hideEqual, sizeOnly].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
+        [hideEqual, ignoreTemp, sizeOnly].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -114,8 +118,10 @@ final class SyncDirsSheet: NSWindowController {
 
             hideEqual.topAnchor.constraint(equalTo: leftLabel.bottomAnchor, constant: 8),
             hideEqual.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            ignoreTemp.centerYAnchor.constraint(equalTo: hideEqual.centerYAnchor),
+            ignoreTemp.leadingAnchor.constraint(equalTo: hideEqual.trailingAnchor, constant: 16),
             sizeOnly.centerYAnchor.constraint(equalTo: hideEqual.centerYAnchor),
-            sizeOnly.leadingAnchor.constraint(equalTo: hideEqual.trailingAnchor, constant: 16),
+            sizeOnly.leadingAnchor.constraint(equalTo: ignoreTemp.trailingAnchor, constant: 16),
 
             scroll.topAnchor.constraint(equalTo: hideEqual.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
@@ -133,16 +139,24 @@ final class SyncDirsSheet: NSWindowController {
 
     // MARK: - Compare
 
-    /// True for OS/metadata cruft that should never be synced (matched by basename).
+    /// OS/metadata cruft, editor/download temp files, and VCS/dependency/build
+    /// directories that should never be synced. Pure → unit-tested
+    /// (`SyncDirsJunkTests`). Matches the contract documented in spec/features.md.
     static func isJunk(rel: String) -> Bool {
-        let name = (rel as NSString).lastPathComponent
+        let comps = rel.split(separator: "/").map(String.init)
+        // Any junk directory anywhere along the path drops the whole subtree.
+        let junkDirs: Set<String> = [
+            ".Trashes", ".Spotlight-V100", "__MACOSX",                         // system junk
+            ".git", ".svn", ".hg", "node_modules", "bower_components",         // VCS / deps
+            "__pycache__", ".venv", ".idea", ".gradle", ".cache",              // build / tooling
+        ]
+        if comps.contains(where: { junkDirs.contains($0) }) { return true }
+        guard let name = comps.last else { return false }
         if name.hasPrefix("._") { return true }          // AppleDouble resource forks
-        switch name {
-        case ".DS_Store", ".localized", "Thumbs.db", ".Spotlight-V100", ".Trashes":
-            return true
-        default:
-            return false
-        }
+        if name.hasSuffix("~") { return true }           // editor backup (foo~)
+        if name == ".DS_Store" || name == "Thumbs.db" || name == "desktop.ini" { return true }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return ["tmp", "swp", "bak", "part"].contains(ext)   // temp / partial downloads
     }
 
     @objc private func optionsChanged() { recompare() }
@@ -150,11 +164,13 @@ final class SyncDirsSheet: NSWindowController {
     private func recompare() {
         statusLabel.stringValue = tr("Comparing…")
         scanTask?.cancel()
-        let l = left, r = right, ignoreTime = anyS3 || sizeOnly.state == .on
+        let l = left, r = right
+        let ignoreTime = anyS3 || sizeOnly.state == .on
+        let filterJunk = ignoreTemp.state == .on
         scanTask = Task { [weak self] in
             do {
-                async let lm = SyncScan.scan(l)
-                async let rm = SyncScan.scan(r)
+                async let lm = SyncScan.scan(l, filterJunk: filterJunk)
+                async let rm = SyncScan.scan(r, filterJunk: filterJunk)
                 let (lmap, rmap) = try await (lm, rm)
                 if Task.isCancelled { return }
                 let result = SyncDirsSheet.compare(left: lmap, right: rmap, ignoreTime: ignoreTime)
@@ -187,11 +203,13 @@ final class SyncDirsSheet: NSWindowController {
             switch (lv, rv) {
             case let (lv?, rv?):
                 let sameTime = abs(lv.mtime.timeIntervalSince(rv.mtime)) < 2
+                // ignoreTime: equal sizes ⇒ identical (skip). Differing sizes still
+                // pick a direction by mtime (newer wins), per spec/features.md.
                 if lv.size == rv.size && (ignoreTime || sameTime) {
                     comp = .equal; dir = .skip
-                } else if !ignoreTime && lv.mtime > rv.mtime.addingTimeInterval(2) {
+                } else if lv.mtime > rv.mtime.addingTimeInterval(2) {
                     comp = .leftNewer; dir = .toRight
-                } else if !ignoreTime && rv.mtime > lv.mtime.addingTimeInterval(2) {
+                } else if rv.mtime > lv.mtime.addingTimeInterval(2) {
                     comp = .rightNewer; dir = .toLeft
                 } else {
                     comp = .sizeDiffer; dir = .toRight
