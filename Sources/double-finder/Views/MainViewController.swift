@@ -1574,6 +1574,9 @@ class MainViewController: NSViewController {
         let sheet = SyncDirsSheet(left: .local(base: l.currentPath), right: .local(base: r.currentPath),
                                   leftLabel: l.currentPath, rightLabel: r.currentPath)
         activeSyncSheet = sheet
+        sheet.onRunOperation = { [weak self] op, done in
+            self?.runOperation(op) { done() }
+        }
         sheet.onClosed = { [weak self] in
             self?.leftPanelVC.panelState.refresh()
             self?.rightPanelVC.panelState.refresh()
