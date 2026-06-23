@@ -1571,7 +1571,8 @@ class MainViewController: NSViewController {
             NSSound.beep(); return   // local folders only
         }
         guard let window = view.window else { return }
-        let sheet = SyncDirsSheet(leftBase: l.currentPath, rightBase: r.currentPath)
+        let sheet = SyncDirsSheet(left: .local(base: l.currentPath), right: .local(base: r.currentPath),
+                                  leftLabel: l.currentPath, rightLabel: r.currentPath)
         activeSyncSheet = sheet
         sheet.onClosed = { [weak self] in
             self?.leftPanelVC.panelState.refresh()

@@ -19,22 +19,26 @@ final class SyncDirsSheet: NSWindowController {
         var rightExists: Bool { rightSize != nil }
     }
 
-    private let leftBase: String
-    private let rightBase: String
+    private let left: SyncEndpoint
+    private let right: SyncEndpoint
+    private let leftLabelText: String
+    private let rightLabelText: String
     private var entries: [Entry] = []
     private var rows: [Int] = []            // indices into entries that are shown
+    private var scanTask: Task<Void, Never>?
+    private var anyS3: Bool { left.isS3 || right.isS3 }
 
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let hideEqual = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    private let recurse = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let sizeOnly = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let syncButton = NSButton(title: "", target: nil, action: nil)
 
     var onClosed: (() -> Void)?
 
-    init(leftBase: String, rightBase: String) {
-        self.leftBase = leftBase
-        self.rightBase = rightBase
+    init(left: SyncEndpoint, right: SyncEndpoint, leftLabel: String, rightLabel: String) {
+        self.left = left; self.right = right
+        self.leftLabelText = leftLabel; self.rightLabelText = rightLabel
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 460),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = tr("Synchronize Directories")
@@ -49,8 +53,8 @@ final class SyncDirsSheet: NSWindowController {
     private func setupUI() {
         guard let content = window?.contentView else { return }
 
-        let leftLabel = NSTextField(labelWithString: leftBase)
-        let rightLabel = NSTextField(labelWithString: rightBase)
+        let leftLabel = NSTextField(labelWithString: leftLabelText)
+        let rightLabel = NSTextField(labelWithString: rightLabelText)
         for (lbl, align) in [(leftLabel, NSTextAlignment.left), (rightLabel, .right)] {
             lbl.font = .systemFont(ofSize: 11); lbl.textColor = .secondaryLabelColor
             lbl.alignment = align; lbl.lineBreakMode = .byTruncatingMiddle
@@ -60,13 +64,14 @@ final class SyncDirsSheet: NSWindowController {
 
         statusLabel.stringValue = tr("Comparing…")
         hideEqual.title = tr("Hide identical")
-        recurse.title = tr("Include subfolders")
+        sizeOnly.title = tr("Ignore timestamps")
         syncButton.title = tr("Synchronize")
         hideEqual.state = .on
-        recurse.state = .on
+        sizeOnly.state = anyS3 ? .on : .off
+        sizeOnly.isEnabled = !anyS3      // S3 LastModified ≠ content mtime → force size-only
         hideEqual.target = self; hideEqual.action = #selector(optionsChanged)
-        recurse.target = self; recurse.action = #selector(optionsChanged)
-        [hideEqual, recurse].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
+        sizeOnly.target = self; sizeOnly.action = #selector(optionsChanged)
+        [hideEqual, sizeOnly].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -105,12 +110,12 @@ final class SyncDirsSheet: NSWindowController {
             rightLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             rightLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leftLabel.trailingAnchor, constant: 12),
 
-            recurse.topAnchor.constraint(equalTo: leftLabel.bottomAnchor, constant: 8),
-            recurse.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            hideEqual.centerYAnchor.constraint(equalTo: recurse.centerYAnchor),
-            hideEqual.leadingAnchor.constraint(equalTo: recurse.trailingAnchor, constant: 16),
+            hideEqual.topAnchor.constraint(equalTo: leftLabel.bottomAnchor, constant: 8),
+            hideEqual.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            sizeOnly.centerYAnchor.constraint(equalTo: hideEqual.centerYAnchor),
+            sizeOnly.leadingAnchor.constraint(equalTo: hideEqual.trailingAnchor, constant: 16),
 
-            scroll.topAnchor.constraint(equalTo: recurse.bottomAnchor, constant: 8),
+            scroll.topAnchor.constraint(equalTo: hideEqual.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             scroll.bottomAnchor.constraint(equalTo: syncButton.topAnchor, constant: -12),
@@ -142,15 +147,28 @@ final class SyncDirsSheet: NSWindowController {
 
     private func recompare() {
         statusLabel.stringValue = tr("Comparing…")
-        let l = leftBase, r = rightBase
-        Task { [weak self] in
-            let lmap = (try? await SyncScan.scan(.local(base: l))) ?? [:]
-            let rmap = (try? await SyncScan.scan(.local(base: r))) ?? [:]
-            let result = SyncDirsSheet.compare(left: lmap, right: rmap, ignoreTime: false)
-            await MainActor.run {
-                guard let self = self else { return }
-                self.entries = result
-                self.applyFilter()
+        scanTask?.cancel()
+        let l = left, r = right, ignoreTime = anyS3 || sizeOnly.state == .on
+        scanTask = Task { [weak self] in
+            do {
+                async let lm = SyncScan.scan(l)
+                async let rm = SyncScan.scan(r)
+                let (lmap, rmap) = try await (lm, rm)
+                if Task.isCancelled { return }
+                let result = SyncDirsSheet.compare(left: lmap, right: rmap, ignoreTime: ignoreTime)
+                await MainActor.run {
+                    guard let self = self else { return }
+                    self.entries = result
+                    self.applyFilter()
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self = self, let w = self.window else { return }
+                    self.statusLabel.stringValue = tr("Compare failed")
+                    let a = NSAlert(); a.messageText = tr("Compare failed")
+                    a.informativeText = tr((error as? LocalizedError)?.errorDescription ?? "\(error)")
+                    a.beginSheetModal(for: w) { _ in }
+                }
             }
         }
     }
@@ -230,7 +248,11 @@ final class SyncDirsSheet: NSWindowController {
         guard !jobs.isEmpty, let window = window else { return }
         syncButton.isEnabled = false
         statusLabel.stringValue = tr("Synchronizing %d…", jobs.count)
-        let leftBase = self.leftBase, rightBase = self.rightBase
+        // Temporary local-only transfer; Task 6 replaces this with backend routing.
+        func base(_ ep: SyncEndpoint) -> String {
+            switch ep { case .local(let b), .sftp(_, let b): return b; case .s3(_, _, let p): return p }
+        }
+        let leftBase = base(left), rightBase = base(right)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fm = FileManager.default
             var done = 0, failed = 0
