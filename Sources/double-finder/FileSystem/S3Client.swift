@@ -75,6 +75,20 @@ final class S3Client {
         return keys
     }
 
+    /// Like `listAllKeys` but keeps each object's size + modified date.
+    /// No delimiter → recurses the whole tree under `prefix`, paginated.
+    func listAllObjects(bucket: String, prefix: String) async throws -> [S3ObjectInfo] {
+        var out: [S3ObjectInfo] = []; var token: String? = nil
+        repeat {
+            var q = ["list-type": "2", "prefix": prefix]
+            if let t = token { q["continuation-token"] = t }
+            let (data, _) = try await send(method: "GET", bucket: bucket, key: "", query: q)
+            let r = S3XML.listObjects(data)
+            out += r.objects; token = r.nextToken
+        } while token != nil
+        return out
+    }
+
     func getObject(bucket: String, key: String, toLocalPath: String) async throws {
         let (data, _) = try await send(method: "GET", bucket: bucket, key: key)
         try data.write(to: URL(fileURLWithPath: toLocalPath))
