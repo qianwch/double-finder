@@ -1588,8 +1588,10 @@ class MainViewController: NSViewController {
         let sheet = SyncDirsSheet(left: le, right: re,
                                   leftLabel: l.currentPath, rightLabel: r.currentPath)
         activeSyncSheet = sheet
-        sheet.onRunOperation = { [weak self] op, done in
-            self?.runOperation(op) { done() }
+        sheet.onRunOperation = { [weak self, weak sheet] op, done in
+            // Attach progress to the Synchronize sheet's own window (sheet-on-sheet),
+            // not the main window which still hosts the Synchronize sheet.
+            self?.runOperation(op, on: sheet?.window) { done() }
         }
         sheet.onClosed = { [weak self] in
             self?.leftPanelVC.panelState.refresh()
@@ -1749,8 +1751,12 @@ class MainViewController: NSViewController {
         Favorites.remove(appState.activePanelState.currentPath)
     }
 
-    func runOperation(_ op: FileOperation, completion: @escaping () -> Void) {
-        guard let window = view.window else { return }
+    /// Runs `op` with a modal ProgressSheet. `parentWindow` lets a caller attach
+    /// the sheet to a window other than the main one — e.g. the Synchronize sheet's
+    /// own window, since a window can't host two sheets at once (the progress sheet
+    /// would otherwise stay hidden behind the still-open Synchronize sheet).
+    func runOperation(_ op: FileOperation, on parentWindow: NSWindow? = nil, completion: @escaping () -> Void) {
+        guard let window = parentWindow ?? view.window else { return }
         let sheet = ProgressSheet(operation: op)
         // Retain the window controller for the sheet's lifetime. Without this it
         // deallocates as soon as this method returns, killing its completion
