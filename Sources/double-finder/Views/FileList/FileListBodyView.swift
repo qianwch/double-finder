@@ -106,10 +106,18 @@ final class FileListBodyView: NSView {
         resizeFrame()
     }
 
-    private func resizeFrame() {
-        let w = max(enclosingScrollView?.contentSize.width ?? bounds.width, 480)
-        let h = CGFloat(items.count) * geometry.rowHeight
-        setFrameSize(NSSize(width: w, height: h))
+    /// Sizes the document view to fill at least the visible scroll area. The height
+    /// is `max(contentHeight, clipHeight)` — NOT just the content — so the blank space
+    /// below a short file list still belongs to THIS view (not the scroll-view
+    /// background). That makes a click in that blank area reach `mouseDown` and
+    /// activate the panel (see the "click below the last row" branch there).
+    /// Called on data reload (`reloadLayout`) and on panel resize (`FileListView.layout`).
+    func resizeFrame() {
+        let clip = enclosingScrollView?.contentSize ?? bounds.size
+        let w = max(clip.width, 480)
+        let contentH = CGFloat(items.count) * geometry.rowHeight
+        let newSize = NSSize(width: w, height: max(contentH, clip.height))
+        if frame.size != newSize { setFrameSize(newSize) }
     }
 
     private func invalidateRow(_ row: Int) {

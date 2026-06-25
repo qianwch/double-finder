@@ -77,25 +77,16 @@ final class FileListView: NSScrollView {
     override func layout() {
         super.layout()
         positionHeader()
-        // Keep body width in sync with the clip view width so columns fill.
-        syncBodyWidth()
+        // Keep the body sized to the clip view: full width (columns fill edge-to-edge)
+        // and at least the visible height (blank area below rows stays part of the body,
+        // so clicking it activates the panel).
+        body.resizeFrame()
     }
 
     /// Positions the header at the very top of the scroll view bounds (full-width, fixed height).
     private func positionHeader() {
         let h = Self.headerHeight
         headerView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: h)
-    }
-
-    /// Ensures body frame width matches the visible content width (so owner-drawn
-    /// columns fill the panel edge-to-edge — same as `resizeFrame()` in the body).
-    private func syncBodyWidth() {
-        let clipW = contentSize.width
-        if body.frame.width != clipW {
-            var f = body.frame
-            f.size.width = clipW
-            body.setFrameSize(f.size)
-        }
     }
 
     /// Applies header visibility and content insets for the active view mode.
