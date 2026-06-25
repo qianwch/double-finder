@@ -306,6 +306,8 @@
   "Synchronizing %d…": "%d 件を同期中…",
   "Terminal App": "ターミナルアプリ",
   "Terminal app:": "ターミナルアプリ：",
+  "Editor app:": "エディタ：",
+  "System Default": "システムデフォルト",
   "These items cannot be recovered — this does not use the Trash.": "これらの項目は復元できません — ゴミ箱は使用されません。",
   "This archive holds a single stream — nothing to rename inside it.": "このアーカイブは単一ストリームのため、内部の名前は変更できません。",
   "This permanently removes them on the remote host and cannot be undone.": "リモートホストから完全に削除され、元に戻すことはできません。",

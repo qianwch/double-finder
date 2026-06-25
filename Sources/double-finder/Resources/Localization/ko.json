@@ -306,6 +306,8 @@
   "Synchronizing %d…": "%d개 동기화 중…",
   "Terminal App": "터미널 앱",
   "Terminal app:": "터미널 앱：",
+  "Editor app:": "편집기：",
+  "System Default": "시스템 기본값",
   "These items cannot be recovered — this does not use the Trash.": "이 항목들은 복구할 수 없습니다 — 휴지통을 사용하지 않습니다.",
   "This archive holds a single stream — nothing to rename inside it.": "이 압축 파일은 단일 스트림이라 내부에서 이름을 바꿀 수 없습니다.",
   "This permanently removes them on the remote host and cannot be undone.": "원격 호스트에서 영구적으로 제거되며 실행 취소할 수 없습니다.",

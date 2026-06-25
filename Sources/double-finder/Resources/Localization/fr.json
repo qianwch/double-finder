@@ -306,6 +306,8 @@
   "Synchronizing %d…": "Synchronisation de %d…",
   "Terminal App": "Application Terminal",
   "Terminal app:": "Application Terminal :",
+  "Editor app:": "Éditeur :",
+  "System Default": "Par défaut du système",
   "These items cannot be recovered — this does not use the Trash.": "Ces éléments ne peuvent pas être récupérés — la corbeille n’est pas utilisée.",
   "This archive holds a single stream — nothing to rename inside it.": "Cette archive contient un flux unique — rien à y renommer.",
   "This permanently removes them on the remote host and cannot be undone.": "Cela les supprime définitivement de l’hôte distant et est irréversible.",

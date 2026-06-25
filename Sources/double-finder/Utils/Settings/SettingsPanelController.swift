@@ -32,8 +32,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var built: [String: NSView] = [:]
     private var currentPaneID: String?
 
-    // MARK: - Terminals
+    // MARK: - Terminals / editors
     private let installedTerminalsValue: [String]
+    private let installedEditorsValue: [String]
 
     // MARK: - UI
     private let sidebarWidth: CGFloat = 170
@@ -42,8 +43,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Init
 
-    init(installedTerminals: [String]) {
+    init(installedTerminals: [String], installedEditors: [String] = []) {
         self.installedTerminalsValue = installedTerminals.isEmpty ? ["Terminal"] : installedTerminals
+        self.installedEditorsValue = installedEditors
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 460),
             styleMask: [.titled, .closable, .resizable],
@@ -66,7 +68,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildCategories() {
         categories = [
             SettingsCategory(id: "general", title: tr("General"), symbol: "gearshape") { [weak self] in
-                GeneralSettingsView(onChange: { self?.onChange?() }, terminals: self?.installedTerminalsValue ?? ["Terminal"])
+                GeneralSettingsView(onChange: { self?.onChange?() },
+                                    terminals: self?.installedTerminalsValue ?? ["Terminal"],
+                                    editors: self?.installedEditorsValue ?? [])
             },
             SettingsCategory(id: "appearance", title: tr("Appearance"), symbol: "circle.lefthalf.filled") { [weak self] in
                 AppearanceSettingsView(onChange: { self?.onChange?() })

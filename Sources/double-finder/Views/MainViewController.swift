@@ -843,10 +843,16 @@ class MainViewController: NSViewController {
         remoteEditWatcher.updateBaseline(tempPath: tempPath, modified: mod, size: size)
     }
 
+    /// Opens `url` (local file, or a downloaded temp copy of a remote file) in the
+    /// editor chosen in Settings ▸ General. Empty setting / chosen app missing ⇒ the
+    /// system default app for the file type. Used by both local (F4) and remote
+    /// (F4 over SFTP/S3) editing.
     private func openInEditor(_ url: URL) {
-        let macvimURL = URL(fileURLWithPath: "/Applications/MacVim.app")
-        if FileManager.default.fileExists(atPath: macvimURL.path) {
-            NSWorkspace.shared.open([url], withApplicationAt: macvimURL,
+        let name = AppSettings.editorApp
+        if !name.isEmpty,
+           let bundleID = Self.editorCandidates.first(where: { $0.name == name })?.bundleID,
+           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            NSWorkspace.shared.open([url], withApplicationAt: appURL,
                                     configuration: NSWorkspace.OpenConfiguration())
         } else {
             NSWorkspace.shared.open(url)
@@ -1705,7 +1711,8 @@ class MainViewController: NSViewController {
     private var settingsWindow: SettingsWindowController?
     private func settings() -> SettingsWindowController {
         if let w = settingsWindow { return w }
-        let win = SettingsWindowController(installedTerminals: installedTerminals())
+        let win = SettingsWindowController(installedTerminals: installedTerminals(),
+                                           installedEditors: installedEditors())
         win.onChange = { [weak self] in self?.reapplyAllSettings() }
         win.onToolbarChanged = { [weak self] in self?.configureToolbar() }
         // onShortcutsChanged / onFavoritesChanged: no refresh needed
@@ -1891,6 +1898,27 @@ extension MainViewController {
     }
 
     func setTerminalApp(_ name: String) { AppSettings.terminalApp = name }
+
+    /// Known editors F4 can launch (display name → bundle id).
+    static let editorCandidates: [(name: String, bundleID: String)] = [
+        ("MacVim", "org.vim.MacVim"),
+        ("Visual Studio Code", "com.microsoft.VSCode"),
+        ("Sublime Text", "com.sublimetext.4"),
+        ("Zed", "dev.zed.Zed"),
+        ("Nova", "com.panic.Nova"),
+        ("BBEdit", "com.barebones.bbedit"),
+        ("TextMate", "com.macromates.TextMate"),
+        ("CotEditor", "com.coteditor.CotEditor"),
+        ("TextEdit", "com.apple.TextEdit"),
+    ]
+
+    /// Editors actually installed on this machine (excludes the "System Default" entry,
+    /// which the Settings popup prepends).
+    func installedEditors() -> [String] {
+        Self.editorCandidates
+            .filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
+            .map { $0.name }
+    }
 
     /// Opens the configured terminal app at the active panel's folder.
     @objc func actionOpenTerminal() {

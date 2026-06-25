@@ -306,6 +306,8 @@
   "Synchronizing %d…": "Synchronisiere %d…",
   "Terminal App": "Terminal-App",
   "Terminal app:": "Terminal-App:",
+  "Editor app:": "Editor:",
+  "System Default": "Systemstandard",
   "These items cannot be recovered — this does not use the Trash.": "Diese Objekte können nicht wiederhergestellt werden — der Papierkorb wird nicht verwendet.",
   "This archive holds a single stream — nothing to rename inside it.": "Dieses Archiv enthält einen einzelnen Datenstrom – darin kann nichts umbenannt werden.",
   "This permanently removes them on the remote host and cannot be undone.": "Dies entfernt sie endgültig vom Remote-Host und kann nicht rückgängig gemacht werden.",

@@ -6,7 +6,7 @@ final class GeneralSettingsView: NSView {
     private let onChange: () -> Void
     private let iconSizes: [(String, Int)] = [("Small (16)",16),("Medium (24)",24),("Large (32)",32),("Extra Large (40)",40)]
 
-    init(onChange: @escaping () -> Void, terminals: [String]) {
+    init(onChange: @escaping () -> Void, terminals: [String], editors: [String] = []) {
         self.onChange = onChange
         super.init(frame: .zero)
 
@@ -44,6 +44,18 @@ final class GeneralSettingsView: NSView {
         if termPop.indexOfSelectedItem < 0 { termPop.selectItem(at: 0) }
         termPop.target = self; termPop.action = #selector(changeTerminal(_:))
 
+        // Editor app (F4). First entry is "System Default" → stored as "".
+        let editorPop = NSPopUpButton()
+        editorPop.addItem(withTitle: tr("System Default"))
+        editorPop.addItems(withTitles: editors)
+        if AppSettings.editorApp.isEmpty {
+            editorPop.selectItem(at: 0)
+        } else {
+            editorPop.selectItem(withTitle: AppSettings.editorApp)
+            if editorPop.indexOfSelectedItem < 0 { editorPop.selectItem(at: 0) }
+        }
+        editorPop.target = self; editorPop.action = #selector(changeEditor(_:))
+
         let grid = NSGridView(views: [
             [NSTextField(labelWithString: tr("Language:")), langPop],
             [NSTextField(labelWithString: tr("Default view:")), viewPop],
@@ -51,6 +63,7 @@ final class GeneralSettingsView: NSView {
             [foldersBox],
             [trashBox],
             [NSTextField(labelWithString: tr("Terminal app:")), termPop],
+            [NSTextField(labelWithString: tr("Editor app:")), editorPop],
         ])
         grid.column(at: 0).xPlacement = .trailing
         grid.rowSpacing = 10; grid.columnSpacing = 8
@@ -79,4 +92,8 @@ final class GeneralSettingsView: NSView {
     @objc private func toggleFolders(_ s: NSButton) { AppSettings.foldersFirst = (s.state == .on); onChange() }
     @objc private func toggleConfirmTrash(_ s: NSButton) { AppSettings.confirmTrash = (s.state == .on) }
     @objc private func changeTerminal(_ s: NSPopUpButton) { AppSettings.terminalApp = s.titleOfSelectedItem ?? "Terminal" }
+    /// Index 0 ("System Default") stores "" — openInEditor falls back to NSWorkspace.open.
+    @objc private func changeEditor(_ s: NSPopUpButton) {
+        AppSettings.editorApp = s.indexOfSelectedItem <= 0 ? "" : (s.titleOfSelectedItem ?? "")
+    }
 }
