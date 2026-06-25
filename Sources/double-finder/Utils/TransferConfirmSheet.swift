@@ -39,6 +39,7 @@ final class TransferConfirmSheet: NSWindowController {
         content.addSubview(titleLabel)
 
         destField.stringValue = defaultDest
+        destField.delegate = self
         destField.bezelStyle = .roundedBezel
         destField.font = .systemFont(ofSize: 12)
         destField.translatesAutoresizingMaskIntoConstraints = false
@@ -94,5 +95,16 @@ final class TransferConfirmSheet: NSWindowController {
     func beginSheet(on parent: NSWindow, completion: @escaping () -> Void = {}) {
         parent.beginSheet(window!) { _ in completion() }
         window?.makeFirstResponder(destField)
+    }
+}
+
+extension TransferConfirmSheet: NSTextFieldDelegate {
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // F5's default Cocoa key binding is `complete:` (text autocompletion). With a
+        // path field and no completion source it wipes the destination — and users
+        // reflexively press F5 here (it's the Copy key that opened this sheet). Swallow
+        // it so the path stays intact.
+        if commandSelector == #selector(NSResponder.complete(_:)) { return true }
+        return false
     }
 }
