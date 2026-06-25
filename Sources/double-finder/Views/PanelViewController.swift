@@ -45,6 +45,47 @@ class PanelViewController: NSViewController {
         bindPanelState()
         updateActiveState()
         fileTableView.isActivePanel = isActive
+        observeVolumeChanges()
+    }
+
+    /// Tokens for the NSWorkspace mount/unmount/rename observers (removed in deinit).
+    private var volumeObservers: [NSObjectProtocol] = []
+
+    /// Rebuilds the drive bar whenever a volume is mounted, unmounted or renamed,
+    /// so ejected disks disappear (and inserted ones appear) without restarting.
+    /// On unmount, also falls a panel back to Home if its current directory was on
+    /// the ejected volume (otherwise it'd be stuck on a now-dead path).
+    private func observeVolumeChanges() {
+        let nc = NSWorkspace.shared.notificationCenter
+        let names: [Notification.Name] = [
+            NSWorkspace.didMountNotification,
+            NSWorkspace.didUnmountNotification,
+            NSWorkspace.didRenameVolumeNotification,
+        ]
+        for name in names {
+            let token = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self = self else { return }
+                if note.name == NSWorkspace.didUnmountNotification {
+                    self.recoverIfCurrentPathLost()
+                }
+                self.rebuildDriveBar()
+            }
+            volumeObservers.append(token)
+        }
+    }
+
+    /// If this panel is on a local path that no longer exists (its volume was just
+    /// ejected), navigate back to the user's home directory.
+    private func recoverIfCurrentPathLost() {
+        guard !panelState.isRemote else { return }
+        if !FileManager.default.fileExists(atPath: panelState.currentPath) {
+            panelState.navigateLocal(to: NSHomeDirectory())
+        }
+    }
+
+    deinit {
+        let nc = NSWorkspace.shared.notificationCenter
+        volumeObservers.forEach { nc.removeObserver($0) }
     }
 
     private func setupUI() {
