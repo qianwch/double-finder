@@ -240,8 +240,7 @@ struct S3TransferProvider: TransferProvider {
                                 let dir = (local as NSString).deletingLastPathComponent
                                 try FileManager.default.createDirectory(atPath: dir,
                                                                         withIntermediateDirectories: true)
-                                try await capturedClient.getObject(bucket: b, key: k, toLocalPath: local)
-                                report(sz)
+                                try await capturedClient.getObject(bucket: b, key: k, toLocalPath: local, progress: report)
                             })
                         }
                     } else {
@@ -260,8 +259,7 @@ struct S3TransferProvider: TransferProvider {
                             let dir = (local as NSString).deletingLastPathComponent
                             try FileManager.default.createDirectory(atPath: dir,
                                                                     withIntermediateDirectories: true)
-                            try await capturedClient.getObject(bucket: b, key: key, toLocalPath: local)
-                            report(sz)
+                            try await capturedClient.getObject(bucket: b, key: key, toLocalPath: local, progress: report)
                         })
                     }
                 }
@@ -287,8 +285,7 @@ struct S3TransferProvider: TransferProvider {
                             let sz = FileOperation.sizeOnDisk(f)
                             units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent,
                                                             bytes: sz) { report in
-                                try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: f)
-                                report(sz)
+                                try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: f, progress: report)
                             })
                         }
                     } else {
@@ -297,8 +294,7 @@ struct S3TransferProvider: TransferProvider {
                         let sz = FileOperation.sizeOnDisk(item.path)
                         units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent,
                                                         bytes: sz) { report in
-                            try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: item.path)
-                            report(sz)
+                            try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: item.path, progress: report)
                         })
                     }
                 }

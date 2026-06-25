@@ -264,8 +264,11 @@ final class SyncDirsSheet: NSWindowController {
     // MARK: - Synchronize
 
     /// One file `rel` from `src` to `dst`. v1: one side is always local.
-    private func runFileTransfer(rel: String, from src: SyncEndpoint, to dst: SyncEndpoint) async throws {
+    /// S3 sides stream byte progress via `report`; local/SFTP report once on completion.
+    private func runFileTransfer(rel: String, from src: SyncEndpoint, to dst: SyncEndpoint,
+                                 report: @escaping @Sendable (Int64) -> Void) async throws {
         let fm = FileManager.default
+        func localSize(_ path: String) -> Int64 { FileOperation.sizeOnDisk(path) }
         switch (src, dst) {
         case (.local(let sb), .local(let db)):
             let s = (sb as NSString).appendingPathComponent(rel)
@@ -273,6 +276,7 @@ final class SyncDirsSheet: NSWindowController {
             try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             if fm.fileExists(atPath: t) { try fm.removeItem(atPath: t) }
             try fm.copyItem(atPath: s, toPath: t)
+            report(localSize(s))
 
         case (.local(let sb), .sftp(let conn, let db)):
             let s = (sb as NSString).appendingPathComponent(rel)
@@ -280,6 +284,7 @@ final class SyncDirsSheet: NSWindowController {
             let remoteDir = (remote as NSString).deletingLastPathComponent
             _ = try await SFTPFS(connection: conn).runCommand("mkdir -p \"\(remoteDir)\"")
             try await SFTPFS(connection: conn).upload(localPath: s, to: remoteDir)
+            report(localSize(s))
 
         case (.sftp(let conn, let sb), .local(let db)):
             let remote = (sb as NSString).appendingPathComponent(rel)
@@ -287,15 +292,16 @@ final class SyncDirsSheet: NSWindowController {
             let localDir = (t as NSString).deletingLastPathComponent
             try fm.createDirectory(atPath: localDir, withIntermediateDirectories: true)
             try await SFTPFS(connection: conn).copy(from: remote, to: localDir)
+            report(localSize(t))
 
         case (.local(let sb), .s3(let client, let bucket, let prefix)):
             let s = (sb as NSString).appendingPathComponent(rel)
-            try await client.putObject(bucket: bucket, key: prefix + rel, fromLocalPath: s)
+            try await client.putObject(bucket: bucket, key: prefix + rel, fromLocalPath: s, progress: report)
 
         case (.s3(let client, let bucket, let prefix), .local(let db)):
             let t = (db as NSString).appendingPathComponent(rel)
             try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            try await client.getObject(bucket: bucket, key: prefix + rel, toLocalPath: t)
+            try await client.getObject(bucket: bucket, key: prefix + rel, toLocalPath: t, progress: report)
 
         default:
             throw FSUnsupportedError(message: "Unsupported sync direction")
@@ -316,8 +322,7 @@ final class SyncDirsSheet: NSWindowController {
             let bytes = (e.direction == .toRight ? e.leftSize : e.rightSize) ?? 0
             return FileOperation.Unit(label: rel, bytes: bytes) { [weak self] report in
                 guard let self = self else { return }
-                try await self.runFileTransfer(rel: rel, from: src, to: dst)
-                report(bytes)
+                try await self.runFileTransfer(rel: rel, from: src, to: dst, report: report)
             }
         }
         syncButton.isEnabled = false
