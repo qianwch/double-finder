@@ -37,20 +37,29 @@ class FileOperation: ObservableObject {
     /// rest of the batch; these are reported together once the operation ends.
     @Published var failures: [(path: String, error: Error)] = []
     @Published var completedUnits: Int = 0
-    /// Bytes finished so far across completed units (when units carry sizes).
-    /// Drives the byte/sec speed readout in unit-count mode.
-    @Published var completedBytes: Int64 = 0
     var totalUnits: Int = 0
     var concurrency: Int = 6
 
+    // Monotonic total bytes transferred, fed by each Unit's `report` reporter.
+    // MUST be `nonisolated`: the reporter is invoked off the main actor (inside the
+    // multipart TaskGroup / the download byte loop), so a MainActor-isolated method
+    // would be a concurrency violation. The NSLock makes off-actor access safe;
+    // ProgressSheet (MainActor) reads `transferredBytes` each timer tick.
+    private let bytesLock = NSLock()
+    nonisolated(unsafe) private var _transferredBytes: Int64 = 0
+    nonisolated var transferredBytes: Int64 { bytesLock.lock(); defer { bytesLock.unlock() }; return _transferredBytes }
+    nonisolated func reportBytes(_ delta: Int64) { bytesLock.lock(); _transferredBytes += delta; bytesLock.unlock() }
+
     /// One file-level unit of a concurrent transfer (e.g. one S3 getObject/putObject).
-    /// `bytes` is the file's size when known (0 if unknown) — used to show a
-    /// byte/sec transfer speed in the progress sheet's unit-count mode.
+    /// `bytes` is the file's size when known (0 if unknown) — used to size the bar and
+    /// show a transfer speed. `body` receives a `report` reporter it calls with byte
+    /// deltas as data moves (streaming S3) or once with the file size (local/SFTP).
     struct Unit {
         let label: String
         let bytes: Int64
-        let body: () async throws -> Void
-        init(label: String, bytes: Int64 = 0, body: @escaping () async throws -> Void) {
+        let body: (_ report: @Sendable (Int64) -> Void) async throws -> Void
+        init(label: String, bytes: Int64 = 0,
+             body: @escaping (_ report: @Sendable (Int64) -> Void) async throws -> Void) {
             self.label = label; self.bytes = bytes; self.body = body
         }
     }
@@ -211,13 +220,12 @@ class FileOperation: ObservableObject {
             index += 1
             currentFile = unit.label
             group.addTask { @MainActor in
-                do { try await unit.body() }
+                do { try await unit.body { delta in self.reportBytes(delta) } }
                 catch {
                     self.error = error
                     self.failures.append((unit.label, error))
                 }
                 self.completedUnits += 1
-                self.completedBytes += unit.bytes
                 self.progress = self.totalUnits > 0
                     ? Double(self.completedUnits) / Double(self.totalUnits) : 1
             }

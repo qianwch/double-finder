@@ -12,7 +12,7 @@ final class FileOperationConcurrencyTests: XCTestCase {
         op.indeterminate = true
         op.transferUnitsProvider = {
             try? await Task.sleep(nanoseconds: 30_000_000)   // 30ms "network" expansion
-            return (0..<8).map { i in FileOperation.Unit(label: "u\(i)") {} }
+            return (0..<8).map { i in FileOperation.Unit(label: "u\(i)") { _ in } }
         }
         op.start()
         // Right after start(): expansion hasn't run yet → no units known. This is
@@ -32,7 +32,7 @@ final class FileOperationConcurrencyTests: XCTestCase {
         let tracker = ConcurrencyTracker()
         var units: [FileOperation.Unit] = []
         for i in 0..<20 {
-            units.append(FileOperation.Unit(label: "f\(i)") {
+            units.append(FileOperation.Unit(label: "f\(i)") { _ in
                 await tracker.enter()
                 try? await Task.sleep(nanoseconds: 5_000_000)   // 5ms
                 await tracker.leave()
@@ -58,7 +58,7 @@ final class FileOperationConcurrencyTests: XCTestCase {
         struct Boom: Error {}
         var units: [FileOperation.Unit] = []
         for i in 0..<10 {
-            units.append(FileOperation.Unit(label: "f\(i)") {
+            units.append(FileOperation.Unit(label: "f\(i)") { _ in
                 if i % 2 == 0 { throw Boom() }
             })
         }
@@ -69,6 +69,28 @@ final class FileOperationConcurrencyTests: XCTestCase {
         XCTAssertTrue(op.isComplete)
         XCTAssertEqual(op.completedUnits, 10)          // all attempted
         XCTAssertEqual(op.failures.count, 5)           // even indices threw
+    }
+
+    /// The per-Unit `report` reporter accumulates into transferredBytes with no
+    /// double counting (each unit reports its size exactly once).
+    func testTransferredBytesAccounting() async {
+        let op = FileOperation(type: .copy, sources: [], destination: nil)
+        op.concurrency = 4
+        var units: [FileOperation.Unit] = []
+        for i in 0..<10 {
+            let sz = Int64((i + 1) * 1000)
+            units.append(FileOperation.Unit(label: "f\(i)", bytes: sz) { report in
+                report(sz)   // streaming would call report incrementally; here once
+            })
+        }
+        op.transferUnits = units
+        op.start()
+        for _ in 0..<200 where !op.isComplete { try? await Task.sleep(nanoseconds: 5_000_000) }
+
+        XCTAssertTrue(op.isComplete)
+        // 1000 + 2000 + … + 10000
+        XCTAssertEqual(op.transferredBytes, 55_000)
+        XCTAssertEqual(op.totalBytes, 55_000)          // auto-summed from unit.bytes
     }
 }
 
