@@ -306,6 +306,8 @@
   "Synchronizing %d…": "正在同步 %d 项…",
   "Terminal App": "终端应用",
   "Terminal app:": "终端应用：",
+  "Editor app:": "编辑器：",
+  "System Default": "系统默认",
   "These items cannot be recovered — this does not use the Trash.": "这些项将无法恢复——此操作不经过废纸篓。",
   "This archive holds a single stream — nothing to rename inside it.": "此压缩包只含单个数据流，无法在其中重命名。",
   "This permanently removes them on the remote host and cannot be undone.": "此操作将从远程主机永久删除它们，且无法撤销。",

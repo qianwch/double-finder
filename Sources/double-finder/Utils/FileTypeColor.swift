@@ -63,6 +63,13 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "TerminalApp") }
     }
 
+    /// App name F4 uses to edit a file (e.g. "MacVim", "Visual Studio Code").
+    /// Empty string ⇒ the system default app for the file type (NSWorkspace.open).
+    static var editorApp: String {
+        get { UserDefaults.standard.string(forKey: "EditorApp") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "EditorApp") }
+    }
+
     /// Show the drive dropdown button on the left of each panel's path bar.
     static var showDriveDropdown: Bool {
         get { UserDefaults.standard.object(forKey: "ShowDriveDropdown") as? Bool ?? true }
