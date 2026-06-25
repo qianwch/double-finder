@@ -592,7 +592,76 @@ class PanelViewController: NSViewController {
             b.identifier = NSUserInterfaceItemIdentifier(vol.url.path)
             b.toolTip = vol.menuTitle
             b.state = (vol.url.path == current) ? .on : .off
-            driveStack.addArrangedSubview(b)
+            if vol.isEjectable {
+                // Right-click the drive button → Eject; plus an always-visible ⏏
+                // button glued to its right that ejects on a direct click.
+                b.menu = ejectContextMenu(for: vol)
+                let eject = makeEjectButton(path: vol.url.path)
+                let row = NSStackView(views: [b, eject])
+                row.orientation = .horizontal
+                row.spacing = 1
+                driveStack.addArrangedSubview(row)
+            } else {
+                driveStack.addArrangedSubview(b)
+            }
+        }
+    }
+
+    /// Small borderless ⏏ button that ejects the volume at `path` on click.
+    private func makeEjectButton(path: String) -> NSButton {
+        let eject = NSButton(image: Self.ejectImage, target: self, action: #selector(ejectDrive(_:)))
+        eject.isBordered = false
+        eject.imagePosition = .imageOnly
+        eject.controlSize = .small
+        eject.identifier = NSUserInterfaceItemIdentifier(path)
+        eject.toolTip = tr("Eject")
+        eject.setContentHuggingPriority(.required, for: .horizontal)
+        return eject
+    }
+
+    /// Context menu shown on right-click of an ejectable drive button.
+    private func ejectContextMenu(for vol: VolumeInfo) -> NSMenu {
+        let menu = NSMenu()
+        let item = NSMenuItem(title: tr("Eject"), action: #selector(ejectDrive(_:)), keyEquivalent: "")
+        item.target = self
+        item.image = Self.ejectImage
+        item.representedObject = vol.url.path
+        menu.addItem(item)
+        return menu
+    }
+
+    /// ⏏ glyph for eject affordances (SF Symbol, sized for the drive bar).
+    private static let ejectImage: NSImage = {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        let img = NSImage(systemSymbolName: "eject", accessibilityDescription: "Eject")?
+            .withSymbolConfiguration(cfg)
+        return img ?? NSImage()
+    }()
+
+    /// Ejects the volume identified by the sender (drive-bar ⏏ button, right-click
+    /// menu item, or dropdown menu item). The didUnmount observer rebuilds the bar.
+    @objc private func ejectDrive(_ sender: Any?) {
+        let path: String?
+        if let menuItem = sender as? NSMenuItem {
+            path = menuItem.representedObject as? String
+        } else if let button = sender as? NSButton {
+            path = button.identifier?.rawValue
+        } else {
+            path = nil
+        }
+        guard let path = path else { return }
+        do {
+            try Volumes.eject(URL(fileURLWithPath: path))
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = tr("Could not eject the disk.")
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            if let window = view.window {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
         }
     }
 
@@ -612,6 +681,16 @@ class PanelViewController: NSViewController {
             item.representedObject = vol.url.path
             item.state = (vol.url.path == current) ? .on : .off
             menu.addItem(item)
+            // Ejectable volumes get an inline ⏏ Eject item right beneath them.
+            if vol.isEjectable {
+                let eject = NSMenuItem(title: tr("Eject") + " " + vol.name,
+                                       action: #selector(ejectDrive(_:)), keyEquivalent: "")
+                eject.target = self
+                eject.image = Self.ejectImage
+                eject.representedObject = vol.url.path
+                eject.indentationLevel = 1
+                menu.addItem(eject)
+            }
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: driveButton.bounds.height + 2), in: driveButton)
     }
@@ -625,8 +704,10 @@ class PanelViewController: NSViewController {
     private func updateDriveSelection() {
         guard driveStack != nil, AppSettings.showDriveBar else { return }
         let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
-        for case let b as NSButton in driveStack.arrangedSubviews {
-            b.state = (b.identifier?.rawValue == current) ? .on : .off
+        for sub in driveStack.arrangedSubviews {
+            // Plain button, or the nav button is the first item of an ejectable row.
+            let navButton = (sub as? NSButton) ?? (sub as? NSStackView)?.arrangedSubviews.first as? NSButton
+            navButton?.state = (navButton?.identifier?.rawValue == current) ? .on : .off
         }
     }
 }

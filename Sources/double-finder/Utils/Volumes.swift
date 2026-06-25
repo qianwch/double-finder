@@ -7,6 +7,9 @@ struct VolumeInfo {
     let name: String
     let freeBytes: Int64
     let totalBytes: Int64
+    /// Removable / ejectable media (USB stick, external disk, mounted DMG) — i.e.
+    /// something we can offer an "Eject" action for. The boot volume is never this.
+    let isEjectable: Bool
 
     /// Finder's icon for the volume, sized for a menu.
     var icon: NSImage {
@@ -32,6 +35,7 @@ enum Volumes {
         let keys: [URLResourceKey] = [
             .volumeNameKey, .volumeAvailableCapacityForImportantUsageKey,
             .volumeTotalCapacityKey, .volumeIsBrowsableKey,
+            .volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsRootFileSystemKey,
         ]
         let urls = FileManager.default.mountedVolumeURLs(
             includingResourceValuesForKeys: keys,
@@ -43,7 +47,11 @@ enum Volumes {
             let name = vals.volumeName ?? url.lastPathComponent
             let free = Int64(vals.volumeAvailableCapacityForImportantUsage ?? 0)
             let total = Int64(vals.volumeTotalCapacity ?? 0)
-            result.append(VolumeInfo(url: url, name: name, freeBytes: free, totalBytes: total))
+            // Ejectable = removable/ejectable media but never the boot volume.
+            let ejectable = (vals.volumeIsEjectable == true || vals.volumeIsRemovable == true)
+                && vals.volumeIsRootFileSystem != true
+            result.append(VolumeInfo(url: url, name: name, freeBytes: free,
+                                     totalBytes: total, isEjectable: ejectable))
         }
         return result
     }
@@ -53,5 +61,10 @@ enum Volumes {
         mounted()
             .filter { path == $0.url.path || path.hasPrefix($0.url.path == "/" ? "/" : $0.url.path + "/") }
             .max { $0.url.path.count < $1.url.path.count }
+    }
+
+    /// Unmounts and ejects the volume at `url`. Throws on failure (busy, in use…).
+    static func eject(_ url: URL) throws {
+        try NSWorkspace.shared.unmountAndEjectDevice(at: url)
     }
 }
