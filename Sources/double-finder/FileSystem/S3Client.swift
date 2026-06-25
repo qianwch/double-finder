@@ -100,9 +100,43 @@ final class S3Client {
         return out
     }
 
-    func getObject(bucket: String, key: String, toLocalPath: String) async throws {
-        let (data, _) = try await send(method: "GET", bucket: bucket, key: key)
-        try data.write(to: URL(fileURLWithPath: toLocalPath))
+    /// Downloads to a local path, streaming via `bytes(for:)` so memory stays flat.
+    /// Writes to a `.part` temp file, then atomically renames on success; deletes it
+    /// on failure/cancel. `progress` is called with byte deltas as data arrives.
+    func getObject(bucket: String, key: String, toLocalPath: String,
+                   progress: (@Sendable (Int64) -> Void)? = nil) async throws {
+        let req = makeSignedRequest(method: "GET", bucket: bucket, key: key,
+                                    payloadHash: S3Client.unsignedPayload)
+        let (stream, resp) = try await session.bytes(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw S3Error(message: "No HTTP response") }
+        guard (200...299).contains(http.statusCode) else {
+            throw S3Error(message: "HTTP \(http.statusCode)")
+        }
+        let tmp = toLocalPath + ".part"
+        FileManager.default.createFile(atPath: tmp, contents: nil)
+        guard let handle = FileHandle(forWritingAtPath: tmp) else {
+            throw S3Error(message: "Cannot open \(tmp) for writing")
+        }
+        do {
+            var buf = Data(); buf.reserveCapacity(1 << 20)
+            for try await byte in stream {
+                buf.append(byte)
+                if buf.count >= (1 << 20) {   // flush ~1 MiB chunks
+                    try handle.write(contentsOf: buf)
+                    progress?(Int64(buf.count)); buf.removeAll(keepingCapacity: true)
+                }
+            }
+            if !buf.isEmpty { try handle.write(contentsOf: buf); progress?(Int64(buf.count)) }
+            try handle.close()
+            if FileManager.default.fileExists(atPath: toLocalPath) {
+                try FileManager.default.removeItem(atPath: toLocalPath)
+            }
+            try FileManager.default.moveItem(atPath: tmp, toPath: toLocalPath)
+        } catch {
+            try? handle.close()
+            try? FileManager.default.removeItem(atPath: tmp)
+            throw error
+        }
     }
 
     /// Uploads a local file. Small files → single PUT; large files → concurrent
