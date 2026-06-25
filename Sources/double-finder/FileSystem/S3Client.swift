@@ -19,22 +19,33 @@ final class S3Client {
 
     private func currentDate() -> Date { Date() }
 
+    /// Builds a fully-signed request (URL + method + SigV4 headers). Caller attaches
+    /// the body or `httpBodyStream`. Shared by `send` (buffered) and the streaming paths.
+    private func makeSignedRequest(method: String, bucket: String?, key: String,
+                                   query: [String: String] = [:],
+                                   extraHeaders: [String: String] = [:],
+                                   payloadHash: String) -> URLRequest {
+        let url = endpoint.url(bucket: bucket, key: key, query: query)
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        var headers = extraHeaders
+        for (k, v) in signer.authorizationHeaders(method: method, url: url, headers: headers,
+                                                  payloadHash: payloadHash, date: currentDate()) {
+            headers[k] = v
+        }
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        return req
+    }
+
     /// Build, sign, and send a request; returns (data, httpResponse). Throws S3Error on non-2xx.
     private func send(method: String, bucket: String?, key: String,
                       query: [String: String] = [:], body: Data? = nil,
                       extraHeaders: [String: String] = [:],
                       payloadHash: String? = nil) async throws -> (Data, HTTPURLResponse) {
-        let url = endpoint.url(bucket: bucket, key: key, query: query)
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.httpBody = body
         let hash = payloadHash ?? (body.map { S3Signer.sha256Hex($0) } ?? S3Client.unsignedPayload)
-        var headers = extraHeaders
-        for (k, v) in signer.authorizationHeaders(method: method, url: url, headers: headers,
-                                                  payloadHash: hash, date: currentDate()) {
-            headers[k] = v
-        }
-        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        var req = makeSignedRequest(method: method, bucket: bucket, key: key,
+                                    query: query, extraHeaders: extraHeaders, payloadHash: hash)
+        req.httpBody = body
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw S3Error(message: "No HTTP response") }
         if !(200...299).contains(http.statusCode) {
