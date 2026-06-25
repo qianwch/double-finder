@@ -314,9 +314,10 @@ final class SyncDirsSheet: NSWindowController {
             let rel = e.rel
             // Source-side file size drives the byte/sec speed readout.
             let bytes = (e.direction == .toRight ? e.leftSize : e.rightSize) ?? 0
-            return FileOperation.Unit(label: rel, bytes: bytes) { [weak self] in
+            return FileOperation.Unit(label: rel, bytes: bytes) { [weak self] report in
                 guard let self = self else { return }
                 try await self.runFileTransfer(rel: rel, from: src, to: dst)
+                report(bytes)
             }
         }
         syncButton.isEnabled = false

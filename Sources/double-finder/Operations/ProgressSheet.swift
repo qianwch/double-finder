@@ -123,13 +123,18 @@ class ProgressSheet: NSWindowController {
             fileLabel.stringValue = "\(operation.currentFile)  ·  \(Self.byteFmt.string(fromByteCount: bytes)) / \(Self.byteFmt.string(fromByteCount: operation.totalBytes))  ·  \(speed)"
         } else if operation.totalUnits > 0 {
             progressBar.isIndeterminate = false
-            progressBar.minValue = 0
-            progressBar.maxValue = Double(operation.totalUnits)
-            progressBar.doubleValue = Double(operation.completedUnits)
-            // Sizes known (sync, S3) → byte/sec; otherwise files/sec. Sample the
-            // rate exactly ONCE per tick (sampleRate is stateful).
+            // Sizes known (sync, S3) → byte-granular bar + byte/sec (smooth even for a
+            // single large file); otherwise unit-count bar + files/sec. Sample the rate
+            // exactly ONCE per tick (sampleRate is stateful).
             let hasBytes = operation.totalBytes > 0
-            let rate = sampleRate(Double(hasBytes ? operation.completedBytes : Int64(operation.completedUnits)))
+            if hasBytes {
+                progressBar.minValue = 0; progressBar.maxValue = Double(operation.totalBytes)
+                progressBar.doubleValue = Double(operation.transferredBytes)
+            } else {
+                progressBar.minValue = 0; progressBar.maxValue = Double(operation.totalUnits)
+                progressBar.doubleValue = Double(operation.completedUnits)
+            }
+            let rate = sampleRate(Double(hasBytes ? operation.transferredBytes : Int64(operation.completedUnits)))
             let speed = Self.speedText(totalBytes: operation.totalBytes,
                                        bytesRate: hasBytes ? rate : 0,
                                        filesRate: hasBytes ? 0 : rate)

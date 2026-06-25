@@ -219,7 +219,7 @@ struct S3TransferProvider: TransferProvider {
                             objs = try await capturedClient.listAllObjects(bucket: b, prefix: folderKey)
                         } catch {
                             let capturedError = error
-                            units.append(FileOperation.Unit(label: item.name) {
+                            units.append(FileOperation.Unit(label: item.name) { _ in
                                 throw capturedError
                             })
                             continue
@@ -230,16 +230,18 @@ struct S3TransferProvider: TransferProvider {
                                                                             destDir: destPath)
                             // C1: reject keys that escape the destination directory.
                             guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
-                                units.append(FileOperation.Unit(label: k) {
+                                units.append(FileOperation.Unit(label: k) { _ in
                                     throw FSUnsupportedError(message: "Unsafe path in key: \(k)")
                                 })
                                 continue
                             }
-                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent, bytes: o.size) {
+                            let sz = o.size
+                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent, bytes: sz) { report in
                                 let dir = (local as NSString).deletingLastPathComponent
                                 try FileManager.default.createDirectory(atPath: dir,
                                                                         withIntermediateDirectories: true)
                                 try await capturedClient.getObject(bucket: b, key: k, toLocalPath: local)
+                                report(sz)
                             })
                         }
                     } else {
@@ -247,17 +249,19 @@ struct S3TransferProvider: TransferProvider {
                                                                         destDir: destPath)
                         // C1: reject keys that escape the destination directory.
                         guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
-                            units.append(FileOperation.Unit(label: key) {
+                            units.append(FileOperation.Unit(label: key) { _ in
                                 throw FSUnsupportedError(message: "Unsafe path in key: \(key)")
                             })
                             continue
                         }
                         // M1: ensure parent directory exists before writing the file.
-                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent, bytes: item.size) {
+                        let sz = item.size
+                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent, bytes: sz) { report in
                             let dir = (local as NSString).deletingLastPathComponent
                             try FileManager.default.createDirectory(atPath: dir,
                                                                     withIntermediateDirectories: true)
                             try await capturedClient.getObject(bucket: b, key: key, toLocalPath: local)
+                            report(sz)
                         })
                     }
                 }
@@ -280,17 +284,21 @@ struct S3TransferProvider: TransferProvider {
                         for f in files {
                             let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
                                                                   destPrefix: destPrefix)
+                            let sz = FileOperation.sizeOnDisk(f)
                             units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent,
-                                                            bytes: FileOperation.sizeOnDisk(f)) {
+                                                            bytes: sz) { report in
                                 try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: f)
+                                report(sz)
                             })
                         }
                     } else {
                         let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
                                                               destPrefix: destPrefix)
+                        let sz = FileOperation.sizeOnDisk(item.path)
                         units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent,
-                                                        bytes: FileOperation.sizeOnDisk(item.path)) {
+                                                        bytes: sz) { report in
                             try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: item.path)
+                            report(sz)
                         })
                     }
                 }
