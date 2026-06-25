@@ -132,8 +132,12 @@ class PanelViewController: NSViewController {
         pathBar = PathBar()
         pathBar.translatesAutoresizingMaskIntoConstraints = false
         pathBar.onNavigate = { [weak self] path in
-            self?.panelState.navigate(to: path)
+            guard let self = self else { return }
+            self.activatePanel()
+            self.panelState.navigate(to: path)
         }
+        // Clicking anywhere in the breadcrumb (incl. empty area) activates the panel.
+        pathBar.onActivate = { [weak self] in self?.activatePanel() }
         headerView.addSubview(pathBar)
 
         // Favorites entry point in the top-right corner of the panel.
@@ -665,8 +669,14 @@ class PanelViewController: NSViewController {
         }
     }
 
+    /// Makes this the active panel (clicking any panel chrome should focus it).
+    private func activatePanel() {
+        panelDelegate?.panelViewControllerWantsActivation(self)
+    }
+
     @objc private func driveSelected(_ sender: NSButton) {
         guard let path = sender.identifier?.rawValue else { return }
+        activatePanel()
         panelState.navigateLocal(to: path)
     }
 
@@ -697,6 +707,7 @@ class PanelViewController: NSViewController {
 
     @objc private func driveMenuSelected(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
+        activatePanel()
         panelState.navigateLocal(to: path)
     }
 
@@ -844,6 +855,8 @@ protocol PanelViewControllerDelegate: AnyObject {
 // MARK: - PathBar
 class PathBar: NSView {
     var onNavigate: ((String) -> Void)?
+    /// Fired on any mouse-down in the bar so the owning panel can become active.
+    var onActivate: (() -> Void)?
     private var segmentStack: NSStackView!
     private var editField: NSTextField!
     private var isEditing = false
@@ -925,6 +938,13 @@ class PathBar: NSView {
                 segmentStack.addArrangedSubview(sep)
             }
         }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // Clicking the bar's empty area (segment buttons handle their own clicks
+        // via onNavigate, which also activates) focuses the panel.
+        onActivate?()
+        super.mouseDown(with: event)
     }
 
     @objc private func segmentClicked(_ sender: NSButton) {
