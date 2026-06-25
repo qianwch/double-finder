@@ -895,9 +895,13 @@ class PathBar: NSView {
             editField.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // Double click on path to edit
+        // Double click on path to edit. Don't delay primary mouse events: the
+        // recognizer otherwise holds single clicks for the double-click timeout
+        // (~250ms+) before the segment button / activation fires, which makes
+        // clicking the path bar feel laggy.
         let gesture = NSClickGestureRecognizer(target: self, action: #selector(segmentDoubleClicked))
         gesture.numberOfClicksRequired = 2
+        gesture.delaysPrimaryMouseButtonEvents = false
         addGestureRecognizer(gesture)
     }
 
