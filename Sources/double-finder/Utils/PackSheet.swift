@@ -134,7 +134,7 @@ final class PackSheet: NSWindowController {
 
         var volumeToken: String? = nil
         if selectedFormat.supportsSplit {
-            switch VolumeSize.parse(volumePopup.stringValue) {
+            switch VolumeSize.parse(volumePopup.stringValue, noSplitLabel: tr("No split")) {
             case .none:            volumeToken = nil
             case .token(let t):    volumeToken = t
             case .invalid:

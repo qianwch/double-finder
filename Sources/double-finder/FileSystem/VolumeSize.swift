@@ -27,4 +27,14 @@ enum VolumeSize {
         }
         return .token("\(n)\(unit)")
     }
+
+    /// Same as `parse(_:)` but also treats `noSplitLabel` (the localized "No
+    /// split" combo label) as `.none`, so a localized default selection isn't
+    /// misread as an invalid size.
+    static func parse(_ raw: String, noSplitLabel: String) -> Parsed {
+        if raw.trimmingCharacters(in: .whitespaces) == noSplitLabel.trimmingCharacters(in: .whitespaces) {
+            return .none
+        }
+        return parse(raw)
+    }
 }
