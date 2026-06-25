@@ -75,6 +75,15 @@ final class ArchiveLogicTests: XCTestCase {
         XCTAssertFalse(ArchiveFormat.tarGz.supportsEncryption)
     }
 
+    func testSupportsSplit() {
+        XCTAssertTrue(ArchiveFormat.zip.supportsSplit)
+        XCTAssertTrue(ArchiveFormat.sevenZip.supportsSplit)
+        XCTAssertFalse(ArchiveFormat.tar.supportsSplit)
+        XCTAssertFalse(ArchiveFormat.tarGz.supportsSplit)
+        XCTAssertFalse(ArchiveFormat.tarBz2.supportsSplit)
+        XCTAssertFalse(ArchiveFormat.tarXz.supportsSplit)
+    }
+
     // MARK: LibArchive — per-archive charset detection + decode
 
     // 华为MetaERP 1.5.1 产品文档 _1.5.1.hwics, GBK-encoded (no UTF-8 flag).
