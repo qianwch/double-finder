@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Needed to create/update the rolling "latest" release + its tag.
+permissions:
+  contents: write
+
 jobs:
   build-and-test:
     runs-on: macos-14
@@ -28,5 +32,30 @@ jobs:
       - name: Test
         run: swift test
 
+      # PRs get a quick release-build sanity check; on push to main the universal
+      # release build happens inside package_dmg.sh below instead.
       - name: Build (release)
+        if: github.event_name == 'pull_request'
         run: swift build -c release
+
+      # --- Package + publish (push to main only) ---
+      - name: Package universal .dmg
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: ./package_dmg.sh
+
+      - name: Publish rolling "latest" prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Recreate the rolling release so both its tag and DMG track the newest
+          # commit (delete is best-effort on the first ever run).
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest \
+            --prerelease \
+            --title "Latest build" \
+            --notes "Automated universal build of \`${GITHUB_SHA:0:7}\`.
+
+          Drag **Double Finder.app** to /Applications. The build is ad-hoc signed, so on first launch right-click the app → **Open** to bypass Gatekeeper." \
+            ".dist/Double Finder.dmg"
