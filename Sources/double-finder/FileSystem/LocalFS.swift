@@ -259,7 +259,7 @@ class LocalFS: VirtualFS {
     /// a compression level (0–9) and optional password (zip/7z only).
     func createArchive(sources: [String], to archivePath: String,
                        format: ArchiveFormat, level: Int, password: String?,
-                       baseDir: String? = nil) async throws {
+                       baseDir: String? = nil, volumeSize: String? = nil) async throws {
         try await Task.detached(priority: .userInitiated) {
             guard !sources.isEmpty else { return }
             // When baseDir is set, store each source by its path relative to it
@@ -272,13 +272,28 @@ class LocalFS: VirtualFS {
             let pw = (password?.isEmpty == false) ? password! : nil
             try? FileManager.default.removeItem(atPath: archivePath)   // overwrite cleanly
 
+            // Split volumes require the external 7-Zip (libarchive can't split).
+            // For zip+split we route through 7zz too (extension drives the container).
+            if volumeSize != nil && format.supportsSplit {
+                guard let tool = LocalFS.find7z() else {
+                    throw ArchiveToolMissingError(
+                        tool: "7z",
+                        hint: "Creating a *split* archive needs 7-Zip.\nInstall it with Homebrew:\n    brew install sevenzip")
+                }
+                try LocalFS.createSevenZipExternal(tool: tool, entries: entries, baseDir: baseDir,
+                                                   to: archivePath, level: level, password: pw,
+                                                   format: format, volumeSize: volumeSize)
+                return
+            }
+
             // 7z creation: libarchive's 7z writer can't encrypt and compresses
             // weaker, so prefer the external 7-Zip when present. An encrypted 7z
             // *requires* it — fail clearly if it's missing.
             if format == .sevenZip {
                 if let tool = LocalFS.find7z() {
                     try LocalFS.createSevenZipExternal(tool: tool, entries: entries, baseDir: baseDir,
-                                                       to: archivePath, level: level, password: pw)
+                                                       to: archivePath, level: level, password: pw,
+                                                       format: format, volumeSize: nil)
                     return
                 }
                 if pw != nil {
@@ -297,18 +312,26 @@ class LocalFS: VirtualFS {
     /// Locates the external 7-Zip executable (user override or auto-detected).
     private static func find7z() -> String? { SevenZip.resolve() }
 
-    /// Creates a 7z with the external tool (full compression level + optional
-    /// AES + header encryption), preserving folder hierarchy via cwd=baseDir.
+    /// Creates a 7z/zip with the external tool (full compression level + optional
+    /// AES + header encryption + `-v` split volumes), preserving folder hierarchy
+    /// via cwd=baseDir. Container (7z vs zip) is inferred from the archive extension.
     private static func createSevenZipExternal(tool: String,
                                                entries: [(absPath: String, entryName: String)],
                                                baseDir: String?, to archivePath: String,
-                                               level: Int, password: String?) throws {
+                                               level: Int, password: String?,
+                                               format: ArchiveFormat, volumeSize: String?) throws {
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let parent = baseDir ?? (entries.first!.absPath as NSString).deletingLastPathComponent
         let names = entries.map { q($0.entryName) }.joined(separator: " ")
         var s = "\(q(tool)) a -y -mx=\(max(0, min(9, level)))"
-        if let pw = password { s += " -p\(q(pw)) -mhe=on" }
-        let cmd = "rm -f \(q(archivePath)); \(s) \(q(archivePath)) \(names)"
+        if let v = volumeSize { s += " -v\(v)" }
+        if let pw = password {
+            // Header encryption (-mhe) is 7z-only; zip uses AES-256 via -mem.
+            s += format == .sevenZip ? " -p\(q(pw)) -mhe=on" : " -p\(q(pw)) -mem=AES256"
+        }
+        // Split output is archivePath.001/.002…; clean those, else the single file.
+        let cleanup = volumeSize != nil ? "rm -f \(q(archivePath)).[0-9]*" : "rm -f \(q(archivePath))"
+        let cmd = "\(cleanup); \(s) \(q(archivePath)) \(names)"
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -320,7 +343,7 @@ class LocalFS: VirtualFS {
         proc.waitUntilExit()
         if proc.terminationStatus != 0 {
             throw NSError(domain: "LocalFS", code: 5,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to create 7z archive (status \(proc.terminationStatus))"])
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to create archive (status \(proc.terminationStatus))"])
         }
     }
 
