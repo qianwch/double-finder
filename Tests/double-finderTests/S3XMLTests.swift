@@ -72,6 +72,30 @@ final class S3XMLTests: XCTestCase {
         XCTAssertNil(S3XML.errorMessage(Data("<ok/>".utf8)))
     }
 
+    func testParseUploadId() {
+        let xml = Data("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>ABC123==</UploadId></InitiateMultipartUploadResult>
+        """.utf8)
+        XCTAssertEqual(S3XML.uploadId(xml), "ABC123==")
+    }
+
+    func testParseUploadIdMissing() {
+        XCTAssertNil(S3XML.uploadId(Data("<Error><Message>nope</Message></Error>".utf8)))
+    }
+
+    func testCompleteMultipartBody() {
+        let body = S3XML.completeMultipartBody(parts: [(2, "\"etag2\""), (1, "\"etag1\"")])
+        let s = String(decoding: body, as: UTF8.self)
+        // sorted by part number; etags preserved verbatim (incl. quotes)
+        XCTAssertTrue(s.contains("<CompleteMultipartUpload>"))
+        let p1 = s.range(of: "<PartNumber>1</PartNumber>")!
+        let p2 = s.range(of: "<PartNumber>2</PartNumber>")!
+        XCTAssertTrue(p1.lowerBound < p2.lowerBound, "parts must be sorted ascending")
+        XCTAssertTrue(s.contains("<ETag>\"etag1\"</ETag>"))
+        XCTAssertTrue(s.contains("<ETag>\"etag2\"</ETag>"))
+    }
+
     func testEndpointURLPathStyle() {
         let ep = S3Endpoint(base: URL(string: "https://minio.local:9000")!,
                             region: "us-east-1", pathStyle: true)

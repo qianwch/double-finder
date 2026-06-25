@@ -63,6 +63,23 @@ enum S3XML {
         XMLParser(data: data).also { $0.delegate = d }.parse()
         return d.values["Message"]?.first
     }
+
+    static func uploadId(_ data: Data) -> String? {
+        let d = Collector(capture: ["UploadId"], parent: "InitiateMultipartUploadResult")
+        XMLParser(data: data).also { $0.delegate = d }.parse()
+        return d.values["UploadId"]?.first
+    }
+
+    /// Builds the CompleteMultipartUpload request body. Parts are sorted by number;
+    /// ETags are emitted verbatim (S3 returns them quoted — keep the quotes).
+    static func completeMultipartBody(parts: [(number: Int, eTag: String)]) -> Data {
+        var xml = "<CompleteMultipartUpload>"
+        for p in parts.sorted(by: { $0.number < $1.number }) {
+            xml += "<Part><PartNumber>\(p.number)</PartNumber><ETag>\(p.eTag)</ETag></Part>"
+        }
+        xml += "</CompleteMultipartUpload>"
+        return Data(xml.utf8)
+    }
 }
 
 private extension XMLParser {
