@@ -11,6 +11,7 @@ enum ArchiveFormat: String, CaseIterable {
 
     var fileExtension: String { rawValue }
     var supportsEncryption: Bool { self == .zip || self == .sevenZip }
+    var supportsSplit: Bool { self == .zip || self == .sevenZip }
     var displayName: String {
         switch self {
         case .zip: return "Zip (.zip)"
