@@ -114,6 +114,37 @@ final class S3Client {
         _ = try await send(method: "PUT", bucket: bucket, key: key, body: Data())
     }
 
+    // MARK: - Multipart upload (low-level)
+
+    func createMultipartUpload(bucket: String, key: String) async throws -> String {
+        let (data, _) = try await send(method: "POST", bucket: bucket, key: key, query: ["uploads": ""])
+        guard let id = S3XML.uploadId(data) else { throw S3Error(message: "No UploadId in response") }
+        return id
+    }
+
+    /// Uploads one part; returns its ETag (needed by completeMultipartUpload).
+    func uploadPart(bucket: String, key: String, uploadId: String,
+                    partNumber: Int, body: Data) async throws -> String {
+        let (_, http) = try await send(method: "PUT", bucket: bucket, key: key,
+                                       query: ["partNumber": "\(partNumber)", "uploadId": uploadId],
+                                       body: body)
+        guard let etag = http.value(forHTTPHeaderField: "ETag") else {
+            throw S3Error(message: "Part \(partNumber) returned no ETag")
+        }
+        return etag
+    }
+
+    func completeMultipartUpload(bucket: String, key: String, uploadId: String,
+                                 parts: [(number: Int, eTag: String)]) async throws {
+        let body = S3XML.completeMultipartBody(parts: parts)
+        _ = try await send(method: "POST", bucket: bucket, key: key,
+                           query: ["uploadId": uploadId], body: body)
+    }
+
+    func abortMultipartUpload(bucket: String, key: String, uploadId: String) async throws {
+        _ = try await send(method: "DELETE", bucket: bucket, key: key, query: ["uploadId": uploadId])
+    }
+
     func deleteObject(bucket: String, key: String) async throws {
         _ = try await send(method: "DELETE", bucket: bucket, key: key)
     }
