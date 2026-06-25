@@ -105,9 +105,57 @@ final class S3Client {
         try data.write(to: URL(fileURLWithPath: toLocalPath))
     }
 
-    func putObject(bucket: String, key: String, fromLocalPath: String) async throws {
-        let data = try Data(contentsOf: URL(fileURLWithPath: fromLocalPath))
-        _ = try await send(method: "PUT", bucket: bucket, key: key, body: data)
+    /// Uploads a local file. Small files → single PUT; large files → concurrent
+    /// multipart (peak memory ≈ partSize × concurrency, not the whole file).
+    /// `progress` is called with byte deltas as data is sent.
+    func putObject(bucket: String, key: String, fromLocalPath: String,
+                   progress: (@Sendable (Int64) -> Void)? = nil) async throws {
+        let attrs = try FileManager.default.attributesOfItem(atPath: fromLocalPath)
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        let plan = S3MultipartPlan.parts(fileSize: size)
+        if plan.isEmpty {
+            // ≤16 MB: buffering is fine (the OOM problem was only for large files,
+            // which now go multipart). Reuse the proven signed-body `send` path.
+            let data = try Data(contentsOf: URL(fileURLWithPath: fromLocalPath))
+            _ = try await send(method: "PUT", bucket: bucket, key: key, body: data)
+            progress?(size)
+            return
+        }
+
+        let uploadId = try await createMultipartUpload(bucket: bucket, key: key)
+        do {
+            let etags = try await withThrowingTaskGroup(of: (Int, String).self) { group -> [(Int, String)] in
+                var inFlight = 0
+                var idx = 0
+                var results: [(Int, String)] = []
+                func schedule() {
+                    guard idx < plan.count else { return }
+                    let part = plan[idx]; idx += 1; inFlight += 1
+                    group.addTask {
+                        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: fromLocalPath))
+                        defer { try? handle.close() }
+                        try handle.seek(toOffset: UInt64(part.offset))
+                        let body = try handle.read(upToCount: Int(part.length)) ?? Data()
+                        let etag = try await self.uploadPart(bucket: bucket, key: key, uploadId: uploadId,
+                                                             partNumber: part.number, body: body)
+                        progress?(part.length)
+                        return (part.number, etag)
+                    }
+                }
+                for _ in 0..<min(4, plan.count) { schedule() }   // partConcurrency = 4
+                while inFlight > 0 {
+                    let r = try await group.next()!
+                    inFlight -= 1
+                    results.append(r)
+                    schedule()
+                }
+                return results
+            }
+            try await completeMultipartUpload(bucket: bucket, key: key, uploadId: uploadId, parts: etags)
+        } catch {
+            try? await abortMultipartUpload(bucket: bucket, key: key, uploadId: uploadId)
+            throw error
+        }
     }
 
     func putEmptyObject(bucket: String, key: String) async throws {
