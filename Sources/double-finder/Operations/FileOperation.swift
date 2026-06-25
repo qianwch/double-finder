@@ -57,9 +57,11 @@ class FileOperation: ObservableObject {
     struct Unit {
         let label: String
         let bytes: Int64
-        let body: (_ report: @Sendable (Int64) -> Void) async throws -> Void
+        // `report` is `@escaping` because streaming transfers (S3 multipart/download)
+        // hold it across `await`s and hand it to `URLSession`/`TaskGroup`.
+        let body: (_ report: @escaping @Sendable (Int64) -> Void) async throws -> Void
         init(label: String, bytes: Int64 = 0,
-             body: @escaping (_ report: @Sendable (Int64) -> Void) async throws -> Void) {
+             body: @escaping (_ report: @escaping @Sendable (Int64) -> Void) async throws -> Void) {
             self.label = label; self.bytes = bytes; self.body = body
         }
     }
