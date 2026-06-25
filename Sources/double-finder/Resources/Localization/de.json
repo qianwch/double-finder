@@ -358,5 +358,13 @@
   "Audio / Video": "Audio / Video",
   "Source Code": "Quellcode",
   "Documents": "Dokumente",
-  "Reset to Defaults": "Auf Standard zurücksetzen"
+  "Reset to Defaults": "Auf Standard zurücksetzen",
+  "Volume size:": "Teilgröße:",
+  "No split": "Nicht teilen",
+  "10 MB": "10 MB",
+  "100 MB": "100 MB",
+  "700 MB (CD)": "700 MB (CD)",
+  "4480 MB (DVD)": "4480 MB (DVD)",
+  "Invalid volume size": "Ungültige Teilgröße",
+  "Enter a size like 100 MB, 250m, or 1g — or choose “No split”.": "Geben Sie eine Größe wie 100 MB, 250m oder 1g ein – oder wählen Sie „Nicht teilen“."
 }

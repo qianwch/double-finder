@@ -358,5 +358,13 @@
   "Audio / Video": "Audio / Vidéo",
   "Source Code": "Code source",
   "Documents": "Documents",
-  "Reset to Defaults": "Réinitialiser"
+  "Reset to Defaults": "Réinitialiser",
+  "Volume size:": "Taille des volumes :",
+  "No split": "Pas de découpage",
+  "10 MB": "10 MB",
+  "100 MB": "100 MB",
+  "700 MB (CD)": "700 MB (CD)",
+  "4480 MB (DVD)": "4480 MB (DVD)",
+  "Invalid volume size": "Taille de volume invalide",
+  "Enter a size like 100 MB, 250m, or 1g — or choose “No split”.": "Saisissez une taille comme 100 MB, 250m ou 1g — ou choisissez « Pas de découpage »."
 }

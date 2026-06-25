@@ -358,5 +358,13 @@
   "Audio / Video": "音频 / 视频",
   "Source Code": "源代码",
   "Documents": "文档",
-  "Reset to Defaults": "重置为默认"
+  "Reset to Defaults": "重置为默认",
+  "Volume size:": "分卷大小：",
+  "No split": "不分卷",
+  "10 MB": "10 MB",
+  "100 MB": "100 MB",
+  "700 MB (CD)": "700 MB (CD)",
+  "4480 MB (DVD)": "4480 MB (DVD)",
+  "Invalid volume size": "分卷大小无效",
+  "Enter a size like 100 MB, 250m, or 1g — or choose “No split”.": "请输入如 100 MB、250m 或 1g 的大小，或选择“不分卷”。"
 }
