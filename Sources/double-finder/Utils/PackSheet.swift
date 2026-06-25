@@ -8,6 +8,7 @@ final class PackSheet: NSWindowController {
         var format: ArchiveFormat
         var level: Int
         var password: String?
+        var volumeSize: String?   // 7zz -v token (e.g. "100m"); nil = no split
     }
     var onPack: ((Options) -> Void)?
 
@@ -17,6 +18,9 @@ final class PackSheet: NSWindowController {
     private let levelPopup = NSPopUpButton()
     private let encryptCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let passwordField = NSSecureTextField()
+    private let volumePopup = NSComboBox()
+    // English source strings; localized at display time. The first is "no split".
+    private let volumePresets = ["No split", "10 MB", "100 MB", "700 MB (CD)", "4480 MB (DVD)"]
 
     // Level menu → numeric (0=store … 9=max). Titles are English source strings,
     // translated at display time in setupUI.
@@ -24,7 +28,7 @@ final class PackSheet: NSWindowController {
 
     init(defaultBaseName: String, destDir: String) {
         self.destDir = destDir
-        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 250),
+        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 290),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = tr("Pack to Archive")
         super.init(window: window)
@@ -42,6 +46,7 @@ final class PackSheet: NSWindowController {
         let nameLbl = label(tr("Name:"))
         let fmtLbl = label(tr("Format:"))
         let lvlLbl = label(tr("Compression:"))
+        let volLbl = label(tr("Volume size:"))
         let destLbl = NSTextField(labelWithString: tr("Into: %@", destDir))
         destLbl.font = .systemFont(ofSize: 10); destLbl.textColor = .secondaryLabelColor
         destLbl.lineBreakMode = .byTruncatingMiddle
@@ -58,12 +63,17 @@ final class PackSheet: NSWindowController {
         passwordField.placeholderString = tr("Password")
         passwordField.isEnabled = false
 
+        volumePopup.addItems(withObjectValues: volumePresets.map { tr($0) })
+        volumePopup.selectItem(at: 0)            // "No split"
+        volumePopup.completes = false
+
         let packBtn = NSButton(title: tr("Pack"), target: self, action: #selector(packClicked))
         packBtn.bezelStyle = .rounded; packBtn.keyEquivalent = "\r"
         let cancelBtn = NSButton(title: tr("Cancel"), target: self, action: #selector(cancelClicked))
         cancelBtn.bezelStyle = .rounded
 
         let views: [NSView] = [nameLbl, nameField, fmtLbl, formatPopup, lvlLbl, levelPopup,
+                               volLbl, volumePopup,
                                encryptCheck, passwordField, destLbl, packBtn, cancelBtn]
         views.forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
         let fieldLeading = content.leadingAnchor.constraint(equalTo: content.leadingAnchor) // placeholder
@@ -82,9 +92,10 @@ final class PackSheet: NSWindowController {
         row(nameLbl, nameField, top: content.topAnchor, gap: 18)
         row(fmtLbl, formatPopup, top: nameField.bottomAnchor, gap: 12)
         row(lvlLbl, levelPopup, top: formatPopup.bottomAnchor, gap: 12)
+        row(volLbl, volumePopup, top: levelPopup.bottomAnchor, gap: 12)
 
         NSLayoutConstraint.activate([
-            encryptCheck.topAnchor.constraint(equalTo: levelPopup.bottomAnchor, constant: 14),
+            encryptCheck.topAnchor.constraint(equalTo: volumePopup.bottomAnchor, constant: 14),
             encryptCheck.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 112),
             passwordField.centerYAnchor.constraint(equalTo: encryptCheck.centerYAnchor),
             passwordField.leadingAnchor.constraint(equalTo: encryptCheck.trailingAnchor, constant: 8),
@@ -109,6 +120,9 @@ final class PackSheet: NSWindowController {
         encryptCheck.isEnabled = supported
         if !supported { encryptCheck.state = .off }
         passwordField.isEnabled = supported && encryptCheck.state == .on
+        let split = selectedFormat.supportsSplit
+        volumePopup.isEnabled = split
+        if !split { volumePopup.stringValue = tr("No split") }
     }
 
     @objc private func formatChanged() { updateEncryptionAvailability() }
@@ -117,11 +131,28 @@ final class PackSheet: NSWindowController {
     @objc private func packClicked() {
         let base = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !base.isEmpty else { return }
+
+        var volumeToken: String? = nil
+        if selectedFormat.supportsSplit {
+            switch VolumeSize.parse(volumePopup.stringValue) {
+            case .none:            volumeToken = nil
+            case .token(let t):    volumeToken = t
+            case .invalid:
+                let alert = NSAlert()
+                alert.messageText = tr("Invalid volume size")
+                alert.informativeText = tr("Enter a size like 100 MB, 250m, or 1g \u{2014} or choose \u{201C}No split\u{201D}.")
+                alert.addButton(withTitle: tr("OK"))
+                if let w = window { alert.beginSheetModal(for: w) }
+                return   // keep the Pack sheet open
+            }
+        }
+
         let opts = Options(
             baseName: base,
             format: selectedFormat,
             level: levels[levelPopup.indexOfSelectedItem].1,
-            password: (encryptCheck.state == .on && selectedFormat.supportsEncryption) ? passwordField.stringValue : nil
+            password: (encryptCheck.state == .on && selectedFormat.supportsEncryption) ? passwordField.stringValue : nil,
+            volumeSize: volumeToken
         )
         window?.sheetParent?.endSheet(window!, returnCode: .OK)
         onPack?(opts)
