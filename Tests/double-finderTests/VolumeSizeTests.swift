@@ -33,4 +33,21 @@ final class VolumeSizeTests: XCTestCase {
         XCTAssertEqual(VolumeSize.parse("10 tb"), .invalid)              // unknown unit
         XCTAssertEqual(VolumeSize.parse("m100"), .invalid)
     }
+
+    func testLocalizedNoSplitLabelMapsToNone() {
+        // Localized "No split" labels must parse as .none (regression: non-English
+        // UI default was misread as .invalid, blocking Pack entirely).
+        XCTAssertEqual(VolumeSize.parse("不分卷", noSplitLabel: "不分卷"), .none)
+        XCTAssertEqual(VolumeSize.parse("Nicht teilen", noSplitLabel: "Nicht teilen"), .none)
+        XCTAssertEqual(VolumeSize.parse("  不分卷 ", noSplitLabel: "不分卷"), .none)  // trimmed
+        // English still works through the overload too.
+        XCTAssertEqual(VolumeSize.parse("No split", noSplitLabel: "不分卷"), .none)
+    }
+
+    func testLabelOverloadStillParsesRealSizes() {
+        // A real size is parsed normally even when a non-matching label is supplied.
+        XCTAssertEqual(VolumeSize.parse("100 MB", noSplitLabel: "不分卷"), .token("100m"))
+        XCTAssertEqual(VolumeSize.parse("250m", noSplitLabel: "Nicht teilen"), .token("250m"))
+        XCTAssertEqual(VolumeSize.parse("garbage", noSplitLabel: "不分卷"), .invalid)
+    }
 }
