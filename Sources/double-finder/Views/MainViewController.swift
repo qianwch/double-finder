@@ -1248,13 +1248,15 @@ class MainViewController: NSViewController {
     /// Overwrite / Rename… / Cancel (TC-style).
     private func packCheckingOverwrite(archivePath: String, sources: [String],
                                        opts: PackSheet.Options, baseDir: String?, window: NSWindow) {
-        guard FileManager.default.fileExists(atPath: archivePath) else {
+        // For split archives, the first real output is “<archivePath>.001”.
+        let firstOutput = opts.volumeSize != nil ? archivePath + ".001" : archivePath
+        guard FileManager.default.fileExists(atPath: firstOutput) else {
             runPack(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir, window: window)
             return
         }
         let alert = NSAlert()
         alert.messageText = tr("Archive Already Exists")
-        alert.informativeText = tr("“%@” already exists in the destination folder. Overwrite it, or save under a different name?", (archivePath as NSString).lastPathComponent)
+        alert.informativeText = tr("“%@” already exists in the destination folder. Overwrite it, or save under a different name?", (firstOutput as NSString).lastPathComponent)
         alert.addButton(withTitle: tr("Overwrite"))
         alert.addButton(withTitle: tr("Rename…"))
         alert.addButton(withTitle: tr("Cancel"))
@@ -1262,7 +1264,7 @@ class MainViewController: NSViewController {
             guard let self = self else { return }
             switch resp {
             case .alertFirstButtonReturn:                       // Overwrite
-                try? FileManager.default.removeItem(atPath: archivePath)
+                try? FileManager.default.removeItem(atPath: firstOutput)
                 self.runPack(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir, window: window)
             case .alertSecondButtonReturn:                      // Rename…
                 self.promptRenameArchive(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir, window: window)
@@ -1309,7 +1311,8 @@ class MainViewController: NSViewController {
             do {
                 try await LocalFS().createArchive(sources: sources, to: archivePath,
                                                   format: opts.format, level: opts.level,
-                                                  password: opts.password, baseDir: baseDir)
+                                                  password: opts.password, baseDir: baseDir,
+                                                  volumeSize: opts.volumeSize)
                 await MainActor.run { self.inactivePanelVC.panelState.refresh() }
             } catch {
                 await MainActor.run { self.presentLocalizedError(error, in: window) }
