@@ -13,7 +13,7 @@ jobs:
   build-and-test:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The codebase is developed against a modern Swift toolchain and uses
       # Swift 6-era syntax (e.g. `: @preconcurrency Protocol` conformances,
