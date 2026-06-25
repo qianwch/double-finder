@@ -91,6 +91,9 @@ class ZipFS: VirtualFS {
     /// Entries with size/mtime for display. Mirrors `entryPaths` but keeps the
     /// per-entry metadata. Encrypted-7z fallback (path-only) yields zero sizes.
     static func entryDetails(archivePath: String, kind: Kind, password: String? = nil) throws -> [LibArchive.Entry] {
+        if isSplitFirstVolume(archivePath) {
+            return try sevenZipListDetailed(tool: requireSevenZipTool(), archivePath: archivePath, password: password)
+        }
         if kind == .unknown { return [] }
         if kind == .single {
             let size = (try? FileManager.default.attributesOfItem(atPath: archivePath)[.size] as? Int64) ?? nil
@@ -143,6 +146,21 @@ class ZipFS: VirtualFS {
 
     private static func sevenZipTool() -> String? { SevenZip.resolve() }
 
+    /// True if `path` is the first volume of a split archive ("x.7z.001"). 7zz reads
+    /// the whole volume set natively when opened on the .001 (libarchive can't).
+    static func isSplitFirstVolume(_ path: String) -> Bool {
+        FileItem.splitArchiveFirstPartBase((path as NSString).lastPathComponent) != nil
+    }
+
+    private static func requireSevenZipTool() throws -> String {
+        guard let tool = sevenZipTool() else {
+            throw ArchiveToolMissingError(
+                tool: "7z",
+                hint: "Split (multi-volume) archives need 7-Zip.\nInstall it with Homebrew:\n    brew install sevenzip")
+        }
+        return tool
+    }
+
     /// Prints a full diagnostic of how this build handles `archivePath`. Run with
     /// `NC_ARCHIVE_DIAG=/path/to/archive "Double Finder"` from Terminal.
     static func runDiagnostic(on archivePath: String) {
@@ -191,6 +209,39 @@ class ZipFS: VirtualFS {
         return out.split(separator: "\n").compactMap {
             $0.hasPrefix("Path = ") ? String($0.dropFirst("Path = ".count)) : nil
         }
+    }
+
+    /// `7z l -slt -ba` with size/date/folder parsing → full entries (used for split
+    /// archives, which 7zz reads natively). `-slt` emits a blank-line-separated
+    /// block per entry: `Path = …`, `Size = …`, `Modified = …`, `Folder = +/-`.
+    private static func sevenZipListDetailed(tool: String, archivePath: String, password: String?) throws -> [LibArchive.Entry] {
+        var args = ["l", "-slt", "-ba"]
+        if let pw = password, !pw.isEmpty { args.append("-p" + pw) }
+        args.append(archivePath)
+        let (status, out) = runSevenZip(tool, args)
+        if status != 0 || out.contains("Cannot open encrypted archive") || out.contains("Wrong password") {
+            throw ArchiveEncryptedError(archivePath: archivePath)
+        }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX"); df.timeZone = TimeZone(identifier: "UTC")
+        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        var entries: [LibArchive.Entry] = []
+        var path = "", size: Int64 = 0, isDir = false, mtime: Date? = nil
+        func flush() {
+            if !path.isEmpty { entries.append(LibArchive.Entry(path: path, size: size, mtime: mtime, isDir: isDir)) }
+            path = ""; size = 0; isDir = false; mtime = nil
+        }
+        for raw in out.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            if line.isEmpty { flush(); continue }
+            if line.hasPrefix("Path = ") { path = String(line.dropFirst(7)) }
+            else if line.hasPrefix("Size = ") { size = Int64(line.dropFirst(7).trimmingCharacters(in: .whitespaces)) ?? 0 }
+            else if line.hasPrefix("Folder = ") { isDir = line.dropFirst(9).trimmingCharacters(in: .whitespaces) == "+" }
+            else if line.hasPrefix("Attributes = ") { if line.contains("D") { isDir = true } }
+            else if line.hasPrefix("Modified = ") { mtime = df.date(from: String(line.dropFirst(11)).trimmingCharacters(in: .whitespaces)) }
+        }
+        flush()
+        return entries
     }
 
     /// `7z x` to extract a single entry (or the whole archive when `entry` is nil).
@@ -291,6 +342,10 @@ class ZipFS: VirtualFS {
 
     /// Extracts a single internal entry (file, or folder + subtree) to `dest`.
     static func extractEntry(archivePath: String, entry: String, to dest: String, kind: Kind, password: String? = nil) throws {
+        if isSplitFirstVolume(archivePath) {
+            try sevenZipExtract(tool: requireSevenZipTool(), archivePath: archivePath, entry: entry, to: dest, password: password)
+            return
+        }
         do {
             try LibArchive.extractItem(archivePath: archivePath, entry: entry, to: dest, password: password)
         } catch is ArchiveEncryptedError {
@@ -304,6 +359,10 @@ class ZipFS: VirtualFS {
     /// single-file compressors (.gz/.bz2/.xz/.zst) decompress to their inner
     /// name. Throws `ArchiveEncryptedError` for a wrong/missing password.
     static func extractAll(archivePath: String, to dest: String, password: String? = nil) throws {
+        if isSplitFirstVolume(archivePath) {
+            try sevenZipExtract(tool: requireSevenZipTool(), archivePath: archivePath, entry: nil, to: dest, password: password)
+            return
+        }
         do {
             try LibArchive.extractAll(archivePath: archivePath, to: dest, password: password)
         } catch is ArchiveEncryptedError {

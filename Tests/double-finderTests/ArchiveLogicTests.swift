@@ -40,6 +40,25 @@ final class ArchiveLogicTests: XCTestCase {
         XCTAssertTrue(FileItem.isArchiveFileName("blob.zst"))
     }
 
+    // MARK: split archives (.001 first volume)
+
+    func testSplitArchiveFirstVolumeIsEnterable() {
+        // Only the .001 of an archive volume set is enterable.
+        XCTAssertTrue(FileItem.isArchiveFileName("docs.7z.001"))
+        XCTAssertTrue(FileItem.isArchiveFileName("data.zip.001"))
+        XCTAssertTrue(FileItem.isArchiveFileName("logs.tar.gz.001"))
+        XCTAssertEqual(FileItem.splitArchiveFirstPartBase("docs.7z.001"), "docs.7z")
+        XCTAssertEqual(FileItem.splitArchiveFirstPartBase("logs.tar.gz.001"), "logs.tar.gz")
+    }
+
+    func testNonFirstAndNonArchiveVolumesAreNotEnterable() {
+        XCTAssertFalse(FileItem.isArchiveFileName("docs.7z.002"))   // continuation volume
+        XCTAssertFalse(FileItem.isArchiveFileName("docs.7z.003"))
+        XCTAssertFalse(FileItem.isArchiveFileName("movie.001"))     // base ".001" but not an archive name
+        XCTAssertNil(FileItem.splitArchiveFirstPartBase("docs.7z.002"))
+        XCTAssertNil(FileItem.splitArchiveFirstPartBase("movie.001"))
+    }
+
     // MARK: ArchiveFormat
 
     func testArchiveFormatExtensionMatchesRawValue() {

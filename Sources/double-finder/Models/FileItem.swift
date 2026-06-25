@@ -67,7 +67,20 @@ struct FileItem: Identifiable, Hashable {
 
     static func isArchiveFileName(_ name: String) -> Bool {
         let lower = name.lowercased()
-        return archiveSuffixes.contains { lower.hasSuffix($0) }
+        if archiveSuffixes.contains(where: { lower.hasSuffix($0) }) { return true }
+        return splitArchiveFirstPartBase(name) != nil
+    }
+
+    /// For the FIRST volume of a split archive ("docs.7z.001"), returns the inner
+    /// archive name ("docs.7z"); nil otherwise. Only ".001" is treated as an
+    /// enterable archive — ".002"+ stay plain files. 7zz reads the whole volume
+    /// set natively when pointed at the ".001".
+    static func splitArchiveFirstPartBase(_ name: String) -> String? {
+        let lower = name.lowercased()
+        guard lower.hasSuffix(".001") else { return nil }
+        let baseLower = String(lower.dropLast(4))            // strip ".001"
+        guard archiveSuffixes.contains(where: { baseLower.hasSuffix($0) }) else { return nil }
+        return String(name.dropLast(4))
     }
 
     /// The archive file name with its archive extension removed — the default
