@@ -358,5 +358,13 @@
   "Audio / Video": "オーディオ / ビデオ",
   "Source Code": "ソースコード",
   "Documents": "書類",
-  "Reset to Defaults": "デフォルトにリセット"
+  "Reset to Defaults": "デフォルトにリセット",
+  "Volume size:": "分割サイズ：",
+  "No split": "分割しない",
+  "10 MB": "10 MB",
+  "100 MB": "100 MB",
+  "700 MB (CD)": "700 MB (CD)",
+  "4480 MB (DVD)": "4480 MB (DVD)",
+  "Invalid volume size": "分割サイズが無効です",
+  "Enter a size like 100 MB, 250m, or 1g — or choose “No split”.": "100 MB、250m、1g などのサイズを入力するか、「分割しない」を選択してください。"
 }

@@ -358,5 +358,13 @@
   "Audio / Video": "오디오 / 비디오",
   "Source Code": "소스 코드",
   "Documents": "문서",
-  "Reset to Defaults": "기본값으로 재설정"
+  "Reset to Defaults": "기본값으로 재설정",
+  "Volume size:": "분할 크기:",
+  "No split": "분할 안 함",
+  "10 MB": "10 MB",
+  "100 MB": "100 MB",
+  "700 MB (CD)": "700 MB (CD)",
+  "4480 MB (DVD)": "4480 MB (DVD)",
+  "Invalid volume size": "분할 크기가 잘못됨",
+  "Enter a size like 100 MB, 250m, or 1g — or choose “No split”.": "100 MB, 250m, 1g 같은 크기를 입력하거나 '분할 안 함'을 선택하세요."
 }
