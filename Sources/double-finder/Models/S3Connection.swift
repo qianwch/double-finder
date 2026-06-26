@@ -34,6 +34,16 @@ struct S3Connection: Equatable {
 
     /// Host of the endpoint URL (Keychain server attribute).
     var endpointHost: String { URL(string: endpoint)?.host ?? endpoint }
+
+    /// True when both connections address the **same S3 store** — same endpoint,
+    /// region, access key and addressing style — so a server-side `copyObject`
+    /// between them is valid. The bucket is intentionally NOT compared: it comes
+    /// from the browsed path, so same-store cross-bucket copy/move is supported.
+    /// (Same endpoint host + access key ⇒ same Keychain secret, so credentials match.)
+    func sameStore(as other: S3Connection) -> Bool {
+        endpoint == other.endpoint && region == other.region
+            && accessKey == other.accessKey && pathStyle == other.pathStyle
+    }
 }
 
 enum S3ConnectionStore {

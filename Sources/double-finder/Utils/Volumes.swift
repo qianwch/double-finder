@@ -36,6 +36,7 @@ enum Volumes {
             .volumeNameKey, .volumeAvailableCapacityForImportantUsageKey,
             .volumeTotalCapacityKey, .volumeIsBrowsableKey,
             .volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsRootFileSystemKey,
+            .volumeIsLocalKey,
         ]
         let urls = FileManager.default.mountedVolumeURLs(
             includingResourceValuesForKeys: keys,
@@ -47,8 +48,10 @@ enum Volumes {
             let name = vals.volumeName ?? url.lastPathComponent
             let free = Int64(vals.volumeAvailableCapacityForImportantUsage ?? 0)
             let total = Int64(vals.volumeTotalCapacity ?? 0)
-            // Ejectable = removable/ejectable media but never the boot volume.
-            let ejectable = (vals.volumeIsEjectable == true || vals.volumeIsRemovable == true)
+            // Ejectable = removable/ejectable media, or a network mount (SMB/AFP/NFS —
+            // ejecting it unmounts/disconnects the share), but never the boot volume.
+            let ejectable = (vals.volumeIsEjectable == true || vals.volumeIsRemovable == true
+                             || vals.volumeIsLocal == false)
                 && vals.volumeIsRootFileSystem != true
             result.append(VolumeInfo(url: url, name: name, freeBytes: free,
                                      totalBytes: total, isEjectable: ejectable))
@@ -63,8 +66,18 @@ enum Volumes {
             .max { $0.url.path.count < $1.url.path.count }
     }
 
-    /// Unmounts and ejects the volume at `url`. Throws on failure (busy, in use…).
-    static func eject(_ url: URL) throws {
-        try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+    /// Unmounts and ejects the volume at `url` **asynchronously** (the work — a
+    /// network round-trip for SMB/AFP/NFS, or spinning down a disk — can take a
+    /// while and must never block the main thread). `completion` runs on the main
+    /// queue with nil on success or the error on failure (busy / in use / …).
+    static func eject(_ url: URL, completion: @escaping (Error?) -> Void) {
+        // `.allPartitionsAndEjectDisk` matches the old `unmountAndEjectDevice`
+        // (physically ejects removable media; a no-op extra for network shares,
+        // which just unmount). `.withoutUI` keeps macOS from popping its own
+        // dialogs — failures surface through our own alert instead.
+        FileManager.default.unmountVolume(at: url,
+                                          options: [.allPartitionsAndEjectDisk, .withoutUI]) { error in
+            DispatchQueue.main.async { completion(error) }
+        }
     }
 }

@@ -338,9 +338,10 @@ class PanelState: ObservableObject {
                     self.isLoading = false
                     self.rebuildItems(selectedNames: [], cursorName: nil, sizes: [:])
                     self.watcher.watch(path)
-                    // A missing archive tool (7z/unrar) leaves the listing empty;
+                    // A missing archive tool (7z/unrar) or an unopenable archive
+                    // (corrupt / incomplete split set) leaves the listing empty;
                     // tell the user why instead of just showing a blank panel.
-                    if error is ArchiveToolMissingError {
+                    if error is ArchiveToolMissingError || error is ArchiveOpenError {
                         self.onError?(error)
                     }
                 }
@@ -478,6 +479,49 @@ class PanelState: ObservableObject {
             cursorIndex = max(0, result.count - 1)
         }
         selectionAnchor = max(0, min(selectionAnchor, result.count - 1))
+    }
+
+    /// Reflects a just-completed rename in the loaded listing **without a network
+    /// re-list** — instant feedback. This matters most on remote backends: an S3
+    /// re-list is a network round-trip, and on eventually-consistent S3-compatible
+    /// stores a freshly-renamed object can be missing from an immediate LIST, so
+    /// the new name would only appear after a long delay. We update the cached item
+    /// directly instead; the next navigation/refresh (or the local DirectoryWatcher)
+    /// reconciles with the server. Falls back to a full reload if the renamed item
+    /// isn't a top-level entry (e.g. an expanded sub-folder child).
+    /// The path an item takes after an in-place rename: same parent, new last
+    /// component. A directory keeps its trailing slash (S3 folder paths end in "/"
+    /// so the backend detects them as dirs). Pure — unit-tested.
+    nonisolated static func renamedPath(oldPath: String, newName: String, isDirectory: Bool) -> String {
+        let parent = (oldPath as NSString).deletingLastPathComponent
+        var newPath = (parent.isEmpty || parent == "/") ? "/" + newName : parent + "/" + newName
+        if isDirectory && oldPath.hasSuffix("/") && !newPath.hasSuffix("/") { newPath += "/" }
+        return newPath
+    }
+
+    func applyLocalRename(oldPath: String, to newName: String) {
+        guard let idx = allLoadedItems.firstIndex(where: { $0.path == oldPath }) else {
+            loadDirectory(preserveSelection: true); return
+        }
+        let old = allLoadedItems[idx]
+        let newPath = Self.renamedPath(oldPath: oldPath, newName: newName, isDirectory: old.isDirectory)
+        var renamed = FileItem(
+            id: old.id, name: newName, path: newPath, isDirectory: old.isDirectory,
+            isArchive: old.isDirectory ? false : FileItem.isArchiveFileName(newName),
+            size: old.size, modified: old.modified,
+            isHidden: newName.hasPrefix("."), isSymlink: old.isSymlink, permissions: old.permissions)
+        renamed.calculatedSize = old.calculatedSize
+        renamed.dateAdded = old.dateAdded
+        renamed.dateCreated = old.dateCreated
+        allLoadedItems[idx] = renamed
+        allLoadedItems = sortItems(allLoadedItems)   // re-place into sorted order
+        // A renamed folder's expanded children paths are now stale → collapse it.
+        if old.isDirectory {
+            expandedPaths = expandedPaths.filter { $0 != oldPath && !$0.hasPrefix(oldPath) }
+            expandedChildren = expandedChildren.filter { $0.key != oldPath && !$0.key.hasPrefix(oldPath) }
+        }
+        cursorMemory[Self.memoryKey(currentPath)] = newName
+        rebuildItems(selectedNames: [], cursorName: newPath, sizes: [:])
     }
 
     /// Re-reads the directory while keeping the cursor and selection in place.

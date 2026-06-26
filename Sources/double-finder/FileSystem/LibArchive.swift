@@ -256,7 +256,19 @@ enum LibArchive {
             if r < WARN { try throwClassified(a, archivePath: archivePath) }
             guard let e = entry else { continue }
             let name = normalize(entryName(e, encoding: enc))
-            guard let out = outputPath(name) else { archive_read_data_skip(a); continue }
+            guard let out = outputPath(name) else {
+                // Skip this entry. In a SOLID 7z all entries share one compressed
+                // block, and `archive_read_data_skip` can't advance through it
+                // without decompressing — a later wanted entry would then fail with
+                // "Truncated 7-Zip file body". So for 7z, read+discard (forces the
+                // decompression) instead of seeking. Other formats skip cheaply.
+                if archive_format(a) == ARCHIVE_FORMAT_7ZIP {
+                    try drainData(from: a, archivePath: archivePath)
+                } else {
+                    archive_read_data_skip(a)
+                }
+                continue
+            }
             // Redirect this entry to the chosen destination (keep type/perm/symlink).
             archive_entry_set_pathname(e, out)
             archive_entry_set_pathname_utf8(e, out)
@@ -279,6 +291,22 @@ enum LibArchive {
             // Bare single-file stream (raw): libarchive named it "data"; write it
             // out under the source name minus its compression suffix.
             try extractRaw(archivePath: archivePath, password: password, outputPath: outputPath)
+        }
+    }
+
+    /// libarchive's format code for 7-Zip (`ARCHIVE_FORMAT_7ZIP` from archive.h).
+    private static let ARCHIVE_FORMAT_7ZIP: Int32 = 0xE0000
+
+    /// Reads and discards the current entry's data — used to advance past an
+    /// unwanted entry in a solid archive (where a plain skip can't decompress).
+    private static func drainData(from a: OpaquePointer, archivePath: String) throws {
+        let bufSize = 256 * 1024
+        let buf = UnsafeMutableRawPointer.allocate(byteCount: bufSize, alignment: 16)
+        defer { buf.deallocate() }
+        while true {
+            let n = archive_read_data(a, buf, bufSize)
+            if n == 0 { break }
+            if n < 0 { try throwClassified(a, archivePath: archivePath) }
         }
     }
 

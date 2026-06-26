@@ -175,6 +175,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cmdMenu.addItem(.separator())
         cmdMenu.addItem(NSMenuItem(title: tr("Focus Command Line"), action: #selector(menuFocusCommandLine), keyEquivalent: "l"))
         cmdMenu.addItem(NSMenuItem(title: tr("Customize Shortcuts…"), action: #selector(menuCustomizeShortcuts), keyEquivalent: ""))
+        cmdMenu.addItem(.separator())
+        cmdMenu.addItem(NSMenuItem(title: tr("Clean Up Incomplete Uploads…"),
+                                   action: #selector(menuCleanupUploads), keyEquivalent: ""))
 
         // Favorites menu (populated dynamically via menuNeedsUpdate)
         let favMenuItem = NSMenuItem(title: tr("Favorites"), action: nil, keyEquivalent: "")
@@ -380,6 +383,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuExtract() { mainVC()?.actionExtractArchive() }
     @objc private func menuFindFiles() { mainVC()?.actionFindFiles() }
     @objc private func menuMultiRename() { mainVC()?.actionMultiRename() }
+    @objc private func menuCleanupUploads() { mainVC()?.actionCleanupIncompleteUploads() }
     @objc private func menuCompareDirs() { mainVC()?.actionCompareDirectories() }
     @objc private func menuSyncDirs() { mainVC()?.actionSynchronize() }
     @objc private func menuNewTab() { mainVC()?.activePanelVC.newTab() }

@@ -353,7 +353,7 @@ class MainViewController: NSViewController {
 
     private func setupFunctionKeyActions() {
         functionKeyBar.actions = [
-            FunctionKeyBar.KeyAction(label: "View", key: "F3") { [weak self] in self?.actionQuickLook() },
+            FunctionKeyBar.KeyAction(label: ctxKey("View", "f3"), key: "F3") { [weak self] in self?.actionQuickLook() },
             FunctionKeyBar.KeyAction(label: "Edit", key: "F4") { [weak self] in self?.actionOpenInEditor() },
             FunctionKeyBar.KeyAction(label: "Copy", key: "F5") { [weak self] in self?.actionCopy() },
             FunctionKeyBar.KeyAction(label: "Move", key: "F6") { [weak self] in self?.actionMove() },
@@ -475,6 +475,12 @@ class MainViewController: NSViewController {
         // Cmd+L: focus the command line
         if chars == "l" && flags.contains(.command) {
             focusCommandLine()
+            return true
+        }
+
+        // Cmd+I: Get Info (Finder's info window).
+        if chars == "i" && flags == [.command] {
+            actionGetInfo()
             return true
         }
 
@@ -918,6 +924,11 @@ class MainViewController: NSViewController {
 
     /// Pick the provider for a copy from `src` panel to `dst` panel.
     private func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) -> TransferProvider {
+        // Same S3 store on both panels (same endpoint + AK/SK, bucket may differ)
+        // → server-side copy (no download/upload round-trip).
+        if let s = src.s3, let d = dst.s3, s.sameStore(as: d), let client = src.s3Client {
+            return S3SameStoreProvider(client: client, move: false)
+        }
         if src.s3 != nil, let client = src.s3Client {
             return S3TransferProvider(client: client, downloading: true)
         }
@@ -972,8 +983,17 @@ class MainViewController: NSViewController {
     }
 
     func actionMove() {
+        let src = activePanelVC.panelState
         let dst = inactivePanelVC.panelState
-        runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst, provider: LocalMoveProvider())
+        let provider: TransferProvider
+        // Same S3 store on both panels (same endpoint + AK/SK, bucket may differ)
+        // → server-side move (copy + delete, no round-trip).
+        if let s = src.s3, let d = dst.s3, s.sameStore(as: d), let client = src.s3Client {
+            provider = S3SameStoreProvider(client: client, move: true)
+        } else {
+            provider = LocalMoveProvider()
+        }
+        runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst, provider: provider)
     }
 
     /// Shows the Overwrite / Skip / Cancel dialog for a precomputed conflict list,
@@ -1496,6 +1516,99 @@ class MainViewController: NSViewController {
         }
     }
 
+    /// Renames a large S3 object via a cancelable progress sheet. S3 has no native
+    /// rename — it's a server-side `copyObject` (multipart for big objects, so >5GB
+    /// works and progress is reported) followed by `deleteObject`. On success the
+    /// row updates in place; on cancel/failure the source is left untouched and the
+    /// listing is refreshed to reflect the true server state.
+    func panelViewController(_ vc: PanelViewController, renameLargeS3File item: FileItem, to newName: String) {
+        let state = vc.panelState
+        guard let client = state.s3Client else { return }
+        let (bucketOpt, key) = parseS3Path(item.path)
+        guard let bucket = bucketOpt, !key.isEmpty else { return }
+        let parent = (key as NSString).deletingLastPathComponent
+        let dstKey = parent.isEmpty ? newName : parent + "/" + newName
+        let size = item.size
+
+        let op = FileOperation(type: .copy, sources: [item.path], destination: item.path)
+        op.customTitle = tr("Renaming")
+        op.totalBytes = size
+        op.transferUnits = [FileOperation.Unit(label: newName, bytes: size) { report in
+            try await client.copyObject(srcBucket: bucket, srcKey: key, dstBucket: bucket, dstKey: dstKey,
+                                        sourceSize: size, progress: report)
+            try await client.deleteObject(bucket: bucket, key: key)
+        }]
+        runOperation(op) { [weak vc] in
+            guard let vc = vc else { return }
+            if op.isCancelled { op.suppressFailureReport = true }   // user cancel isn't a failure to report
+            if op.failures.isEmpty && !op.isCancelled {
+                vc.panelState.applyLocalRename(oldPath: item.path, to: newName)
+            } else {
+                vc.panelState.loadDirectory(preserveSelection: true)   // canceled/failed → reconcile
+            }
+        }
+    }
+
+    /// Lists and (on confirmation) aborts the active S3 bucket's incomplete multipart
+    /// uploads — the storage-consuming fragments left when an upload is interrupted.
+    func actionCleanupIncompleteUploads() {
+        guard let window = view.window else { return }
+        let panel = appState.activePanelState
+        func inform(_ msg: String) {
+            let a = NSAlert(); a.messageText = tr(msg); a.beginSheetModal(for: window)
+        }
+        guard panel.s3 != nil, let client = panel.s3Client else {
+            inform("Connect to an S3 server first."); return
+        }
+        guard let bucket = parseS3Path(panel.currentPath).bucket else {
+            inform("Open a bucket first to clean up its incomplete uploads."); return
+        }
+        Task {
+            do {
+                let uploads = try await client.listMultipartUploads(bucket: bucket)
+                await MainActor.run {
+                    guard !uploads.isEmpty else {
+                        inform("No incomplete uploads were found in this bucket."); return
+                    }
+                    let df = DateFormatter(); df.dateStyle = .short; df.timeStyle = .short
+                    let lines = uploads.prefix(12).map { u -> String in
+                        let when = u.initiated.map { " — \(df.string(from: $0))" } ?? ""
+                        return "• \(u.key)\(when)"
+                    }
+                    var info = lines.joined(separator: "\n")
+                    if uploads.count > 12 { info += "\n" + tr("…and %d more", uploads.count - 12) }
+                    info += "\n\n" + tr("Aborting frees the storage they consume; any upload still in progress will be canceled.")
+                    let a = NSAlert()
+                    a.alertStyle = .warning
+                    a.messageText = tr("%d incomplete upload(s) found in “%@”", uploads.count, bucket)
+                    a.informativeText = info
+                    a.addButton(withTitle: tr("Abort All"))
+                    a.addButton(withTitle: tr("Cancel"))
+                    a.beginSheetModal(for: window) { [weak self] resp in
+                        guard resp == .alertFirstButtonReturn, let self = self else { return }
+                        Task {
+                            var failed = 0
+                            for u in uploads {
+                                do { try await client.abortMultipartUpload(bucket: bucket, key: u.key, uploadId: u.uploadId) }
+                                catch { failed += 1 }
+                            }
+                            await MainActor.run {
+                                let done = NSAlert()
+                                done.messageText = failed == 0
+                                    ? tr("Cleaned up %d incomplete upload(s).", uploads.count)
+                                    : tr("Aborted %d, but %d could not be removed.", uploads.count - failed, failed)
+                                done.beginSheetModal(for: window)
+                                self.appState.activePanelState.refresh()
+                            }
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run { self.presentLocalizedError(error, in: window) }
+            }
+        }
+    }
+
     /// Copies (or moves) external file URLs into `dest`, with a conflict prompt.
     /// Shared by paste and drag-and-drop. Local destination only.
     private func importExternalFiles(_ urls: [URL], into dest: String, move: Bool,
@@ -1878,6 +1991,44 @@ extension MainViewController {
         if let item = activePanelVC.currentItem { openItem(item, in: activePanelVC) }
     }
 
+    /// "Get Info" — opens Finder's own info window for the selected local files
+    /// (exactly like Finder's ⌘I). Remote/archive entries have no local file and
+    /// are skipped. Driving Finder needs Automation permission the first time
+    /// (macOS prompts; if denied we surface a hint).
+    @objc func actionGetInfo() {
+        let paths = activePanelVC.selectedOrCurrent
+            .filter { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }
+            .map { $0.path }
+        guard !paths.isEmpty else { NSSound.beep(); return }
+        // Build: tell Finder to open an information window per file (Finder's Get Info).
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        var src = "tell application \"Finder\"\nactivate\n"
+        for p in paths { src += "open information window of (POSIX file \"\(esc(p))\" as alias)\n" }
+        src += "end tell"
+        let window = view.window
+        DispatchQueue.global(qos: .userInitiated).async {
+            var err: NSDictionary?
+            NSAppleScript(source: src)?.executeAndReturnError(&err)
+            guard let err = err else { return }
+            let code = (err[NSAppleScript.errorNumber] as? Int) ?? 0
+            DispatchQueue.main.async {
+                guard let window = window else { return }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                // -1743 = not authorized to send Apple events to Finder.
+                alert.messageText = code == -1743
+                    ? tr("Double Finder needs permission to control Finder.")
+                    : tr("Could not open the info window.")
+                if code == -1743 {
+                    alert.informativeText = tr("Allow it in System Settings ▸ Privacy & Security ▸ Automation, then try again.")
+                }
+                alert.beginSheetModal(for: window)
+            }
+        }
+    }
+
     // MARK: - Open in Terminal (configurable)
 
     /// Common macOS terminal apps (display name, bundle id), in preference order.
@@ -2107,6 +2258,10 @@ extension MainViewController: PanelViewControllerDelegate {
             }
             add(tr("Quick Look"), #selector(actionQuickLook_menu))
             add(tr("Edit"), #selector(actionOpenInEditor_menu))
+            // Get Info (Finder's own info window, ⌘I) — local files only.
+            if targets.contains(where: { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }) {
+                add(tr("Get Info"), #selector(actionGetInfo), key: "i", mask: [.command])
+            }
             menu.addItem(.separator())
             add(tr("Copy"), #selector(ctxCopyFiles), key: "c", mask: [.command])
             add(tr("Paste"), #selector(ctxPasteFiles), key: "v", mask: [.command])

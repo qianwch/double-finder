@@ -3,6 +3,49 @@ import XCTest
 
 final class S3XMLTests: XCTestCase {
 
+    func testParseMultipartUploads() {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListMultipartUploadsResult>
+          <Bucket>b</Bucket><IsTruncated>false</IsTruncated>
+          <Upload><Key>big.bin</Key><UploadId>UID1</UploadId><Initiated>2026-06-26T01:02:03.000Z</Initiated></Upload>
+          <Upload><Key>dir/x.vhd</Key><UploadId>UID2</UploadId><Initiated>2026-06-25T10:00:00Z</Initiated></Upload>
+        </ListMultipartUploadsResult>
+        """
+        let r = S3XML.multipartUploads(Data(xml.utf8))
+        XCTAssertEqual(r.uploads.count, 2)
+        XCTAssertEqual(r.uploads[0], S3UploadInfo(key: "big.bin", uploadId: "UID1",
+            initiated: ISO8601DateFormatter().date(from: "2026-06-26T01:02:03Z")))
+        XCTAssertEqual(r.uploads[1].key, "dir/x.vhd")
+        XCTAssertEqual(r.uploads[1].uploadId, "UID2")
+        XCTAssertNil(r.nextKeyMarker, "not truncated → no marker")
+    }
+
+    func testParseMultipartUploadsTruncated() {
+        let xml = """
+        <ListMultipartUploadsResult><IsTruncated>true</IsTruncated>
+          <NextKeyMarker>k9</NextKeyMarker><NextUploadIdMarker>u9</NextUploadIdMarker>
+          <Upload><Key>a</Key><UploadId>U</UploadId></Upload>
+        </ListMultipartUploadsResult>
+        """
+        let r = S3XML.multipartUploads(Data(xml.utf8))
+        XCTAssertEqual(r.nextKeyMarker, "k9")
+        XCTAssertEqual(r.nextUploadIdMarker, "u9")
+        XCTAssertNil(r.uploads[0].initiated, "missing Initiated → nil")
+    }
+
+    func testParseCopyPartETag() {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <CopyPartResult><LastModified>2026-06-26T00:00:00.000Z</LastModified><ETag>"abc123def456"</ETag></CopyPartResult>
+        """
+        XCTAssertEqual(S3XML.copyPartETag(Data(xml.utf8)), "\"abc123def456\"")
+    }
+
+    func testParseCopyPartETagMissing() {
+        XCTAssertNil(S3XML.copyPartETag(Data("<Error><Code>NoSuchKey</Code></Error>".utf8)))
+    }
+
     func testParseS3Path() {
         XCTAssertEqual(parseS3Path("/").bucket, nil)
         XCTAssertEqual(parseS3Path("/").key, "")
