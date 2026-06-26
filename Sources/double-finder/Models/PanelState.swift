@@ -359,7 +359,8 @@ class PanelState: ObservableObject {
     private func rebuildItems(selectedNames: Set<String>, cursorName: String?, sizes: [String: Int64]) {
         var body = allLoadedItems
         if !filter.isEmpty {
-            body = body.filter { $0.name.localizedCaseInsensitiveContains(filter) }
+            // TC quick search: begins-with on the name OR its pinyin initials.
+            body = body.filter { QuickFilter.matches(name: $0.name, query: filter) }
         }
         var result: [FileItem] = []
         if currentPath != "/" {
