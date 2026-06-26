@@ -321,6 +321,18 @@ class PanelViewController: NSViewController {
     }
 
     // MARK: - Quick filter
+
+    /// Type-to-search (TC quick search): a printable key in the file list opens the
+    /// filter bar and appends the character, narrowing the list live. Continues the
+    /// current filter if one is already active (Esc clears it).
+    func beginQuickFilter(appending ch: Character) {
+        beginFilter()                                  // reveal + focus the field
+        let text = filterField.stringValue + String(ch)
+        filterField.stringValue = text
+        filterField.currentEditor()?.selectedRange = NSRange(location: text.count, length: 0)
+        panelState.applyFilter(text)
+    }
+
     func beginFilter() {
         filterField.isHidden = false
         filterHeightConstraint.constant = 24

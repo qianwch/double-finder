@@ -626,9 +626,10 @@ class MainViewController: NSViewController {
             if chars == "*" { activePanelVC.panelState.invertSelection(); return true }
         }
 
-        // Letter keys: jump to file starting with that letter
-        if flags.isEmpty && chars.count == 1, let char = chars.first, char.isLetter {
-            activePanelVC.fileTableView?.jumpToLetter(char)
+        // Printable letter/digit: start (or extend) the TC-style quick search —
+        // opens the filter bar and narrows the list live (begins-with + pinyin).
+        if flags.isEmpty && chars.count == 1, let char = chars.first, char.isLetter || char.isNumber {
+            activePanelVC.beginQuickFilter(appending: char)
             return true
         }
 
