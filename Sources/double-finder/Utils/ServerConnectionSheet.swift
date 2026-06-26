@@ -30,6 +30,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     private var discoveredTable: NSTableView!
 
     // SFTP fields
+    private let sftpName = NSTextField()
     private let sftpHost = NSTextField()
     private let sftpUser = NSTextField()
     private let sftpPort = NSTextField()
@@ -160,13 +161,14 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         content.addSubview(discScroll)
 
         // --- SFTP form rows ---
-        let sfH  = makeLabel(tr("Host:"),        y: 340); let sfHf  = sftpHost;  sftpHost.frame  = fieldRect(y: 340)
-        let sfPo = makeLabel(tr("Port:"),        y: 306); let sfPof = sftpPort;  sftpPort.frame  = fieldRect(y: 306)
-        let sfU  = makeLabel(tr("Username:"),    y: 272); let sfUf  = sftpUser;  sftpUser.frame  = fieldRect(y: 272)
-        let sfK  = makeLabel(tr("Key File:"),    y: 238); let sfKf  = sftpKey;   sftpKey.frame   = fieldRect(y: 238)
-        let sfPa = makeLabel(tr("Remote Path:"), y: 204); let sfPaf = sftpPath;  sftpPath.frame  = fieldRect(y: 204)
-        for v in [sfH, sfHf, sfPo, sfPof, sfU, sfUf, sfK, sfKf, sfPa, sfPaf] { content.addSubview(v) }
-        sftpRows = [sfH, sfHf, sfPo, sfPof, sfU, sfUf, sfK, sfKf, sfPa, sfPaf]
+        let sfN  = makeLabel(tr("Name:"),        y: 340); let sfNf  = sftpName;  sftpName.frame  = fieldRect(y: 340)
+        let sfH  = makeLabel(tr("Host:"),        y: 306); let sfHf  = sftpHost;  sftpHost.frame  = fieldRect(y: 306)
+        let sfPo = makeLabel(tr("Port:"),        y: 272); let sfPof = sftpPort;  sftpPort.frame  = fieldRect(y: 272)
+        let sfU  = makeLabel(tr("Username:"),    y: 238); let sfUf  = sftpUser;  sftpUser.frame  = fieldRect(y: 238)
+        let sfK  = makeLabel(tr("Key File:"),    y: 204); let sfKf  = sftpKey;   sftpKey.frame   = fieldRect(y: 204)
+        let sfPa = makeLabel(tr("Remote Path:"), y: 170); let sfPaf = sftpPath;  sftpPath.frame  = fieldRect(y: 170)
+        for v in [sfN, sfNf, sfH, sfHf, sfPo, sfPof, sfU, sfUf, sfK, sfKf, sfPa, sfPaf] { content.addSubview(v) }
+        sftpRows = [sfN, sfNf, sfH, sfHf, sfPo, sfPof, sfU, sfUf, sfK, sfKf, sfPa, sfPaf]
 
         // --- S3 form rows ---
         let s3NL = makeLabel(tr("Name:"),             y: 340); s3Name.frame     = fieldRect(y: 340)
@@ -269,7 +271,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
                 user: sftpUser.stringValue.trimmingCharacters(in: .whitespaces),
                 port: Int(sftpPort.stringValue) ?? 22,
                 keyPath: sftpKey.stringValue.trimmingCharacters(in: .whitespaces),
-                remotePath: sftpPath.stringValue.trimmingCharacters(in: .whitespaces))
+                remotePath: sftpPath.stringValue.trimmingCharacters(in: .whitespaces),
+                name: sftpName.stringValue.trimmingCharacters(in: .whitespaces))
             return (.sftp(c), nil)
         case 1: // S3
             var endpoint = s3Endpoint.stringValue.trimmingCharacters(in: .whitespaces)
@@ -300,6 +303,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     private func populate(_ conn: ServerConnection) {
         switch conn {
         case .sftp(let c):
+            sftpName.stringValue = c.name
             sftpHost.stringValue = c.host
             sftpPort.stringValue = "\(c.port)"
             sftpUser.stringValue = c.user
@@ -321,6 +325,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     }
 
     private func clearForm() {
+        sftpName.stringValue = ""
         sftpHost.stringValue = ""
         sftpPort.stringValue = "22"
         sftpUser.stringValue = ""
@@ -481,6 +486,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             smbHost.stringValue = svc.host ?? ""
         case .sftp:
             selectKind(0)
+            if sftpName.stringValue.isEmpty { sftpName.stringValue = svc.name }
             sftpHost.stringValue = svc.host ?? ""
             if let port = svc.port { sftpPort.stringValue = "\(port)" }
         }

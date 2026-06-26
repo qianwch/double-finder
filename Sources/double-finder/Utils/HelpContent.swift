@@ -35,6 +35,7 @@ enum HelpContent {
             Shortcut(nameKey: "Select by Pattern", keys: "+"),
             Shortcut(nameKey: "Unselect by Pattern", keys: "-"),
             Shortcut(nameKey: "Invert Selection", keys: "*"),
+            Shortcut(nameKey: "Calculate All Folder Sizes", keys: "⌥⇧Space"),
             Shortcut(nameKey: "Quick Filter", keys: "⌘F"),
         ]),
         ShortcutGroup(titleKey: "File Operations", shortcuts: [

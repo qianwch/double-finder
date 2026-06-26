@@ -1,16 +1,17 @@
 import Foundation
 
-/// Total-Commander-style quick search matching: case-insensitive **begins-with**
-/// on the literal name, OR on the name's **pinyin-initial folding** so that e.g.
-/// typing "cs" matches "测试" (测=c, 试=s). Pure logic — unit-tested.
+/// Total-Commander-style quick search matching: case-insensitive **substring**
+/// (matches anywhere, not just the start) on the literal name, OR on the name's
+/// **pinyin-initial folding** so that e.g. typing "cs" matches "测试" (测=c, 试=s)
+/// and "我的测试" too. Pure logic — unit-tested.
 enum QuickFilter {
     /// True when `name` should be kept for quick-search text `query`. Empty query
     /// matches everything.
     static func matches(name: String, query: String) -> Bool {
         let q = query.lowercased()
         guard !q.isEmpty else { return true }
-        if name.lowercased().hasPrefix(q) { return true }     // literal prefix (incl. ASCII / typed CJK)
-        return initials(of: name).hasPrefix(q)                // pinyin-initial prefix
+        if name.lowercased().contains(q) { return true }      // literal substring (incl. ASCII / typed CJK)
+        return initials(of: name).contains(q)                 // pinyin-initial substring
     }
 
     /// Folds a name to a lowercase key for prefix matching: every CJK character →

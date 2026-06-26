@@ -612,6 +612,12 @@ class MainViewController: NSViewController {
             return true
         }
 
+        // Alt+Shift+Space: calculate sizes of ALL visible folders at once (TC).
+        if keyCode == 49 && flags.contains(.option) && flags.contains(.shift) && !flags.contains(.command) {
+            activePanelVC.panelState.calculateAllFolderSizes()
+            return true
+        }
+
         // Space: toggle selection and move down
         if keyCode == 49 && flags.isEmpty {
             activePanelVC.toggleSelectionAtCursor()

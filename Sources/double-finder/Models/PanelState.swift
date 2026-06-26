@@ -627,6 +627,15 @@ class PanelState: ObservableObject {
         onChange?()
     }
 
+    /// Computes the recursive size of **every visible folder** in the panel at
+    /// once (TC's Alt+Shift+Space). Each folder is sized independently/concurrently
+    /// via `calculateSize`; already-computed and non-directory rows are skipped.
+    func calculateAllFolderSizes() {
+        for index in items.indices where items[index].isDirectory && items[index].name != ".." {
+            calculateSize(at: index)
+        }
+    }
+
     /// Asynchronously computes the recursive size of the directory at `index`
     /// and shows it in the Size column. No-op for files or already-computed dirs.
     func calculateSize(at index: Int) {
@@ -644,6 +653,29 @@ class PanelState: ObservableObject {
                     // itemsVersion, so the async folder-size result must mark the
                     // list dirty or the Size column would stay blank.
                     self.itemsVersion &+= 1
+                }
+                // Write the computed size back into the authoritative caches too,
+                // not just the visible `items` — otherwise re-sorting by Size (which
+                // sorts `allLoadedItems`) would still see calculatedSize == nil and
+                // fall back to the shallow folder size.
+                if let i = self.allLoadedItems.firstIndex(where: { $0.id == id }) {
+                    self.allLoadedItems[i].calculatedSize = size
+                }
+                for (parent, var kids) in self.expandedChildren {
+                    if let i = kids.firstIndex(where: { $0.id == id }) {
+                        kids[i].calculatedSize = size
+                        self.expandedChildren[parent] = kids
+                        break
+                    }
+                }
+                // When the list is sorted by Size, the freshly computed size changes
+                // this folder's rank — re-sort so it settles into place (TC behavior;
+                // folders jump into order as their sizes arrive). resort() reassigns
+                // `items` (→ itemsVersion bump) and fires onChange itself, preserving
+                // the cursor/selection by path. Other sort columns just repaint.
+                if self.sortColumn == .size {
+                    self.resort()
+                } else {
                     self.onChange?()
                 }
             }
