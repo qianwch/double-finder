@@ -90,8 +90,16 @@ final class Localizer {
         return Language(rawValue: stored) ?? .system
     }
 
+    /// Separator for context-disambiguated keys ("Base␄context"). Lets the same
+    /// English word carry different translations by context — e.g. the "View" menu
+    /// (视图) vs the F3 "View" file action (查看). A language without a specific
+    /// entry falls back to the base part, so English (identity) still shows "View".
+    nonisolated static let contextSeparator: Character = "\u{4}"
+
     func string(for key: String) -> String {
-        return table[key] ?? key
+        if let v = table[key] { return v }
+        if let sep = key.firstIndex(of: Self.contextSeparator) { return String(key[..<sep]) }
+        return key
     }
 
     private static func loadTable(for language: Language) -> [String: String] {
@@ -110,6 +118,14 @@ final class Localizer {
 @MainActor
 func tr(_ key: String) -> String {
     return Localizer.shared.string(for: key)
+}
+
+/// Builds a context-disambiguated translation key ("base␄context"). English /
+/// identity fallback shows just `base`; packs can translate (base, context) on its
+/// own — for words that need different translations by context (e.g. "View" the
+/// menu = 视图 vs the F3 "View"-a-file action = 查看).
+func ctxKey(_ base: String, _ context: String) -> String {
+    "\(base)\(Localizer.contextSeparator)\(context)"
 }
 
 /// Translate then apply printf-style arguments (placeholders preserved per language).

@@ -49,4 +49,37 @@ final class ZipSplitTests: XCTestCase {
         try ZipFS.extractEntry(archivePath: dir + "/docs.7z.001", entry: "src/a.txt", to: out, kind: .unknown)
         XCTAssertEqual(try String(contentsOfFile: out + "/src/a.txt", encoding: .utf8), "alpha")
     }
+
+    /// An *incomplete* multi-volume set (the final volume — which holds the 7z
+    /// end-header — is missing) must report a plain "can't open" error, NOT an
+    /// encryption error. Regression: a missing volume used to be misread as a
+    /// password-protected archive, so double-clicking it prompted for a password.
+    func testIncompleteSplitArchiveReportsOpenErrorNotPassword() throws {
+        guard anySevenZip() != nil else { throw XCTSkip("no 7z tool available") }
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "splitbad-\(ProcessInfo.processInfo.globallyUniqueString)"
+        try fm.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
+        let rnd = FileHandle(forReadingAtPath: "/dev/urandom")!
+        let blob = rnd.readData(ofLength: 400 * 1024); rnd.closeFile()
+        try blob.write(to: URL(fileURLWithPath: dir + "/src/big.bin"))
+        defer { try? fm.removeItem(atPath: dir) }
+
+        let p = Process(); p.executableURL = URL(fileURLWithPath: anySevenZip()!)
+        p.currentDirectoryURL = URL(fileURLWithPath: dir)
+        p.arguments = ["a", "-v100k", "docs.7z", "./src"]
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+
+        // Delete the last volume → the end-header is gone, so 7z can't open it.
+        let vols = (try fm.contentsOfDirectory(atPath: dir))
+            .filter { $0.hasPrefix("docs.7z.") }.sorted()
+        XCTAssertGreaterThan(vols.count, 1, "expected multiple volumes")
+        try fm.removeItem(atPath: dir + "/" + vols.last!)
+
+        XCTAssertThrowsError(try ZipFS.entryDetails(archivePath: dir + "/docs.7z.001", kind: .unknown)) { error in
+            XCTAssertFalse(error is ArchiveEncryptedError,
+                           "incomplete split set must NOT be reported as encrypted (no password prompt)")
+            XCTAssertTrue(error is ArchiveOpenError, "expected ArchiveOpenError, got \(error)")
+        }
+    }
 }

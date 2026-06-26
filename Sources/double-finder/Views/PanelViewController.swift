@@ -421,7 +421,14 @@ class PanelViewController: NSViewController {
         let remoteChanged = panelState.isRemote != lastDisplayedRemote
         if pathChanged || remoteChanged {
             lastDisplayedRemote = panelState.isRemote
-            updateDriveSelection()
+            // The S3 drive-bar entry shows the current bucket, so its label must be
+            // rebuilt as the path changes (and on connect/disconnect). A plain local
+            // navigation only needs the cheap highlight toggle.
+            if panelState.s3 != nil || remoteChanged {
+                rebuildDriveBar()
+            } else {
+                updateDriveSelection()
+            }
         }
 
         fileTableView.expandedPaths = panelState.expandedPaths
@@ -585,6 +592,13 @@ class PanelViewController: NSViewController {
         guard AppSettings.showDriveBar else { return }
         // On a remote connection (SFTP/S3) no local volume is "current".
         let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
+        // When connected to a virtual remote (S3 / SFTP), lead with a highlighted
+        // entry + a ⏏ that disconnects (back to local home). S3 shows the current
+        // bucket ("s3://<conn>/<bucket>"); SFTP shows "sftp://<user>@<host>".
+        if let label = remoteDriveLabel {
+            driveStack.addArrangedSubview(makeRemoteDriveRow(label: label.text, icon: label.icon,
+                                                             onClick: label.onClick))
+        }
         for vol in Volumes.mounted() {
             let b = NSButton(title: " " + vol.name, target: self, action: #selector(driveSelected(_:)))
             b.bezelStyle = .recessed
@@ -609,6 +623,50 @@ class PanelViewController: NSViewController {
                 driveStack.addArrangedSubview(b)
             }
         }
+    }
+
+    /// Describes the active virtual-remote drive entry (S3 / SFTP), or nil when the
+    /// panel is local or on an SMB mount (which appears as a normal volume instead).
+    private var remoteDriveLabel: (text: String, icon: String, onClick: Selector)? {
+        if let s3 = panelState.s3 {
+            let bucket = parseS3Path(panelState.currentPath).bucket ?? ""
+            return ("s3://\(s3.name)/\(bucket)", "cloud", #selector(s3DriveSelected))
+        }
+        if let conn = panelState.sftp {
+            return ("sftp://\(conn.user)@\(conn.host)", "network", #selector(sftpDriveSelected))
+        }
+        return nil
+    }
+
+    /// Builds a drive-bar row for the active virtual remote: a highlighted nav
+    /// button + a ⏏ that disconnects the session (`ejectRemoteSession`).
+    private func makeRemoteDriveRow(label: String, icon: String, onClick: Selector) -> NSView {
+        let b = NSButton(title: " " + label, target: self, action: onClick)
+        b.bezelStyle = .recessed
+        b.setButtonType(.pushOnPushOff)
+        b.controlSize = .small
+        b.font = .systemFont(ofSize: 11)
+        b.image = NSImage(systemSymbolName: icon, accessibilityDescription: label)
+        b.imagePosition = .imageLeading
+        b.state = .on
+        b.toolTip = label
+        // Right-click → Disconnect (reliable path alongside the inline ⏏).
+        let menu = NSMenu()
+        let mi = NSMenuItem(title: tr("Disconnect"), action: #selector(ejectRemoteSession), keyEquivalent: "")
+        mi.target = self
+        mi.image = Self.ejectImage
+        menu.addItem(mi)
+        b.menu = menu
+        let eject = NSButton(image: Self.ejectImage, target: self, action: #selector(ejectRemoteSession))
+        eject.isBordered = false
+        eject.imagePosition = .imageOnly
+        eject.controlSize = .small
+        eject.toolTip = tr("Disconnect")
+        eject.setContentHuggingPriority(.required, for: .horizontal)
+        let row = NSStackView(views: [b, eject])
+        row.orientation = .horizontal
+        row.spacing = 1
+        return row
     }
 
     /// Small borderless ⏏ button that ejects the volume at `path` on click.
@@ -654,14 +712,15 @@ class PanelViewController: NSViewController {
             path = nil
         }
         guard let path = path else { return }
-        do {
-            try Volumes.eject(URL(fileURLWithPath: path))
-        } catch {
+        // Async: the unmount can take a moment (esp. network volumes) and must not
+        // freeze the UI. The didUnmount observer rebuilds the bar on success.
+        Volumes.eject(URL(fileURLWithPath: path)) { [weak self] error in
+            guard let self = self, let error = error else { return }
             let alert = NSAlert()
             alert.messageText = tr("Could not eject the disk.")
             alert.informativeText = error.localizedDescription
             alert.alertStyle = .warning
-            if let window = view.window {
+            if let window = self.view.window {
                 alert.beginSheetModal(for: window)
             } else {
                 alert.runModal()
@@ -680,9 +739,45 @@ class PanelViewController: NSViewController {
         panelState.navigateLocal(to: path)
     }
 
+    /// Clicking the S3 drive-bar entry lists the account's buckets (S3 root).
+    @objc private func s3DriveSelected() {
+        guard panelState.s3 != nil else { return }
+        activatePanel()
+        panelState.navigate(to: "/")
+    }
+
+    /// Clicking the SFTP drive-bar entry goes to the remote filesystem root.
+    @objc private func sftpDriveSelected() {
+        guard panelState.sftp != nil else { return }
+        activatePanel()
+        panelState.navigate(to: "/")
+    }
+
+    /// ⏏ on the S3/SFTP entry: disconnect the session and fall back to local home.
+    /// `navigateLocal` drops the SFTP/S3 session before navigating.
+    @objc private func ejectRemoteSession() {
+        activatePanel()
+        panelState.navigateLocal(to: NSHomeDirectory())
+    }
+
     /// Drive dropdown: pops the same volume list as a menu.
     @objc private func showDriveMenu() {
         let menu = NSMenu()
+        // Active virtual remote (S3 / SFTP) leads the menu, with a Disconnect item.
+        if let remote = remoteDriveLabel {
+            let item = NSMenuItem(title: remote.text, action: remote.onClick, keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: remote.icon, accessibilityDescription: remote.text)
+            item.state = .on
+            menu.addItem(item)
+            let disconnect = NSMenuItem(title: tr("Disconnect"), action: #selector(ejectRemoteSession),
+                                        keyEquivalent: "")
+            disconnect.target = self
+            disconnect.image = Self.ejectImage
+            disconnect.indentationLevel = 1
+            menu.addItem(disconnect)
+            menu.addItem(.separator())
+        }
         let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
         for vol in Volumes.mounted() {
             let item = NSMenuItem(title: vol.menuTitle, action: #selector(driveMenuSelected(_:)), keyEquivalent: "")
@@ -769,12 +864,25 @@ extension PanelViewController: FileTableViewDelegate {
         panelState.toggleExpand(item)
     }
 
+    /// Above this size, an S3 file rename (= server-side copy of the whole object)
+    /// is slow enough to deserve a cancelable progress sheet instead of blocking.
+    static let largeS3RenameThreshold: Int64 = 256 << 20   // 256 MiB
+
     func fileTableView(_ tableView: NSView, didRename item: FileItem, to newName: String) {
         let state = panelState
+        // Large S3 object: route to the progress-sheet rename (server-side copy can
+        // take minutes). Small files / folders / other backends rename inline.
+        if state.s3 != nil, !item.isDirectory, item.size > Self.largeS3RenameThreshold {
+            panelDelegate?.panelViewController(self, renameLargeS3File: item, to: newName)
+            return
+        }
         Task {
             do {
                 try await state.fs.rename(at: item.path, to: newName)
-                await MainActor.run { state.loadDirectory(preserveSelection: true) }
+                // Update the renamed row in place — no network re-list, so the new
+                // name shows immediately (an S3 re-list is slow and may not even
+                // include the just-renamed object yet on eventually-consistent stores).
+                await MainActor.run { state.applyLocalRename(oldPath: item.path, to: newName) }
             } catch {
                 await MainActor.run {
                     if let window = self.view.window {
@@ -850,6 +958,9 @@ protocol PanelViewControllerDelegate: AnyObject {
     func panelViewControllerDidChangePath(_ vc: PanelViewController)
     /// Files were dropped onto this panel (from Finder / other apps / the other panel).
     func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool)
+    /// Rename a large remote (S3) file via a cancelable progress sheet — a server-side
+    /// copy of a multi-GB object can take minutes and must not silently block the UI.
+    func panelViewController(_ vc: PanelViewController, renameLargeS3File item: FileItem, to newName: String)
 }
 
 // MARK: - PathBar

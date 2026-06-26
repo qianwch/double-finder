@@ -41,4 +41,23 @@ final class LocalizerTests: XCTestCase {
         Localizer.shared.setLanguage(.en)
         XCTAssertEqual(tr("%d items selected", 3), "3 items selected")
     }
+
+    // Context-disambiguated keys: the F3 "View" action vs the "View" menu need
+    // different translations of the same English word.
+    @MainActor func testContextKeyDisambiguation() {
+        Localizer.shared.setLanguage(.zhHans)
+        XCTAssertEqual(tr(ctxKey("View", "f3")), "查看", "F3 View should be 查看")
+        XCTAssertEqual(tr("View"), "视图", "View menu should stay 视图")
+
+        Localizer.shared.setLanguage(.de)
+        XCTAssertEqual(tr(ctxKey("View", "f3")), "Ansehen")
+        XCTAssertEqual(tr("View"), "Ansicht")
+
+        // English / unknown context falls back to the base word.
+        Localizer.shared.setLanguage(.en)
+        XCTAssertEqual(tr(ctxKey("View", "f3")), "View")
+        Localizer.shared.setLanguage(.zhHans)
+        XCTAssertEqual(tr(ctxKey("View", "no-such-context")), "View",
+                       "unknown context with no entry falls back to base, not the menu translation")
+    }
 }

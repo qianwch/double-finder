@@ -192,6 +192,24 @@ final class S3Client {
         }
     }
 
+    /// Lists in-progress (incomplete) multipart uploads for a bucket — the storage-
+    /// wasting "fragments" left behind when an upload is interrupted before
+    /// completion. Paginated via key/upload-id markers.
+    func listMultipartUploads(bucket: String) async throws -> [S3UploadInfo] {
+        var out: [S3UploadInfo] = []
+        var keyMarker: String? = nil, idMarker: String? = nil
+        repeat {
+            var q = ["uploads": ""]
+            if let k = keyMarker { q["key-marker"] = k }
+            if let i = idMarker { q["upload-id-marker"] = i }
+            let (data, _) = try await send(method: "GET", bucket: bucket, key: "", query: q)
+            let r = S3XML.multipartUploads(data)
+            out += r.uploads
+            keyMarker = r.nextKeyMarker; idMarker = r.nextUploadIdMarker
+        } while keyMarker != nil
+        return out
+    }
+
     func putEmptyObject(bucket: String, key: String) async throws {
         _ = try await send(method: "PUT", bucket: bucket, key: key, body: Data())
     }
@@ -231,10 +249,83 @@ final class S3Client {
         _ = try await send(method: "DELETE", bucket: bucket, key: key)
     }
 
-    func copyObject(bucket: String, srcKey: String, dstKey: String) async throws {
-        let source = "/\(bucket)/\(srcKey)"
-            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "/\(bucket)/\(srcKey)"
-        _ = try await send(method: "PUT", bucket: bucket, key: dstKey, body: Data(),
+    /// Server-side copy. Source and destination may live in different buckets of
+    /// the **same store** (one endpoint + credentials): the copy-source header
+    /// references the source, the PUT targets the destination bucket. No bytes
+    /// round-trip through the client.
+    func copyObject(srcBucket: String, srcKey: String, dstBucket: String, dstKey: String) async throws {
+        let source = "/\(srcBucket)/\(srcKey)"
+            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "/\(srcBucket)/\(srcKey)"
+        _ = try await send(method: "PUT", bucket: dstBucket, key: dstKey, body: Data(),
                            extraHeaders: ["x-amz-copy-source": source])
+    }
+
+    /// Same-bucket convenience (used by rename / move-within-folder).
+    func copyObject(bucket: String, srcKey: String, dstKey: String) async throws {
+        try await copyObject(srcBucket: bucket, srcKey: srcKey, dstBucket: bucket, dstKey: dstKey)
+    }
+
+    /// Server-side copy that scales to large objects: ≤ the multipart threshold →
+    /// one PUT copy; larger → concurrent **UploadPartCopy** (handles >5GB, which a
+    /// single PUT copy rejects, and reports byte progress). `progress` is called
+    /// with each part's byte count as it completes. Honors task cancellation
+    /// (cancel → abort the multipart upload; the source object is never touched).
+    func copyObject(srcBucket: String, srcKey: String, dstBucket: String, dstKey: String,
+                    sourceSize: Int64, progress: (@Sendable (Int64) -> Void)? = nil) async throws {
+        // 64 MiB parts: keeps the part count low for huge objects, parts big enough
+        // that per-request overhead is negligible.
+        let plan = S3MultipartPlan.parts(fileSize: sourceSize,
+                                         singlePutThreshold: 64 << 20, minPartSize: 64 << 20)
+        if plan.isEmpty {
+            try await copyObject(srcBucket: srcBucket, srcKey: srcKey, dstBucket: dstBucket, dstKey: dstKey)
+            progress?(sourceSize)
+            return
+        }
+        let uploadId = try await createMultipartUpload(bucket: dstBucket, key: dstKey)
+        do {
+            let etags = try await withThrowingTaskGroup(of: (Int, String).self) { group -> [(Int, String)] in
+                var inFlight = 0, idx = 0
+                var results: [(Int, String)] = []
+                func schedule() {
+                    guard idx < plan.count else { return }
+                    let part = plan[idx]; idx += 1; inFlight += 1
+                    group.addTask {
+                        try Task.checkCancellation()
+                        let end = part.offset + part.length - 1
+                        let etag = try await self.uploadPartCopy(
+                            dstBucket: dstBucket, dstKey: dstKey, uploadId: uploadId, partNumber: part.number,
+                            srcBucket: srcBucket, srcKey: srcKey, range: "bytes=\(part.offset)-\(end)")
+                        progress?(part.length)
+                        return (part.number, etag)
+                    }
+                }
+                for _ in 0..<min(4, plan.count) { schedule() }   // 4-way concurrency, like putObject
+                while inFlight > 0 {
+                    let r = try await group.next()!
+                    inFlight -= 1; results.append(r); schedule()
+                }
+                return results
+            }
+            try await completeMultipartUpload(bucket: dstBucket, key: dstKey, uploadId: uploadId, parts: etags)
+        } catch {
+            try? await abortMultipartUpload(bucket: dstBucket, key: dstKey, uploadId: uploadId)
+            throw error
+        }
+    }
+
+    /// One UploadPartCopy: copies a byte range of the source into part `partNumber`
+    /// of the destination's multipart upload. Returns the part ETag (from the body).
+    func uploadPartCopy(dstBucket: String, dstKey: String, uploadId: String, partNumber: Int,
+                        srcBucket: String, srcKey: String, range: String) async throws -> String {
+        let source = "/\(srcBucket)/\(srcKey)"
+            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "/\(srcBucket)/\(srcKey)"
+        let (data, _) = try await send(method: "PUT", bucket: dstBucket, key: dstKey,
+                                       query: ["partNumber": "\(partNumber)", "uploadId": uploadId],
+                                       extraHeaders: ["x-amz-copy-source": source,
+                                                      "x-amz-copy-source-range": range])
+        guard let etag = S3XML.copyPartETag(data) else {
+            throw S3Error(message: "Part \(partNumber) copy returned no ETag")
+        }
+        return etag
     }
 }

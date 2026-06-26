@@ -305,3 +305,85 @@ struct S3TransferProvider: TransferProvider {
         return op
     }
 }
+
+// MARK: - S3SameStoreProvider
+
+/// Builds a `FileOperation` for a server-side **copy or move within one S3 store**
+/// (same connection — source and destination buckets may differ). Each object is
+/// copied with `copyObject` (PUT + `x-amz-copy-source`), so bytes never round-trip
+/// through the client; `move` additionally deletes each source object after the
+/// copy. Folders expand via `listAllObjects`, preserving the tree (and any empty-
+/// folder marker objects) below the selected folder, mirroring `S3FS.move`.
+struct S3SameStoreProvider: TransferProvider {
+    let client: S3Client
+    let move: Bool
+
+    init(client: S3Client, move: Bool) {
+        self.client = client
+        self.move = move
+    }
+
+    @MainActor var verb: String { move ? tr("Move") : tr("Copy") }
+
+    @MainActor
+    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+        let op = FileOperation(type: move ? .move : .copy,
+                               sources: items.map { $0.path }, destination: destPath)
+        op.customTitle = move ? tr("Moving") : tr("Copying")
+        op.currentFile = tr("Preparing…")
+        op.indeterminate = true
+        op.concurrency = 6
+
+        let client = self.client
+        let move = self.move
+        // Destination dir → bucket + prefix (prefix keeps its trailing slash, "" at bucket root).
+        let (destBucket, destPrefix) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
+
+        op.transferUnitsProvider = {
+            var units: [FileOperation.Unit] = []
+            guard let db = destBucket else { return units }
+            for item in items {
+                let (sb, sk) = parseS3Path(item.path)
+                guard let sb = sb, !sk.isEmpty else { continue }
+                if item.isDirectory || sk.hasSuffix("/") {
+                    // Folder: copy every key under the prefix, rooted at <dest>/<folderName>/.
+                    let folderKey = sk.hasSuffix("/") ? sk : sk + "/"
+                    let folderName = (String(folderKey.dropLast()) as NSString).lastPathComponent
+                    let objs: [S3ObjectInfo]
+                    do {
+                        objs = try await client.listAllObjects(bucket: sb, prefix: folderKey)
+                    } catch {
+                        let captured = error
+                        units.append(FileOperation.Unit(label: item.name) { _ in throw captured })
+                        continue
+                    }
+                    for o in objs {
+                        let srcKey = o.key
+                        let rel = String(srcKey.dropFirst(folderKey.count))
+                        let dstKey = destPrefix + folderName + "/" + rel
+                        let sz = o.size
+                        units.append(FileOperation.Unit(label: (srcKey as NSString).lastPathComponent,
+                                                        bytes: sz) { report in
+                            try await client.copyObject(srcBucket: sb, srcKey: srcKey, dstBucket: db, dstKey: dstKey)
+                            if move { try await client.deleteObject(bucket: sb, key: srcKey) }
+                            report(sz)
+                        })
+                    }
+                } else {
+                    // File: single server-side copy (+ delete for move).
+                    let name = (sk as NSString).lastPathComponent
+                    let dstKey = destPrefix + name
+                    let sz = item.size
+                    units.append(FileOperation.Unit(label: name, bytes: sz) { report in
+                        try await client.copyObject(srcBucket: sb, srcKey: sk, dstBucket: db, dstKey: dstKey)
+                        if move { try await client.deleteObject(bucket: sb, key: sk) }
+                        report(sz)
+                    })
+                }
+            }
+            return units
+        }
+
+        return op
+    }
+}
