@@ -44,7 +44,7 @@ enum ServerConnection: Equatable {
 
     var name: String {
         switch self {
-        case .sftp(let c): return c.host.isEmpty ? c.displayName : "\(c.user)@\(c.host)"
+        case .sftp(let c): return c.name.isEmpty ? "\(c.user)@\(c.host)" : c.name
         case .s3(let c):   return c.name.isEmpty ? c.endpoint : c.name
         case .smb(let c):  return c.name
         }
@@ -54,8 +54,8 @@ enum ServerConnection: Equatable {
     var dict: [String: String] {
         switch self {
         case .sftp(let c):
-            return ["kind": "sftp", "host": c.host, "user": c.user, "port": "\(c.port)",
-                    "keyPath": c.keyPath, "remotePath": c.remotePath]
+            return ["kind": "sftp", "name": c.name, "host": c.host, "user": c.user,
+                    "port": "\(c.port)", "keyPath": c.keyPath, "remotePath": c.remotePath]
         case .s3(let c):
             var d = c.dict; d["kind"] = "s3"; return d
         case .smb(let c):
@@ -71,7 +71,8 @@ enum ServerConnection: Equatable {
                 host: host, user: dict["user"] ?? "",
                 port: Int(dict["port"] ?? "22") ?? 22,
                 keyPath: dict["keyPath"] ?? "~/.ssh/id_rsa",
-                remotePath: dict["remotePath"] ?? "~"))
+                remotePath: dict["remotePath"] ?? "~",
+                name: dict["name"] ?? ""))
         case "s3":
             guard let c = S3Connection(dict: dict) else { return nil }
             self = .s3(c)
@@ -135,7 +136,8 @@ enum ServerConnectionStore {
             let c = SFTPConnection(host: host, user: b["user"] ?? "",
                                    port: Int(b["port"] ?? "22") ?? 22,
                                    keyPath: b["key"] ?? "~/.ssh/id_rsa",
-                                   remotePath: b["path"] ?? "~")
+                                   remotePath: b["path"] ?? "~",
+                                   name: b["name"] ?? "")
             migrated.append(.sftp(c))
         }
 

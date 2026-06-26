@@ -17,15 +17,16 @@ final class QuickFilterTests: XCTestCase {
         XCTAssertTrue(QuickFilter.matches(name: "项目文档", query: "xm"))
         // Initials are first-letters only — "ce" (full pinyin of 测) must NOT match.
         XCTAssertFalse(QuickFilter.matches(name: "测试", query: "ce"))
-        // begins-with, not contains.
-        XCTAssertFalse(QuickFilter.matches(name: "我的测试", query: "cs"))
+        // substring on initials — "cs" matches 测试 anywhere in the name.
+        XCTAssertTrue(QuickFilter.matches(name: "我的测试", query: "cs"))
     }
 
-    func testLiteralBeginsWith() {
+    func testLiteralSubstring() {
         XCTAssertTrue(QuickFilter.matches(name: "Resources", query: "re"))
         XCTAssertTrue(QuickFilter.matches(name: "README.md", query: "READ"))   // case-insensitive
         XCTAssertTrue(QuickFilter.matches(name: "README.md", query: "readme"))
-        XCTAssertFalse(QuickFilter.matches(name: "Resources", query: "sources"), "contains must not match")
+        XCTAssertTrue(QuickFilter.matches(name: "Resources", query: "sources"), "substring matches anywhere")
+        XCTAssertFalse(QuickFilter.matches(name: "Resources", query: "xyz"))
         // Typed CJK matches the literal name too.
         XCTAssertTrue(QuickFilter.matches(name: "测试", query: "测"))
     }

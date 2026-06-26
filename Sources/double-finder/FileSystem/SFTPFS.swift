@@ -6,6 +6,8 @@ struct SFTPConnection: Equatable {
     var port: Int = 22
     var keyPath: String = "~/.ssh/id_rsa"
     var remotePath: String = "~"
+    /// Optional custom address-book name; empty falls back to `user@host`.
+    var name: String = ""
 
     var displayName: String { "\(user)@\(host):\(remotePath)" }
 }
