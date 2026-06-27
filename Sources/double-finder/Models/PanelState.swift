@@ -210,6 +210,24 @@ class PanelState: ObservableObject {
         }
     }
 
+    /// Points this panel at `path` within the *same* backend `source` is using.
+    /// When `source` is on SFTP/S3, this panel joins that remote session (reusing
+    /// its connection + S3 secret) instead of mis-listing the remote path against
+    /// the local filesystem. When the panel is already in that exact session, it
+    /// just navigates (keeping history). Local sources fall back to navigateLocal,
+    /// which also leaves any remote session this panel currently holds.
+    func mirrorLocation(of source: PanelState, path: String) {
+        if let conn = source.sftp {
+            if sftp == conn { navigate(to: path) }
+            else { connectSFTP(conn, initialPath: path) }
+        } else if let conn = source.s3 {
+            if s3 == conn { navigate(to: path) }
+            else { connectS3(conn, secret: source.s3Secret, initialPath: path) }
+        } else {
+            navigateLocal(to: path)
+        }
+    }
+
     /// Called (on main) when listing the current archive needs a password.
     var onNeedsPassword: ((String) -> Void)?
     /// Called (on main) when a directory/archive load fails for a reason worth

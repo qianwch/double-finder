@@ -942,6 +942,10 @@ class MainViewController: NSViewController {
         if dst.s3 != nil, let client = dst.s3Client {
             return S3TransferProvider(client: client, downloading: false)
         }
+        // Same SFTP host on both panels → server-side cp (no download+upload).
+        if let s = src.sftp, let d = dst.sftp, s.sameHost(as: d) {
+            return SFTPSameHostProvider(connection: s, move: false)
+        }
         if let conn = src.sftp { return SFTPTransferProvider(connection: conn, direction: .download) }
         if let conn = dst.sftp { return SFTPTransferProvider(connection: conn, direction: .upload) }
         let archive = PanelState.archiveRoot(in: src.currentPath) != nil
@@ -997,6 +1001,9 @@ class MainViewController: NSViewController {
         // → server-side move (copy + delete, no round-trip).
         if let s = src.s3, let d = dst.s3, s.sameStore(as: d), let client = src.s3Client {
             provider = S3SameStoreProvider(client: client, move: true)
+        } else if let s = src.sftp, let d = dst.sftp, s.sameHost(as: d) {
+            // Same SFTP host → server-side mv (no download+upload round-trip).
+            provider = SFTPSameHostProvider(connection: s, move: true)
         } else {
             provider = LocalMoveProvider()
         }
@@ -1739,20 +1746,25 @@ class MainViewController: NSViewController {
         rightPanelVC.importTabs(l.0, active: l.1)
     }
 
-    /// Points the inactive panel at the active panel's current folder.
+    /// Points the inactive panel at the active panel's current folder. When the
+    /// active panel is on SFTP/S3, the inactive panel joins that remote session.
     func matchOtherPanelToActive() {
-        inactivePanelVC.panelState.navigate(to: appState.activePanelState.currentPath)
+        let active = appState.activePanelState
+        inactivePanelVC.panelState.mirrorLocation(of: active, path: active.currentPath)
     }
 
     /// Opens the folder under the cursor (or current folder) in the other panel.
+    /// When the active panel is on SFTP/S3, the other panel joins that remote
+    /// session at the same path rather than listing it locally.
     func openInOtherPanel() {
         let active = appState.activePanelState
+        let dest: String
         if let item = activePanelVC.currentItem, item.isDirectory {
-            let dest = item.name == ".." ? (active.currentPath as NSString).deletingLastPathComponent : item.path
-            inactivePanelVC.panelState.navigate(to: dest)
+            dest = item.name == ".." ? (active.currentPath as NSString).deletingLastPathComponent : item.path
         } else {
-            inactivePanelVC.panelState.navigate(to: active.currentPath)
+            dest = active.currentPath
         }
+        inactivePanelVC.panelState.mirrorLocation(of: active, path: dest)
     }
 
     // MARK: - Favorites
