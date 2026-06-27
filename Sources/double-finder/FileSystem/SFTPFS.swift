@@ -10,6 +10,14 @@ struct SFTPConnection: Equatable {
     var name: String = ""
 
     var displayName: String { "\(user)@\(host):\(remotePath)" }
+
+    /// True when both connections address the **same SSH host** (host + user +
+    /// port), so a remote-side `cp`/`mv` between their paths runs entirely on one
+    /// server with no download/upload round-trip. `remotePath`/`name`/`keyPath`
+    /// are intentionally NOT compared — they don't change which host you're on.
+    func sameHost(as other: SFTPConnection) -> Bool {
+        host == other.host && user == other.user && port == other.port
+    }
 }
 
 /// Browses/operates on a remote host over ssh+scp. Item paths are plain remote
@@ -43,6 +51,55 @@ class SFTPFS: VirtualFS {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
         return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// Like `ssh`, but raises on a non-zero remote exit (carrying stderr as the
+    /// message). Used by operations that must report failure (server-side cp/mv)
+    /// rather than fire-and-forget.
+    @discardableResult
+    private func sshChecked(_ command: String) throws -> String {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        proc.arguments = sshArgs(command)
+        let out = Pipe(), err = Pipe()
+        proc.standardOutput = out
+        proc.standardError = err
+        try proc.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        if proc.terminationStatus != 0 {
+            let msg = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            throw NSError(domain: "SFTPFS", code: Int(proc.terminationStatus),
+                          userInfo: [NSLocalizedDescriptionKey: msg.isEmpty ? "Remote command failed" : msg])
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// Single-quotes a string for safe use as one shell word (handles spaces and
+    /// special characters); embedded single quotes are escaped as `'\''`.
+    static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Builds the remote shell command for a server-side copy/move of `from` into
+    /// the directory `toDir` (the item keeps its basename). Pure → unit-tested.
+    /// `cp -a` preserves attributes & recurses; `-f` forces overwrite; `--` ends
+    /// option parsing so paths starting with `-` are safe. A trailing slash on the
+    /// destination enforces "copy/move INTO this directory" semantics.
+    static func serverTransferCommand(from: String, toDir: String, move: Bool) -> String {
+        let dest = toDir.hasSuffix("/") ? toDir : toDir + "/"
+        let tool = move ? "mv -f" : "cp -af"
+        return "\(tool) -- \(shellQuote(from)) \(shellQuote(dest))"
+    }
+
+    /// Server-side copy or move between two remote paths on the **same host** (no
+    /// download/upload round-trip). `toDir` is the destination directory. Throws
+    /// on a non-zero remote exit.
+    func serverTransfer(from: String, toDir: String, move: Bool) async throws {
+        try await Task.detached(priority: .userInitiated) { [self] in
+            _ = try sshChecked(Self.serverTransferCommand(from: from, toDir: toDir, move: move))
+        }.value
     }
 
     /// Runs an arbitrary shell command on the host and returns its stdout
