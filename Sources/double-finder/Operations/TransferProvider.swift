@@ -168,6 +168,51 @@ struct SFTPTransferProvider: TransferProvider {
     }
 }
 
+// MARK: - SFTPSameHostProvider
+
+/// Builds a `FileOperation` for a server-side **copy or move within one SFTP host**
+/// (both panels connected to the same server). Each selected item is transferred
+/// entirely on the remote host via a single `cp -af` / `mv -f` ssh command, so
+/// bytes never round-trip through the client. Folders are handled by `cp -a`
+/// recursion (one unit per selection) — there's no per-byte progress, so the sheet
+/// shows item-count progress (X/Y). Mirrors `S3SameStoreProvider`'s role for SFTP.
+struct SFTPSameHostProvider: TransferProvider {
+    let connection: SFTPConnection
+    let move: Bool
+
+    init(connection: SFTPConnection, move: Bool) {
+        self.connection = connection
+        self.move = move
+    }
+
+    @MainActor var verb: String { move ? tr("Move") : tr("Copy") }
+
+    @MainActor
+    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+        let op = FileOperation(type: move ? .move : .copy,
+                               sources: items.map { $0.path }, destination: destPath)
+        op.customTitle = move ? tr("Moving") : tr("Copying")
+        op.currentFile = tr("Preparing…")
+        op.indeterminate = true
+        op.concurrency = 4
+
+        let conn = connection
+        let move = self.move
+        let dest = destPath
+        op.transferUnitsProvider = {
+            items.map { item in
+                let src = item.path
+                return FileOperation.Unit(label: item.name) { report in
+                    let fs = SFTPFS(connection: conn)
+                    try await fs.serverTransfer(from: src, toDir: dest, move: move)
+                    report(item.size)
+                }
+            }
+        }
+        return op
+    }
+}
+
 // MARK: - S3TransferProvider
 
 /// Builds a `FileOperation` for S3 download (S3 → local) or upload (local → S3).
