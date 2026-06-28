@@ -371,7 +371,9 @@ class PanelViewController: NSViewController {
         let wasInArchive = PanelState.archiveRoot(in: panelState.currentPath) != nil
         guard let window = view.window else { return }
         let alert = NSAlert()
-        alert.messageText = tr("Can’t Open Archive")
+        // Archive failures keep the archive-specific title; remote/other listing failures
+        // (SFTP/S3 connection refused, auth, host down…) get a generic one.
+        alert.messageText = wasInArchive ? tr("Can’t Open Archive") : tr("Can’t Open Folder")
         alert.informativeText = tr((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         alert.alertStyle = .warning
         alert.beginSheetModal(for: window) { [weak self] _ in

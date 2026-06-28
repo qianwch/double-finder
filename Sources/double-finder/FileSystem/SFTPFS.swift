@@ -120,7 +120,11 @@ class SFTPFS: VirtualFS {
 
     func listDirectory(_ path: String) async throws -> [FileItem] {
         return try await Task.detached(priority: .userInitiated) { [self] in
-            let output = try ssh("ls -la --time-style=+'%Y-%m-%d %H:%M' \"\(path)\"")
+            // Use the *checked* ssh: a failed connection (host down, auth/key rejected,
+            // unresolvable host) or an unlistable path must throw — carrying stderr as the
+            // message — instead of returning empty stdout, which would silently show an
+            // empty directory and hide the real failure.
+            let output = try sshChecked("ls -la --time-style=+'%Y-%m-%d %H:%M' \"\(path)\"")
             return Self.parseLsOutput(output, remotePath: path)
         }.value
     }
