@@ -1,5 +1,4 @@
 import AppKit
-import QuickLookUI
 
 /// Total Commander-style "Find Files": search by name (wildcard/regex) and
 /// optionally by file content, recursively, with a results list you can jump to.
@@ -245,17 +244,14 @@ final class FindFilesSheet: NSWindowController {
         NSWorkspace.shared.open(URL(fileURLWithPath: results[row]))
     }
 
-    /// Space: Quick Look the selected result(s) without closing the sheet.
+    /// Space: preview the selected result(s) in the internal viewer (Esc closes it).
     private func quickLookSelected() {
         let urls = table.selectedRowIndexes
             .filter { $0 < results.count }
             .map { URL(fileURLWithPath: results[$0]) }
-        guard let window = window, !urls.isEmpty else { return }
-        if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible {
-            QLPreviewPanel.shared().orderOut(nil)      // toggle off if already showing
-        } else {
-            QuickLookManager.shared.preview(urls: urls, in: window)
-        }
+        guard !urls.isEmpty else { return }
+        let entries = urls.map { url in ViewerEntry(title: url.lastPathComponent, resolve: { url }) }
+        InternalViewerController.shared.show(entries: entries, start: 0, onIndexChange: nil)
     }
 
     /// "Feed to Panel": close the sheet and list all results in the active panel.
