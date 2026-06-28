@@ -162,7 +162,34 @@ class PanelState: ObservableObject {
         return S3Client(endpoint: ep, signer: signer)
     }
 
+    /// Local path to fall back to when an *initial* remote connection fails — captured
+    /// just before entering a remote session (only while still local). Defaults to home.
+    private var localReturnPath: String = NSHomeDirectory()
+
+    private func rememberLocalReturn() {
+        if sftp == nil && s3 == nil && remoteArchive == nil { localReturnPath = currentPath }
+    }
+
+    /// After a remote listing throws: if this was the initial connect (no prior dir in
+    /// history), leave the dead session and return to the local path we came from. If it
+    /// happened mid-session (a single folder failed), stay connected and step back to the
+    /// previous directory, whose cached listing is still valid (we never overwrote it).
+    private func recoverFromRemoteLoadFailure() {
+        if historyIndex <= 0 {
+            sftp = nil; s3 = nil; s3Secret = ""
+            remoteArchive = nil; remoteArchiveReturn = nil
+            navigate(to: localReturnPath)
+            return
+        }
+        history.removeLast()
+        historyIndex = history.count - 1
+        currentPath = history[historyIndex]
+        rebuildItems(selectedNames: [], cursorName: nil, sizes: [:])
+        watcher.watch(currentPath)
+    }
+
     func connectSFTP(_ conn: SFTPConnection, initialPath: String) {
+        rememberLocalReturn()
         remoteArchive = nil
         remoteArchiveReturn = nil
         searchResults = nil
@@ -183,6 +210,7 @@ class PanelState: ObservableObject {
     }
 
     func connectS3(_ conn: S3Connection, secret: String, initialPath: String) {
+        rememberLocalReturn()
         remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
         sftp = nil
         s3 = conn; s3Secret = secret
@@ -352,15 +380,25 @@ class PanelState: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self.allLoadedItems = []
                     self.isLoading = false
-                    self.rebuildItems(selectedNames: [], cursorName: nil, sizes: [:])
-                    self.watcher.watch(path)
-                    // A missing archive tool (7z/unrar) or an unopenable archive
-                    // (corrupt / incomplete split set) leaves the listing empty;
-                    // tell the user why instead of just showing a blank panel.
-                    if error is ArchiveToolMissingError || error is ArchiveOpenError {
+                    let remote = self.sftp != nil || self.s3 != nil || self.remoteArchive != nil
+                    if remote {
+                        // A remote listing failed (connection refused, auth/key rejected,
+                        // host unreachable, bad path…). Don't leave a silent empty panel:
+                        // report it, then back out to a working location instead of stranding
+                        // the user in a dead remote session.
                         self.onError?(error)
+                        self.recoverFromRemoteLoadFailure()
+                    } else {
+                        self.allLoadedItems = []
+                        self.rebuildItems(selectedNames: [], cursorName: nil, sizes: [:])
+                        self.watcher.watch(path)
+                        // A missing archive tool (7z/unrar) or an unopenable archive
+                        // (corrupt / incomplete split set) leaves the listing empty;
+                        // tell the user why instead of just showing a blank panel.
+                        if error is ArchiveToolMissingError || error is ArchiveOpenError {
+                            self.onError?(error)
+                        }
                     }
                 }
             }
