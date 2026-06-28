@@ -1,6 +1,5 @@
 import AppKit
 import CryptoKit
-import QuickLookUI
 
 class MainViewController: NSViewController {
     var appState: AppState!
@@ -710,23 +709,41 @@ class MainViewController: NSViewController {
         }
     }
 
+    /// F3 / Space / right-click Quick Look: open the embedded internal viewer
+    /// (`InternalViewerController`) on the WHOLE panel listing (display order, dirs / ".."
+    /// removed), starting on the cursor — arrow keys then step file-to-file with no need to
+    /// pre-select. Items load lazily one at a time: local = identity, remote = downloaded on
+    /// demand, so opening a huge folder stays instant. The viewer's cursor change is mirrored
+    /// back to the panel via `onIndexChange`.
     func actionQuickLook() {
-        let items = activePanelVC.selectedOrCurrent.filter { !$0.isDirectory && $0.name != ".." }
-        guard !items.isEmpty, let window = view.window else { return }
         let panel = activePanelVC.panelState
-        if isLocalPanel(panel) {
-            QuickLookManager.shared.preview(urls: items.map { URL(fileURLWithPath: $0.path) }, in: window)
-            return
-        }
-        // Remote / inside-archive: download or extract to a temp dir, then preview.
+        let entries = panel.items.filter { !$0.isDirectory && $0.name != ".." }
+        guard !entries.isEmpty else { NSSound.beep(); return }
+        let selected = Set(activePanelVC.selectedOrCurrent.map { $0.path })
+        let start: Int = {
+            if let c = panel.currentItem, let i = entries.firstIndex(where: { $0.path == c.path }) { return i }
+            if let i = entries.firstIndex(where: { selected.contains($0.path) }) { return i }
+            return 0
+        }()
+        let local = isLocalPanel(panel)
         let fs = panel.fs
-        Task {
-            let urls = await self.materialize(items, using: fs)
-            await MainActor.run {
-                if urls.isEmpty { NSSound.beep() }
-                else { QuickLookManager.shared.preview(urls: urls, in: window) }
-            }
+        let viewerEntries: [ViewerEntry] = entries.map { item in
+            ViewerEntry(title: item.name, resolve: {
+                if local { return URL(fileURLWithPath: item.path) }
+                return await self.materializeOne(item, using: fs)
+            })
         }
+        InternalViewerController.shared.show(entries: viewerEntries, start: start) { [weak self] i in
+            guard entries.indices.contains(i) else { return }
+            self?.moveCursor(toPath: entries[i].path)
+        }
+    }
+
+    /// Move the active panel's cursor to the row whose path matches (no-op if absent).
+    private func moveCursor(toPath path: String) {
+        let panel = activePanelVC.panelState
+        guard let idx = panel.items.firstIndex(where: { $0.path == path }) else { return }
+        panel.moveCursor(to: idx, extendingSelection: false)
     }
 
     private func isLocalPanel(_ panel: PanelState) -> Bool {
@@ -741,19 +758,27 @@ class MainViewController: NSViewController {
     /// pending edit / drop a write-back session). The filename itself is kept
     /// intact — write-back reconstructs the remote key from `lastPathComponent`.
     private func materialize(_ items: [FileItem], using fs: VirtualFS) async -> [URL] {
-        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-View")
         var out: [URL] = []
         for item in items {
-            let dir = (root as NSString).appendingPathComponent(Self.tempSlug(for: item.path))
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            let dest = (dir as NSString).appendingPathComponent(item.name)
-            try? FileManager.default.removeItem(atPath: dest)
-            do {
-                try await fs.copy(from: item.path, to: dir)   // scp download / archive extract
-                if FileManager.default.fileExists(atPath: dest) { out.append(URL(fileURLWithPath: dest)) }
-            } catch { }
+            if let url = await materializeOne(item, using: fs) { out.append(url) }
         }
         return out
+    }
+
+    /// Download (SFTP) or extract (archive) a single item into its own temp subfolder
+    /// and return the local URL, or nil on failure. The subfolder is keyed by the item's
+    /// full remote path so files sharing a basename don't collide.
+    private func materializeOne(_ item: FileItem, using fs: VirtualFS) async -> URL? {
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-View")
+        let dir = (root as NSString).appendingPathComponent(Self.tempSlug(for: item.path))
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let dest = (dir as NSString).appendingPathComponent(item.name)
+        try? FileManager.default.removeItem(atPath: dest)
+        do {
+            try await fs.copy(from: item.path, to: dir)   // scp download / archive extract
+            if FileManager.default.fileExists(atPath: dest) { return URL(fileURLWithPath: dest) }
+        } catch { }
+        return nil
     }
 
     /// Stable short hex digest of a remote path — used to give each materialized
