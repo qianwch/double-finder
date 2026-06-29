@@ -1010,19 +1010,24 @@ class MainViewController: NSViewController {
     /// Adds an operation to the serial transfer queue and shows the queue window.
     private func enqueueOperation(_ op: FileOperation, completion: @escaping () -> Void) {
         transferQueue.enqueue(op) { completion() }
-        if queueWindow == nil {
-            let win = QueueWindowController(queue: transferQueue)
-            queueWindow = win
-            transferQueue.onChange = { [weak self, weak win] in
-                win?.resetSpeedSampler()
-                // Drop the controller once the queue fully drains.
-                if let self = self, !self.transferQueue.isActive {
-                    self.queueWindow?.closeQueue()
-                    self.queueWindow = nil
-                }
+        ensureQueueWindow()
+        queueWindow?.showQueueWindow()
+    }
+
+    /// Lazily creates the non-modal queue window and wires `transferQueue.onChange`.
+    /// Idempotent: safe to call from both the enqueue and the move-to-background paths.
+    private func ensureQueueWindow() {
+        guard queueWindow == nil else { return }
+        let win = QueueWindowController(queue: transferQueue)
+        queueWindow = win
+        transferQueue.onChange = { [weak self, weak win] in
+            win?.resetSpeedSampler()
+            // Drop the controller once the queue fully drains.
+            if let self = self, !self.transferQueue.isActive {
+                self.queueWindow?.closeQueue()
+                self.queueWindow = nil
             }
         }
-        queueWindow?.showQueueWindow()
     }
 
     private var activeConfirmSheet: TransferConfirmSheet?
@@ -1949,15 +1954,30 @@ class MainViewController: NSViewController {
         // deallocates as soon as this method returns, killing its completion
         // timer (weak self) so the sheet never dismisses.
         activeProgressSheet = sheet
+
+        // Runs the post-transfer finish logic exactly once: panel refresh +
+        // generic failure report (unless the coordinator handles failures itself).
+        let finish: () -> Void = { [weak self] in
+            completion()
+            if !op.suppressFailureReport { self?.reportOperationFailures(op) }
+        }
+
+        // When backgrounded, the queue's onFinish owns `finish`; the sheet's own
+        // dismissal closure must NOT run it again (op is still in flight there).
+        var backgrounded = false
+        sheet.onMoveToBackground = { [weak self] in
+            guard let self = self else { return }
+            backgrounded = true
+            self.ensureQueueWindow()
+            self.transferQueue.adopt(op, onFinish: finish)
+            self.queueWindow?.showQueueWindow()
+        }
+
         op.start()
         sheet.beginSheet(on: window) { [weak self] in
-            completion()
             self?.activeProgressSheet = nil
-            // Suppress the generic failure alert when the coordinator has already
-            // arranged custom failure recovery UI (e.g. the extract password prompt).
-            if !op.suppressFailureReport {
-                self?.reportOperationFailures(op)
-            }
+            if backgrounded { return }   // queue's onFinish will run finish()
+            finish()
         }
     }
 
