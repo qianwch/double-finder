@@ -658,30 +658,50 @@ class MainViewController: NSViewController {
     }
 
     func openItem(_ item: FileItem, in panelVC: PanelViewController) {
-        let isLocal = panelVC.panelState.sftp == nil && panelVC.panelState.s3 == nil
+        let panel = panelVC.panelState
+        let insideArchive = panel.remoteArchive != nil
+            || PanelState.archiveRoot(in: panel.currentPath) != nil
+        // A real on-disk path only exists when not remote and not inside an archive.
+        let trulyLocal = panel.sftp == nil && panel.s3 == nil && !insideArchive
         if item.name == ".." {
-            panelVC.panelState.goUp()
-        } else if isLocal && item.isDirectory && Self.isLaunchablePackage(item.path) {
+            panel.goUp()
+        } else if trulyLocal && item.isDirectory && Self.isLaunchablePackage(item.path) {
             // .app / package bundle: launch it (Finder-style), don't enter it.
             NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
         } else if item.isDirectory {
-            panelVC.panelState.navigate(to: item.path)
-        } else if FileItem.isArchiveFileName(item.name), let conn = panelVC.panelState.sftp {
+            panel.navigate(to: item.path)
+        } else if FileItem.isArchiveFileName(item.name), let conn = panel.sftp {
             if RemoteArchiveFS.canBrowseRemotely(item.name) {
                 // tar/zip: list entries over ssh, fetch single files on demand.
-                panelVC.panelState.enterRemoteArchive(conn: conn, archivePath: item.path,
-                                                       remoteDir: panelVC.panelState.currentPath)
+                panel.enterRemoteArchive(conn: conn, archivePath: item.path,
+                                         remoteDir: panel.currentPath)
             } else {
                 // 7z/rar/etc: download the whole archive then browse it locally.
                 downloadAndEnterSFTPArchive(item, conn: conn, panel: panelVC)
             }
         } else if item.isArchive {
-            // Browse inside a local archive.
-            panelVC.panelState.navigate(to: item.path)
-        } else if panelVC.panelState.sftp == nil {
+            // Browse inside a (local, or archive-nested) archive.
+            panel.navigate(to: item.path)
+        } else if trulyLocal {
             NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
+        } else if insideArchive {
+            // A plain file inside an archive has only a virtual path — extract it to a
+            // temp copy first (via the panel's ZipFS / RemoteArchiveFS), then open it.
+            openExtractedThenOpen(item, in: panelVC)
         }
-        // Other remote files: no local open (use F5 to download / F3 to view).
+        // Other remote (SFTP/S3) plain files: no auto-open (F3 to view / F5 to download).
+    }
+
+    /// Extract one archive-interior file to a temp copy and open it with its default app.
+    /// Used for double-click inside an archive, where the item has only a virtual path.
+    private func openExtractedThenOpen(_ item: FileItem, in panelVC: PanelViewController) {
+        let fs = panelVC.panelState.fs
+        Task {
+            let url = await self.materializeOne(item, using: fs)
+            await MainActor.run {
+                if let url = url { NSWorkspace.shared.open(url) } else { NSSound.beep() }
+            }
+        }
     }
 
     /// Downloads a remote archive to a temp file (with progress) then enters it
