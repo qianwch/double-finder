@@ -6,7 +6,6 @@ class ProgressSheet: NSWindowController {
     private var operationLabel: NSTextField!
     private var fileLabel: NSTextField!
     private var cancelButton: NSButton!
-    private var backgroundButton: NSButton!
     private var observation: NSKeyValueObservation?
     private var timer: Timer?
 
@@ -64,7 +63,6 @@ class ProgressSheet: NSWindowController {
         backgroundButton.bezelStyle = .rounded
         backgroundButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(backgroundButton)
-        self.backgroundButton = backgroundButton
 
         NSLayoutConstraint.activate([
             operationLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),

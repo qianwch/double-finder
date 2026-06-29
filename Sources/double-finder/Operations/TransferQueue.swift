@@ -29,17 +29,27 @@ final class TransferQueue {
     ///   `FileOperation` has no pause, so it just runs to completion via
     ///   `onFinish` — without touching `current`, which belongs to another op.
     func adopt(_ op: FileOperation, onFinish: @escaping () -> Void) {
+        // The op may have completed in the gap between isComplete=true and the
+        // modal sheet's auto-dismiss. Adopting it then would never fire onComplete
+        // again → run onFinish now (exactly once) and let onChange drain/close the
+        // queue window. (The caller's backgrounded flag still suppresses the sheet
+        // completion's own finish() call.)
+        guard !op.isComplete else { onFinish(); onChange?(); return }
         if current == nil {
             current = op
             op.onComplete = { [weak self] in
                 onFinish()
+                op.onComplete = nil
                 self?.current = nil
                 self?.onChange?()
                 self?.startNextIfIdle()
             }
             onChange?()
         } else {
-            op.onComplete = { onFinish() }
+            op.onComplete = {
+                onFinish()
+                op.onComplete = nil
+            }
         }
     }
 
@@ -57,6 +67,7 @@ final class TransferQueue {
         current = job.op
         job.op.onComplete = { [weak self] in
             job.onFinish()
+            job.op.onComplete = nil
             self?.current = nil
             self?.onChange?()
             self?.startNextIfIdle()
