@@ -43,6 +43,32 @@ final class TransferQueueAdoptTests: XCTestCase {
         XCTAssertNil(queue.current)
     }
 
+    /// Fix 1 regression guard: if the op already completed before adopt() is called
+    /// (the ~100ms race between isComplete=true and the modal timer dismiss), adopt
+    /// must run onFinish immediately, NOT set it as current, and fire onChange so the
+    /// drain logic can close the queue window.
+    func testAdoptOfAlreadyCompleteOpRunsOnFinishOnceAndDoesNotStick() async {
+        let queue = TransferQueue()
+        var changes = 0
+        queue.onChange = { changes += 1 }
+
+        let op = FileOperation(type: .copy, sources: [], destination: nil)
+        op.transferUnits = [FileOperation.Unit(label: "u") { _ in }]
+        op.start()
+
+        // Wait until the op has actually completed before adopting it.
+        for _ in 0..<200 where !op.isComplete { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(op.isComplete, "precondition: op must be complete before adopting")
+
+        var finished = 0
+        queue.adopt(op) { finished += 1 }
+
+        XCTAssertEqual(finished, 1, "onFinish must run exactly once synchronously")
+        XCTAssertNil(queue.current, "already-complete op must NOT become current")
+        XCTAssertFalse(queue.isActive)
+        XCTAssertGreaterThanOrEqual(changes, 1, "onChange must fire so the drain logic can close the window")
+    }
+
     /// Adopting a running op while another job is already `current` must NOT
     /// overwrite/clear that current op; the adopted op finishes independently.
     func testAdoptWhileBusyDoesNotClobberCurrent() async {
