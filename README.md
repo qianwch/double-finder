@@ -15,6 +15,9 @@ SwiftUI), inspired by the Total Commander workflow.
 - **Dual-pane layout** with an active panel, tabs (⌘T / ⌘W), and a directory
   tree sidebar (⌘⇧T).
 - **View modes** (⌘1/2/3): full details, brief, and thumbnails (Quick Look).
+- **Built-in viewer (F3):** an embedded Quick Look window that previews any file
+  type (images, PDF, text, video, audio, Office…) and steps through the whole
+  listing with the arrow keys; remote/archive files are fetched on demand.
 - **Fast navigation:** drive bar & dropdown, favorites, command-line bar (⌘L
   with Tab completion), Go to Folder (⌘⇧G), in-place folder expansion.
 - **Archives (built-in, via libarchive):** browse / extract / create zip, tar
@@ -39,7 +42,9 @@ SwiftUI), inspired by the Total Commander workflow.
   **overwrite/skip/cancel conflict prompts** on every backend (local, SFTP,
   S3), in-place rename, batch rename (⌘M), cut/paste, drag & drop, Open With,
   trash (⌘⌫) and permanent delete (F8).
-- **Power tools:** quick filter (⌘F), select by pattern (+/-/*), find files
+- **Power tools:** quick search (just start typing to filter the list —
+  substring match plus Chinese pinyin initials; ⌘F opens the filter bar),
+  select by pattern (+/-/*), find files
   (⌘⇧F) incl. content & Spotlight, directory compare & sync, branch view
   (⌘⇧B).
 - **Customizable:** toolbar, keyboard shortcuts, file-type coloring, icon
@@ -85,8 +90,8 @@ Finder shells out to the official `7zz`:
 - The packaged `.app` **bundles** a universal `7zz` (fetched by
   `package_app.sh`), so encrypted 7z works out of the box.
 - When running the bare dev binary (not packaged), install one if you need it:
-  `brew install sevenzip`. Configure the path under **Commands ▸ 7-Zip
-  Location…** if needed.
+  `brew install sevenzip`. Double Finder finds it automatically (bundled copy
+  first, then `7z`/`7zz`/`7za` on `PATH`) — there is no path to configure.
 
 See `THIRD-PARTY.md` for licensing.
 
