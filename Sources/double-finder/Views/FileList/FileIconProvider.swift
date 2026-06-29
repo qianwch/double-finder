@@ -148,7 +148,7 @@ func fileIconResized(_ source: NSImage, to side: CGFloat) -> NSImage {
 
 /// A cancellable `Operation` that resolves one file's icon (or QuickLook
 /// thumbnail) off the main thread, then delivers the result to the main thread.
-private final class IconOperation: Operation {
+private final class IconOperation: Operation, @unchecked Sendable {
 
     let path: String
     let side: CGFloat

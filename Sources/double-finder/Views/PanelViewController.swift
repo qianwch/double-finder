@@ -581,7 +581,7 @@ class PanelViewController: NSViewController {
     @objc private func favAddCurrent() { Favorites.add(panelState.currentPath) }
     @objc private func favRemoveCurrent() { Favorites.remove(panelState.currentPath) }
     @objc private func favOrganize() {
-        NSApp.sendAction(Selector(("organizeFavorites_menu")), to: nil, from: self)
+        NSApp.sendAction(#selector(MainViewController.organizeFavorites_menu), to: nil, from: self)
     }
     @objc private func favGoTo(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }

@@ -118,7 +118,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let tv = NSTableView()
         tv.addTableColumn(column)
         tv.headerView = nil
-        tv.selectionHighlightStyle = .sourceList
+        tv.style = .sourceList
         tv.dataSource = self
         tv.delegate = self
         self.tableView = tv

@@ -400,7 +400,7 @@ final class FileListBodyView: NSView {
             if active {
                 return NSColor.selectedContentBackgroundColor.withAlphaComponent(0.4)
             } else {
-                return NSColor.secondarySelectedControlColor
+                return NSColor.unemphasizedSelectedContentBackgroundColor
             }
         } else if cursor {
             if active {
