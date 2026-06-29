@@ -142,7 +142,8 @@ final class SyncDirsSheet: NSWindowController {
     /// OS/metadata cruft, editor/download temp files, and VCS/dependency/build
     /// directories that should never be synced. Pure → unit-tested
     /// (`SyncDirsJunkTests`). Matches the contract documented in spec/features.md.
-    static func isJunk(rel: String) -> Bool {
+    /// `nonisolated` so `SyncScan` (a nonisolated context) can call it directly.
+    nonisolated static func isJunk(rel: String) -> Bool {
         let comps = rel.split(separator: "/").map(String.init)
         // Any junk directory anywhere along the path drops the whole subtree.
         let junkDirs: Set<String> = [

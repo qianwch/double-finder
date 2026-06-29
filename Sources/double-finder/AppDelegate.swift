@@ -102,9 +102,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the standard copy:/paste: actions (target=nil → responder chain), so
         // the file list copies/pastes files while a focused text field gets text
         // copy/paste instead.
-        editMenu.addItem(NSMenuItem(title: tr("Copy"), action: Selector(("copy:")), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: tr("Paste"), action: Selector(("paste:")), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: tr("Cut Text"), action: Selector(("cut:")), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: tr("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: tr("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: tr("Cut Text"), action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
         let copyPathItem = NSMenuItem(title: tr("Copy Path"), action: #selector(menuCopyPath), keyEquivalent: "c")
         copyPathItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(copyPathItem)

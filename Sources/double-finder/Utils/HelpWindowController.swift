@@ -46,7 +46,7 @@ final class HelpWindowController: NSWindowController, NSTableViewDataSource, NST
         table.addTableColumn(col)
         table.dataSource = self
         table.delegate = self
-        table.selectionHighlightStyle = .sourceList
+        table.style = .sourceList
         sidebar = table
         let sideScroll = NSScrollView()
         sideScroll.documentView = table
