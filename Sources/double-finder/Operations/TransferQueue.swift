@@ -20,6 +20,29 @@ final class TransferQueue {
         startNextIfIdle()
     }
 
+    /// Adopt an ALREADY-RUNNING operation into the queue for display + completion
+    /// chaining, WITHOUT restarting it (calling start() again would re-run it).
+    /// - Idle queue: it becomes `current`; the serial guarantee holds and its
+    ///   completion clears `current` and drains the queue like a normal job.
+    /// - Busy queue: the adopted op was already running concurrently (the modal
+    ///   path starts the op before the user clicks "Move to Background") and
+    ///   `FileOperation` has no pause, so it just runs to completion via
+    ///   `onFinish` — without touching `current`, which belongs to another op.
+    func adopt(_ op: FileOperation, onFinish: @escaping () -> Void) {
+        if current == nil {
+            current = op
+            op.onComplete = { [weak self] in
+                onFinish()
+                self?.current = nil
+                self?.onChange?()
+                self?.startNextIfIdle()
+            }
+            onChange?()
+        } else {
+            op.onComplete = { onFinish() }
+        }
+    }
+
     func cancelCurrent() { current?.cancel() }
 
     func cancelAll() {
