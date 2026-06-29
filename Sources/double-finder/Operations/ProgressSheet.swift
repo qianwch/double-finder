@@ -6,8 +6,14 @@ class ProgressSheet: NSWindowController {
     private var operationLabel: NSTextField!
     private var fileLabel: NSTextField!
     private var cancelButton: NSButton!
+    private var backgroundButton: NSButton!
     private var observation: NSKeyValueObservation?
     private var timer: Timer?
+
+    /// Invoked when the user clicks "Move to Background": the sheet is dismissed
+    /// but the operation keeps running. The owner re-homes the op (e.g. into the
+    /// transfer queue). Distinct from cancel (which stops the op) and completion.
+    var onMoveToBackground: (() -> Void)?
 
     init(operation: FileOperation) {
         self.operation = operation
@@ -53,6 +59,13 @@ class ProgressSheet: NSWindowController {
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(cancelButton)
 
+        let backgroundButton = NSButton(title: tr("Move to Background"),
+                                        target: self, action: #selector(backgroundClicked))
+        backgroundButton.bezelStyle = .rounded
+        backgroundButton.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(backgroundButton)
+        self.backgroundButton = backgroundButton
+
         NSLayoutConstraint.activate([
             operationLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
             operationLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
@@ -68,6 +81,10 @@ class ProgressSheet: NSWindowController {
 
             cancelButton.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 12),
             cancelButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+
+            backgroundButton.centerYAnchor.constraint(equalTo: cancelButton.centerYAnchor),
+            backgroundButton.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -10),
+            backgroundButton.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 20),
         ])
     }
 
@@ -153,6 +170,14 @@ class ProgressSheet: NSWindowController {
         operation.cancel()
         timer?.invalidate()
         window?.sheetParent?.endSheet(window!, returnCode: .cancel)
+    }
+
+    @objc private func backgroundClicked() {
+        // Dismiss the sheet but DO NOT cancel — the operation keeps running and
+        // the owner re-homes it (into the transfer queue) via onMoveToBackground.
+        timer?.invalidate()
+        onMoveToBackground?()
+        window?.sheetParent?.endSheet(window!, returnCode: .continue)
     }
 
     func beginSheet(on parent: NSWindow, completion: @escaping () -> Void) {
