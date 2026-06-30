@@ -199,6 +199,50 @@ final class S3LiveTests: XCTestCase {
         for k in [srcKey, dstKey] { try? await client.deleteObject(bucket: bucket, key: k) }
     }
 
+    /// Live multipart UPLOAD progress granularity: a 50 MiB file → 4 parts (16+16+16+2).
+    /// Proves the intra-part streaming fix — progress must arrive in MANY small deltas
+    /// (URLSession `didSendBodyData`), not one lump per finished part. Asserts the total
+    /// sums to the size, there are far more callbacks than parts, and no single delta is
+    /// as large as a whole part (16 MiB).
+    func testS3UploadProgressIsRealtime() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["S3_LIVE"] == "1", "set S3_LIVE=1 (+ creds) to run the live S3 test")
+        let region = env["S3_REGION"]!, bucket = env["S3_BUCKET"]!
+        let ep = S3Endpoint(base: URL(string: env["S3_ENDPOINT"]!)!, region: region, pathStyle: true)
+        let signer = S3Signer(accessKey: env["S3_ACCESS"]!, secretKey: env["S3_SECRET"]!, region: region)
+        let client = S3Client(endpoint: ep, signer: signer)
+
+        let mib = 1024 * 1024, size = Int64(50 * mib)
+        let uniq = ProcessInfo.processInfo.globallyUniqueString
+        let key = "df-uprt-\(uniq).bin"
+        let fm = FileManager.default
+        let tmp = NSTemporaryDirectory() + "df-uprt-\(uniq).bin"
+        defer { try? fm.removeItem(atPath: tmp) }
+        fm.createFile(atPath: tmp, contents: nil)
+        let h = FileHandle(forWritingAtPath: tmp)!
+        var block = Data(count: mib); for i in 0..<mib { block[i] = UInt8((i * 7) & 0xFF) }
+        for _ in 0..<50 { try h.write(contentsOf: block) }; try h.close()
+
+        let rec = DeltaRec()
+        try await client.putObject(bucket: bucket, key: key, fromLocalPath: tmp) { rec.add($0) }
+        let deltas = rec.deltas
+        let total = deltas.reduce(0, +), maxDelta = deltas.max() ?? 0
+        print("UPLOAD-RT: size=\(size) callbacks=\(deltas.count) total=\(total) maxDelta=\(maxDelta) (\(maxDelta/Int64(mib))MiB)")
+
+        XCTAssertEqual(total, size, "upload progress must sum to the file size")
+        XCTAssertGreaterThan(deltas.count, 8, "expect many sub-part callbacks, not one-per-part (4 parts)")
+        XCTAssertLessThan(maxDelta, Int64(16 * mib), "no single delta should be a whole 16 MiB part")
+
+        try? await client.deleteObject(bucket: bucket, key: key)
+    }
+
+    /// Thread-safe recorder of every progress delta (order irrelevant; count + values).
+    final class DeltaRec: @unchecked Sendable {
+        private let lock = NSLock(); private var ds: [Int64] = []
+        func add(_ d: Int64) { lock.lock(); ds.append(d); lock.unlock() }
+        var deltas: [Int64] { lock.lock(); defer { lock.unlock() }; return ds }
+    }
+
     /// Thread-safe accumulator for the @Sendable progress reporter.
     final class Box: @unchecked Sendable {
         private let lock = NSLock(); private var _t: Int64 = 0

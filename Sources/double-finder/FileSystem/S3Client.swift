@@ -5,6 +5,26 @@ struct S3Error: Error, LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Per-task delegate that turns `URLSession`'s cumulative `didSendBodyData` callbacks
+/// into incremental byte deltas, so a multipart part reports progress continuously as
+/// it's sent (instead of one lump when the whole part finishes). The delegate-queue is
+/// serial, so `lastSent` needs no extra locking.
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let onDelta: (@Sendable (Int64) -> Void)?
+    private var lastSent: Int64 = 0
+    init(onDelta: (@Sendable (Int64) -> Void)?) { self.onDelta = onDelta }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didSendBodyData bytesSent: Int64, totalBytesSent: Int64,
+                    totalBytesExpectedToSend: Int64) {
+        // On a retransmit `totalBytesSent` can reset; clamp the delta to ≥0 so we never
+        // report negative progress (the op's fraction is min(1,…)-clamped anyway).
+        let delta = max(0, totalBytesSent - lastSent)
+        lastSent = totalBytesSent
+        if delta > 0 { onDelta?(delta) }
+    }
+}
+
 /// Low-level S3 REST client (URLSession + SigV4). One instance per connection.
 final class S3Client {
     private let endpoint: S3Endpoint
@@ -170,9 +190,11 @@ final class S3Client {
                         defer { try? handle.close() }
                         try handle.seek(toOffset: UInt64(part.offset))
                         let body = try handle.read(upToCount: Int(part.length)) ?? Data()
+                        // Streams intra-part progress (byte deltas as the part is sent),
+                        // so the bar advances continuously rather than jumping a full part.
                         let etag = try await self.uploadPart(bucket: bucket, key: key, uploadId: uploadId,
-                                                             partNumber: part.number, body: body)
-                        progress?(part.length)
+                                                             partNumber: part.number, body: body,
+                                                             progress: progress)
                         return (part.number, etag)
                     }
                 }
@@ -223,11 +245,23 @@ final class S3Client {
     }
 
     /// Uploads one part; returns its ETag (needed by completeMultipartUpload).
+    /// Uses `upload(for:from:delegate:)` with a per-task progress delegate so `progress`
+    /// fires with byte deltas AS the part streams out — not once when it completes.
+    /// Signing is unchanged (the part body is in memory, so the payload hash is exact).
     func uploadPart(bucket: String, key: String, uploadId: String,
-                    partNumber: Int, body: Data) async throws -> String {
-        let (_, http) = try await send(method: "PUT", bucket: bucket, key: key,
-                                       query: ["partNumber": "\(partNumber)", "uploadId": uploadId],
-                                       body: body)
+                    partNumber: Int, body: Data,
+                    progress: (@Sendable (Int64) -> Void)? = nil) async throws -> String {
+        let hash = S3Signer.sha256Hex(body)
+        let req = makeSignedRequest(method: "PUT", bucket: bucket, key: key,
+                                    query: ["partNumber": "\(partNumber)", "uploadId": uploadId],
+                                    payloadHash: hash)
+        let delegate = UploadProgressDelegate(onDelta: progress)
+        let (data, resp) = try await session.upload(for: req, from: body, delegate: delegate)
+        guard let http = resp as? HTTPURLResponse else { throw S3Error(message: "No HTTP response") }
+        if !(200...299).contains(http.statusCode) {
+            let msg = S3XML.errorMessage(data) ?? "HTTP \(http.statusCode)"
+            throw S3Error(message: msg)
+        }
         guard let etag = http.value(forHTTPHeaderField: "ETag") else {
             throw S3Error(message: "Part \(partNumber) returned no ETag")
         }

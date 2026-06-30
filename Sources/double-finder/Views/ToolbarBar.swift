@@ -33,6 +33,11 @@ final class ToolbarBar: NSView {
     var onCustomize: (() -> Void)?
 
     private let stack = NSStackView()
+    /// The transfer-queue progress indicator, pinned directly to the trailing edge.
+    private var accessoryView: NSView?
+    /// stack→trailing constraint used when NO accessory is present (swapped for a
+    /// stack→accessory.leading constraint when one is installed).
+    private var stackTrailingDefault: NSLayoutConstraint!
 
     /// Remembers the last-configured set so `relocalize()` can re-apply tooltips.
     private var items: [Item] = []
@@ -51,10 +56,31 @@ final class ToolbarBar: NSView {
         stack.edgeInsets = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        stackTrailingDefault = stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            stackTrailingDefault,
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    /// Installs (or clears) the trailing accessory view — the transfer-queue progress
+    /// indicator. Added DIRECTLY to the toolbar (no wrapper) and pinned trailing+centerY,
+    /// so it gets a real frame and receives mouse events (a zero-size wrapper would render
+    /// the content via compression-resistance overflow but swallow all clicks at hitTest).
+    func setTrailingAccessory(_ accessory: NSView?) {
+        accessoryView?.removeFromSuperview()
+        accessoryView = nil
+        stackTrailingDefault.isActive = true
+        guard let accessory else { return }
+        accessory.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(accessory)
+        accessoryView = accessory
+        stackTrailingDefault.isActive = false
+        NSLayoutConstraint.activate([
+            accessory.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            accessory.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: accessory.leadingAnchor, constant: -8),
         ])
     }
 

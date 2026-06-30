@@ -17,7 +17,7 @@ class MainViewController: NSViewController {
     /// Retains lazy Open-With submenu delegates while a context menu is open.
     private var openWithDelegates: [OpenWithMenuDelegate] = []
     private let transferQueue = TransferQueue()
-    private var queueWindow: QueueWindowController?
+    private var queueIndicator: QueueToolbarController?
     private var serverSheet: ServerConnectionSheet?
     private var activeRenameSheet: MultiRenameSheet?
     private var activeFindSheet: FindFilesSheet?
@@ -1007,25 +1007,27 @@ class MainViewController: NSViewController {
         }
     }
 
-    /// Adds an operation to the serial transfer queue and shows the queue window.
+    /// Adds an operation to the serial transfer queue and shows the toolbar indicator.
     private func enqueueOperation(_ op: FileOperation, completion: @escaping () -> Void) {
         transferQueue.enqueue(op) { completion() }
-        ensureQueueWindow()
-        queueWindow?.showQueueWindow()
+        ensureQueueIndicator()
     }
 
-    /// Lazily creates the non-modal queue window and wires `transferQueue.onChange`.
+    /// Lazily creates the toolbar-embedded queue indicator and wires `transferQueue.onChange`.
     /// Idempotent: safe to call from both the enqueue and the move-to-background paths.
-    private func ensureQueueWindow() {
-        guard queueWindow == nil else { return }
-        let win = QueueWindowController(queue: transferQueue)
-        queueWindow = win
-        transferQueue.onChange = { [weak self, weak win] in
-            win?.resetSpeedSampler()
-            // Drop the controller once the queue fully drains.
-            if let self = self, !self.transferQueue.isActive {
-                self.queueWindow?.closeQueue()
-                self.queueWindow = nil
+    private func ensureQueueIndicator() {
+        guard queueIndicator == nil else { return }
+        let indicator = QueueToolbarController(queue: transferQueue)
+        queueIndicator = indicator
+        toolbarBar.setTrailingAccessory(indicator.compactView)
+        transferQueue.onChange = { [weak self] in
+            guard let self = self else { return }
+            self.queueIndicator?.resetSpeedSampler()
+            // Drop the indicator once the queue fully drains.
+            if !self.transferQueue.isActive {
+                self.queueIndicator?.tearDown()
+                self.queueIndicator = nil
+                self.toolbarBar.setTrailingAccessory(nil)
             }
         }
     }
@@ -1968,9 +1970,8 @@ class MainViewController: NSViewController {
         sheet.onMoveToBackground = { [weak self] in
             guard let self = self else { return }
             backgrounded = true
-            self.ensureQueueWindow()
+            self.ensureQueueIndicator()
             self.transferQueue.adopt(op, onFinish: finish)
-            self.queueWindow?.showQueueWindow()
         }
 
         op.start()
