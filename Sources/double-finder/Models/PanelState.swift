@@ -2,7 +2,9 @@ import Foundation
 
 @MainActor
 class PanelState: ObservableObject {
-    @Published var currentPath: String
+    @Published var currentPath: String {
+        didSet { rememberRemotePath() }
+    }
     @Published var items: [FileItem] = [] {
         didSet { itemsVersion &+= 1 }
     }
@@ -152,6 +154,50 @@ class PanelState: ObservableObject {
     /// a local volume as "current".
     var isRemote: Bool { sftp != nil || s3 != nil || remoteArchive != nil }
 
+    /// The remote session this panel is currently in (drive-bar identity), nil
+    /// when local. Note: browsing a remote archive in place temporarily clears
+    /// `sftp`, so no drive is highlighted there (same as the old single entry).
+    var activeRemoteSession: RemoteSession? {
+        if let c = sftp { return .sftp(c) }
+        if let c = s3 { return .s3(c, secret: s3Secret) }
+        return nil
+    }
+    var activeRemoteSessionID: String? { activeRemoteSession?.id }
+
+    /// Per-session (`RemoteSession.id`) last browsed path in THIS panel, so
+    /// switching drives restores where you were.
+    private var remoteLastPaths: [String: String] = [:]
+
+    /// In-archive virtual paths are not recorded — they wouldn't list as a
+    /// directory on a later reconnect.
+    private func rememberRemotePath() {
+        guard remoteArchive == nil, let id = activeRemoteSessionID else { return }
+        remoteLastPaths[id] = currentPath
+    }
+
+    /// Drive-bar click: switch this panel to `session`. Re-clicking the active
+    /// session goes to its root (bucket list for S3, / for SFTP); switching to
+    /// another session restores this panel's last browsed path there.
+    func enterSession(_ session: RemoteSession) {
+        if activeRemoteSessionID == session.id {
+            navigate(to: "/")
+            return
+        }
+        let initial = remoteLastPaths[session.id] ?? "/"
+        switch session {
+        case .sftp(let conn): connectSFTP(conn, initialPath: initial)
+        case .s3(let conn, let secret): connectS3(conn, secret: secret, initialPath: initial)
+        }
+    }
+
+    /// Called when the global session store changed: if the session this panel
+    /// is in was disconnected (ejected from either panel), fall back to local.
+    func leaveRemovedSessions(existingIDs: Set<String>) {
+        guard let id = activeRemoteSessionID, !existingIDs.contains(id) else { return }
+        remoteLastPaths[id] = nil
+        navigateLocal(to: NSHomeDirectory())
+    }
+
     /// The S3 client for the active S3 session, or nil if not connected to S3.
     var s3Client: S3Client? {
         guard let conn = s3 else { return nil }
@@ -176,8 +222,16 @@ class PanelState: ObservableObject {
     /// previous directory, whose cached listing is still valid (we never overwrote it).
     private func recoverFromRemoteLoadFailure() {
         if historyIndex <= 0 {
+            // Initial connect failed: drop the dead session's drive-bar entry too.
+            // Clear the session fields BEFORE touching the store so the didChange
+            // observer sees this panel as already-local and doesn't re-enter.
+            let deadID = activeRemoteSessionID
             sftp = nil; s3 = nil; s3Secret = ""
             remoteArchive = nil; remoteArchiveReturn = nil
+            if let id = deadID {
+                remoteLastPaths[id] = nil
+                RemoteSessionStore.shared.remove(id: id)
+            }
             navigate(to: localReturnPath)
             return
         }
@@ -190,9 +244,11 @@ class PanelState: ObservableObject {
 
     func connectSFTP(_ conn: SFTPConnection, initialPath: String) {
         rememberLocalReturn()
+        RemoteSessionStore.shared.register(.sftp(conn))
         remoteArchive = nil
         remoteArchiveReturn = nil
         searchResults = nil
+        s3 = nil; s3Secret = ""
         sftp = conn
         currentPath = initialPath
         cursorMemory = [:]
@@ -211,6 +267,7 @@ class PanelState: ObservableObject {
 
     func connectS3(_ conn: S3Connection, secret: String, initialPath: String) {
         rememberLocalReturn()
+        RemoteSessionStore.shared.register(.s3(conn, secret: secret))
         remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
         sftp = nil
         s3 = conn; s3Secret = secret

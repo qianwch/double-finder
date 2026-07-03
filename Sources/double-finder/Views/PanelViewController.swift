@@ -46,6 +46,21 @@ class PanelViewController: NSViewController {
         updateActiveState()
         fileTableView.isActivePanel = isActive
         observeVolumeChanges()
+        observeRemoteSessions()
+    }
+
+    /// Rebuilds the drive bar whenever the global remote-session list changes
+    /// (a connect or a disconnect in either panel). If the session this panel is
+    /// sitting in was removed, falls back to local first. The store is @MainActor
+    /// and posts synchronously, so this always runs on the main thread.
+    private func observeRemoteSessions() {
+        NotificationCenter.default.addObserver(self, selector: #selector(remoteSessionsChanged),
+                                               name: RemoteSessionStore.didChange, object: nil)
+    }
+
+    @objc private func remoteSessionsChanged() {
+        panelState.leaveRemovedSessions(existingIDs: RemoteSessionStore.shared.ids)
+        rebuildDriveBar()
     }
 
     /// Tokens for the NSWorkspace mount/unmount/rename observers (removed in deinit).
@@ -86,6 +101,7 @@ class PanelViewController: NSViewController {
     deinit {
         let nc = NSWorkspace.shared.notificationCenter
         volumeObservers.forEach { nc.removeObserver($0) }
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func setupUI() {
@@ -396,6 +412,7 @@ class PanelViewController: NSViewController {
     private var scrollMemory: [String: Int] = [:]   // path → top visible row
     private var lastDisplayedPath: String?
     private var lastDisplayedRemote: Bool = false
+    private var lastDisplayedSessionID: String?
 
     /// Cached itemsVersion from the last time we fed items to the file list.
     /// Sentinel -1 ensures items are fed on the very first updateDisplay.
@@ -433,16 +450,14 @@ class PanelViewController: NSViewController {
         // between local and remote (connecting to S3/SFTP at the same path
         // string — e.g. "/" — wouldn't change `pathChanged`).
         let remoteChanged = panelState.isRemote != lastDisplayedRemote
-        if pathChanged || remoteChanged {
+        let sessionChanged = panelState.activeRemoteSessionID != lastDisplayedSessionID
+        if pathChanged || remoteChanged || sessionChanged {
             lastDisplayedRemote = panelState.isRemote
-            // The S3 drive-bar entry shows the current bucket, so its label must be
-            // rebuilt as the path changes (and on connect/disconnect). A plain local
-            // navigation only needs the cheap highlight toggle.
-            if panelState.s3 != nil || remoteChanged {
-                rebuildDriveBar()
-            } else {
-                updateDriveSelection()
-            }
+            lastDisplayedSessionID = panelState.activeRemoteSessionID
+            // Session labels are static, so switching drives only needs the cheap
+            // highlight toggle — but a session change can swap which remote row is
+            // active while `isRemote` stays true, so it must refresh highlights too.
+            updateDriveSelection()
         }
 
         fileTableView.expandedPaths = panelState.expandedPaths
@@ -606,12 +621,12 @@ class PanelViewController: NSViewController {
         guard AppSettings.showDriveBar else { return }
         // On a remote connection (SFTP/S3) no local volume is "current".
         let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
-        // When connected to a virtual remote (S3 / SFTP), lead with a highlighted
-        // entry + a ⏏ that disconnects (back to local home). S3 shows the current
-        // bucket ("s3://<conn>/<bucket>"); SFTP shows "sftp://<user>@<host>".
-        if let label = remoteDriveLabel {
-            driveStack.addArrangedSubview(makeRemoteDriveRow(label: label.text, icon: label.icon,
-                                                             onClick: label.onClick))
+        // Every open remote session (app-global) leads the bar as its own "drive",
+        // the one this panel is in highlighted; ⏏ disconnects the session app-wide.
+        let activeID = panelState.activeRemoteSessionID
+        for session in RemoteSessionStore.shared.sessions {
+            driveStack.addArrangedSubview(makeRemoteDriveRow(session: session,
+                                                             active: session.id == activeID))
         }
         for vol in Volumes.mounted() {
             let b = NSButton(title: " " + vol.name, target: self, action: #selector(driveSelected(_:)))
@@ -639,42 +654,37 @@ class PanelViewController: NSViewController {
         }
     }
 
-    /// Describes the active virtual-remote drive entry (S3 / SFTP), or nil when the
-    /// panel is local or on an SMB mount (which appears as a normal volume instead).
-    private var remoteDriveLabel: (text: String, icon: String, onClick: Selector)? {
-        if let s3 = panelState.s3 {
-            let bucket = parseS3Path(panelState.currentPath).bucket ?? ""
-            return ("s3://\(s3.name)/\(bucket)", "cloud", #selector(s3DriveSelected))
-        }
-        if let conn = panelState.sftp {
-            return ("sftp://\(conn.user)@\(conn.host)", "network", #selector(sftpDriveSelected))
-        }
-        return nil
-    }
-
-    /// Builds a drive-bar row for the active virtual remote: a highlighted nav
-    /// button + a ⏏ that disconnects the session (`ejectRemoteSession`).
-    private func makeRemoteDriveRow(label: String, icon: String, onClick: Selector) -> NSView {
-        let b = NSButton(title: " " + label, target: self, action: onClick)
+    /// Builds a drive-bar row for one open remote session: a nav button
+    /// (highlighted when this panel is in the session) + a ⏏ that disconnects
+    /// the session app-wide. The session id rides in the button identifiers /
+    /// menu representedObject, same as volume rows carry their path.
+    private func makeRemoteDriveRow(session: RemoteSession, active: Bool) -> NSView {
+        let b = NSButton(title: " " + session.label, target: self,
+                         action: #selector(remoteDriveSelected(_:)))
         b.bezelStyle = .recessed
         b.setButtonType(.pushOnPushOff)
         b.controlSize = .small
         b.font = .systemFont(ofSize: 11)
-        b.image = NSImage(systemSymbolName: icon, accessibilityDescription: label)
+        b.image = NSImage(systemSymbolName: session.icon, accessibilityDescription: session.label)
         b.imagePosition = .imageLeading
-        b.state = .on
-        b.toolTip = label
+        b.identifier = NSUserInterfaceItemIdentifier(session.id)
+        b.state = active ? .on : .off
+        b.toolTip = session.label
         // Right-click → Disconnect (reliable path alongside the inline ⏏).
         let menu = NSMenu()
-        let mi = NSMenuItem(title: tr("Disconnect"), action: #selector(ejectRemoteSession), keyEquivalent: "")
+        let mi = NSMenuItem(title: tr("Disconnect"), action: #selector(disconnectRemoteSession(_:)),
+                            keyEquivalent: "")
         mi.target = self
         mi.image = Self.ejectImage
+        mi.representedObject = session.id
         menu.addItem(mi)
         b.menu = menu
-        let eject = NSButton(image: Self.ejectImage, target: self, action: #selector(ejectRemoteSession))
+        let eject = NSButton(image: Self.ejectImage, target: self,
+                             action: #selector(disconnectRemoteSession(_:)))
         eject.isBordered = false
         eject.imagePosition = .imageOnly
         eject.controlSize = .small
+        eject.identifier = NSUserInterfaceItemIdentifier(session.id)
         eject.toolTip = tr("Disconnect")
         eject.setContentHuggingPriority(.required, for: .horizontal)
         let row = NSStackView(views: [b, eject])
@@ -753,45 +763,57 @@ class PanelViewController: NSViewController {
         panelState.navigateLocal(to: path)
     }
 
-    /// Clicking the S3 drive-bar entry lists the account's buckets (S3 root).
-    @objc private func s3DriveSelected() {
-        guard panelState.s3 != nil else { return }
+    /// Clicking a remote drive: enter that session in this panel (restoring the
+    /// panel's last browsed path there; re-click on the active one goes to root).
+    @objc private func remoteDriveSelected(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue,
+              let session = RemoteSessionStore.shared.session(withID: id) else { return }
         activatePanel()
-        panelState.navigate(to: "/")
+        panelState.enterSession(session)
     }
 
-    /// Clicking the SFTP drive-bar entry goes to the remote filesystem root.
-    @objc private func sftpDriveSelected() {
-        guard panelState.sftp != nil else { return }
+    /// Dropdown variant of `remoteDriveSelected` (session id in representedObject).
+    @objc private func remoteDriveMenuSelected(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let session = RemoteSessionStore.shared.session(withID: id) else { return }
         activatePanel()
-        panelState.navigate(to: "/")
+        panelState.enterSession(session)
     }
 
-    /// ⏏ on the S3/SFTP entry: disconnect the session and fall back to local home.
-    /// `navigateLocal` drops the SFTP/S3 session before navigating.
-    @objc private func ejectRemoteSession() {
-        activatePanel()
-        panelState.navigateLocal(to: NSHomeDirectory())
+    /// ⏏ / Disconnect on a remote drive: remove the session app-wide. The store's
+    /// didChange observer then kicks ANY panel sitting in it back to local home
+    /// and rebuilds both drive bars — one code path for both panels.
+    @objc private func disconnectRemoteSession(_ sender: Any?) {
+        let id = (sender as? NSMenuItem)?.representedObject as? String
+            ?? (sender as? NSButton)?.identifier?.rawValue
+        guard let id = id else { return }
+        RemoteSessionStore.shared.remove(id: id)
     }
 
     /// Drive dropdown: pops the same volume list as a menu.
     @objc private func showDriveMenu() {
         let menu = NSMenu()
-        // Active virtual remote (S3 / SFTP) leads the menu, with a Disconnect item.
-        if let remote = remoteDriveLabel {
-            let item = NSMenuItem(title: remote.text, action: remote.onClick, keyEquivalent: "")
+        // Open remote sessions lead the menu (mirroring the drive bar), each with
+        // its own Disconnect item; the session this panel is in is checked.
+        let sessions = RemoteSessionStore.shared.sessions
+        let activeID = panelState.activeRemoteSessionID
+        for session in sessions {
+            let item = NSMenuItem(title: session.label, action: #selector(remoteDriveMenuSelected(_:)),
+                                  keyEquivalent: "")
             item.target = self
-            item.image = NSImage(systemSymbolName: remote.icon, accessibilityDescription: remote.text)
-            item.state = .on
+            item.image = NSImage(systemSymbolName: session.icon, accessibilityDescription: session.label)
+            item.representedObject = session.id
+            item.state = session.id == activeID ? .on : .off
             menu.addItem(item)
-            let disconnect = NSMenuItem(title: tr("Disconnect"), action: #selector(ejectRemoteSession),
-                                        keyEquivalent: "")
+            let disconnect = NSMenuItem(title: tr("Disconnect") + " " + session.label,
+                                        action: #selector(disconnectRemoteSession(_:)), keyEquivalent: "")
             disconnect.target = self
             disconnect.image = Self.ejectImage
+            disconnect.representedObject = session.id
             disconnect.indentationLevel = 1
             menu.addItem(disconnect)
-            menu.addItem(.separator())
         }
+        if !sessions.isEmpty { menu.addItem(.separator()) }
         let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
         for vol in Volumes.mounted() {
             let item = NSMenuItem(title: vol.menuTitle, action: #selector(driveMenuSelected(_:)), keyEquivalent: "")
@@ -820,14 +842,18 @@ class PanelViewController: NSViewController {
         panelState.navigateLocal(to: path)
     }
 
-    /// Updates only the highlighted volume (called on navigation).
+    /// Updates only the highlighted drive (called on navigation / session switch).
+    /// Volume rows carry their mount path as identifier, remote-session rows their
+    /// session id — the namespaces can't collide (ids have a scheme prefix).
     private func updateDriveSelection() {
         guard driveStack != nil, AppSettings.showDriveBar else { return }
         let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
+        let activeID = panelState.activeRemoteSessionID
         for sub in driveStack.arrangedSubviews {
             // Plain button, or the nav button is the first item of an ejectable row.
             let navButton = (sub as? NSButton) ?? (sub as? NSStackView)?.arrangedSubviews.first as? NSButton
-            navButton?.state = (navButton?.identifier?.rawValue == current) ? .on : .off
+            guard let key = navButton?.identifier?.rawValue else { navButton?.state = .off; continue }
+            navButton?.state = (key == current || key == activeID) ? .on : .off
         }
     }
 }
