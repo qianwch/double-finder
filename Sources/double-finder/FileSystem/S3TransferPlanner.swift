@@ -5,13 +5,16 @@ enum S3TransferPlanner {
     /// Local destination path for a downloaded object.
     /// - folderKey: the selected folder's prefix (ends in "/") when the object
     ///   came from a folder download; nil for a single-file download.
-    static func downloadLocalPath(key: String, folderKey: String?, destDir: String) -> String {
+    /// - renameTo: single-item rename-on-transfer — replaces the downloaded
+    ///   file's name (single-file) or the local root folder's name (folder).
+    static func downloadLocalPath(key: String, folderKey: String?, destDir: String,
+                                  renameTo: String? = nil) -> String {
         if let folderKey = folderKey, !folderKey.isEmpty {
-            let folderName = (String(folderKey.dropLast()) as NSString).lastPathComponent
+            let folderName = renameTo ?? (String(folderKey.dropLast()) as NSString).lastPathComponent
             let rel = String(key.dropFirst(folderKey.count))
             return (destDir as NSString).appendingPathComponent(folderName + "/" + rel)
         }
-        let name = (key as NSString).lastPathComponent
+        let name = renameTo ?? (key as NSString).lastPathComponent
         return (destDir as NSString).appendingPathComponent(name)
     }
 
@@ -26,15 +29,18 @@ enum S3TransferPlanner {
     /// Remote key for an uploaded local file.
     /// - folderRoot: the selected local directory (no trailing slash) when the
     ///   file came from a folder upload; nil for a single-file upload.
-    static func uploadKey(localPath: String, folderRoot: String?, destPrefix: String) -> String {
+    /// - renameTo: single-item rename-on-transfer — replaces the uploaded
+    ///   object's name (single-file) or the remote root folder's name (folder).
+    static func uploadKey(localPath: String, folderRoot: String?, destPrefix: String,
+                          renameTo: String? = nil) -> String {
         if let folderRoot = folderRoot, !folderRoot.isEmpty {
-            let folderName = (folderRoot as NSString).lastPathComponent
+            let folderName = renameTo ?? (folderRoot as NSString).lastPathComponent
             var rel = localPath
             if rel.hasPrefix(folderRoot) { rel.removeFirst(folderRoot.count) }
             if rel.hasPrefix("/") { rel.removeFirst() }
             return destPrefix + folderName + "/" + rel
         }
-        let name = (localPath as NSString).lastPathComponent
+        let name = renameTo ?? (localPath as NSString).lastPathComponent
         return destPrefix + name
     }
 }

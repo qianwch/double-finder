@@ -261,4 +261,27 @@ class FileOperation: ObservableObject {
     static func destinationExists(source: String, in destination: String) -> Bool {
         FileManager.default.fileExists(atPath: destinationURL(source: source, in: destination).path)
     }
+
+    /// Sources whose transfer into `destDir` would target themselves — either the
+    /// item's effective target path equals the item itself (copy/move onto
+    /// itself; the local overwrite path deletes the destination first, which IS
+    /// the source → data loss), or the item is a folder that contains `destDir`
+    /// (folder into itself). `renameTo` is the single-item rename-on-transfer
+    /// name: renaming within the source's own directory is legitimate and NOT
+    /// blocked. Pure path logic; the caller must only apply it when source and
+    /// destination share one namespace (both local / same SFTP host / same S3 store).
+    nonisolated static func selfTransferSources(_ sources: [String], destDir: String,
+                                                renameTo: String? = nil) -> [String] {
+        func normalized(_ p: String) -> String {
+            p.count > 1 && p.hasSuffix("/") ? String(p.dropLast()) : p
+        }
+        let dest = normalized(destDir)
+        return sources.filter { source in
+            let src = normalized(source)
+            let targetName = renameTo ?? (src as NSString).lastPathComponent
+            let target = dest == "/" ? "/" + targetName : dest + "/" + targetName
+            if target == src { return true }
+            return dest == src || dest.hasPrefix(src + "/")
+        }
+    }
 }

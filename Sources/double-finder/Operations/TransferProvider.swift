@@ -13,8 +13,18 @@ protocol TransferProvider {
     @MainActor var verb: String { get }
 
     /// Build a `FileOperation` that transfers `items` to `destPath`.
+    /// `renameTo` is the TC-style single-item rename-on-transfer: when the user
+    /// edits the confirm dialog's last path component, the (sole) item lands
+    /// under that name. Providers ignore it when several items are selected.
     @MainActor
-    func makeOperation(items: [FileItem], destPath: String) -> FileOperation
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation
+}
+
+extension TransferProvider {
+    @MainActor
+    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+        makeOperation(items: items, destPath: destPath, renameTo: nil)
+    }
 }
 
 // MARK: - LocalCopyProvider
@@ -39,11 +49,12 @@ struct LocalCopyProvider: TransferProvider {
     @MainActor var verb: String { tr("Copy") }
 
     @MainActor
-    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation {
         let op = FileOperation(type: .copy,
                                sources: items.map { $0.path },
                                destination: destPath,
                                conflictPolicy: .overwrite)
+        let newName = items.count == 1 ? renameTo : nil
         if archiveRoot {
             // Source is inside an archive: extract each entry instead of a
             // plain local copy (the item paths are virtual). Preserve the
@@ -60,6 +71,26 @@ struct LocalCopyProvider: TransferProvider {
                 let targetDir = relParent.isEmpty ? dest : (dest as NSString).appendingPathComponent(relParent)
                 try FileManager.default.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
                 try await capturedSrcFS.copy(from: path, to: targetDir)
+                // Rename-on-copy: ZipFS extracts under the entry's own name;
+                // move the extracted result to the requested one.
+                if let newName = newName {
+                    let extracted = (targetDir as NSString)
+                        .appendingPathComponent((path as NSString).lastPathComponent)
+                    let target = (targetDir as NSString).appendingPathComponent(newName)
+                    if extracted != target {
+                        let fm = FileManager.default
+                        if fm.fileExists(atPath: target) { try fm.removeItem(atPath: target) }
+                        try fm.moveItem(atPath: extracted, toPath: target)
+                    }
+                }
+            }
+        } else if let newName = newName {
+            // Single-item rename-on-copy: explicit target path.
+            let target = (destPath as NSString).appendingPathComponent(newName)
+            op.totalBytes = items.reduce(0) { $0 + FileOperation.sizeOnDisk($1.path) }
+            op.bytesTransferred = { FileOperation.sizeOnDisk(target) }
+            op.perItemOperation = { path in
+                try await LocalFS().copy(from: path, toFile: target)
             }
         } else if items.contains(where: { $0.depth > 0 }) {
             // Some selected items come from expanded sub-folders: preserve
@@ -93,11 +124,18 @@ struct LocalMoveProvider: TransferProvider {
     @MainActor var verb: String { tr("Move") }
 
     @MainActor
-    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation {
         let op = FileOperation(type: .move,
                                sources: items.map { $0.path },
                                destination: destPath,
                                conflictPolicy: .overwrite)
+        if items.count == 1, let newName = renameTo {
+            // Single-item rename-on-move: explicit target path.
+            let target = (destPath as NSString).appendingPathComponent(newName)
+            op.perItemOperation = { path in
+                try await LocalFS().move(from: path, toFile: target)
+            }
+        }
         return op
     }
 }
@@ -131,7 +169,7 @@ struct SFTPTransferProvider: TransferProvider {
     }
 
     @MainActor
-    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation {
         let op = FileOperation(type: .copy,
                                sources: items.map { $0.path },
                                destination: destPath)
@@ -139,12 +177,13 @@ struct SFTPTransferProvider: TransferProvider {
 
         let conn = connection
         let byPath = Dictionary(items.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        let newName = items.count == 1 ? renameTo : nil
 
         switch direction {
         case .download:
             let total = items.reduce(Int64(0)) { $0 + $1.size }
             op.totalBytes = total
-            let names = items.map { $0.name }
+            let names = items.map { newName ?? $0.name }
             let dest = destPath
             op.bytesTransferred = {
                 names.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk((dest as NSString).appendingPathComponent($1)) }
@@ -152,7 +191,9 @@ struct SFTPTransferProvider: TransferProvider {
             op.perItemOperation = { [weak op] path in
                 guard let op = op, byPath[path] != nil else { return }
                 let fs = SFTPFS(connection: conn)
-                try await fs.copy(from: path, to: destPath) { op.processBox.process = $0 }
+                // Rename-on-download: scp straight to the explicit local target.
+                let to = newName.map { (destPath as NSString).appendingPathComponent($0) } ?? destPath
+                try await fs.copy(from: path, to: to) { op.processBox.process = $0 }
             }
 
         case .upload:
@@ -160,7 +201,9 @@ struct SFTPTransferProvider: TransferProvider {
             op.perItemOperation = { [weak op] path in
                 guard let op = op, byPath[path] != nil else { return }
                 let fs = SFTPFS(connection: conn)
-                try await fs.upload(localPath: path, to: destPath) { op.processBox.process = $0 }
+                // Rename-on-upload: scp straight to the explicit remote target.
+                let to = newName.map { (destPath as NSString).appendingPathComponent($0) } ?? destPath
+                try await fs.upload(localPath: path, to: to) { op.processBox.process = $0 }
             }
         }
 
@@ -188,7 +231,7 @@ struct SFTPSameHostProvider: TransferProvider {
     @MainActor var verb: String { move ? tr("Move") : tr("Copy") }
 
     @MainActor
-    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation {
         let op = FileOperation(type: move ? .move : .copy,
                                sources: items.map { $0.path }, destination: destPath)
         op.customTitle = move ? tr("Moving") : tr("Copying")
@@ -199,12 +242,13 @@ struct SFTPSameHostProvider: TransferProvider {
         let conn = connection
         let move = self.move
         let dest = destPath
+        let newName = items.count == 1 ? renameTo : nil
         op.transferUnitsProvider = {
             items.map { item in
                 let src = item.path
-                return FileOperation.Unit(label: item.name) { report in
+                return FileOperation.Unit(label: newName ?? item.name) { report in
                     let fs = SFTPFS(connection: conn)
-                    try await fs.serverTransfer(from: src, toDir: dest, move: move)
+                    try await fs.serverTransfer(from: src, toDir: dest, move: move, renameTo: newName)
                     report(item.size)
                 }
             }
@@ -237,7 +281,7 @@ struct S3TransferProvider: TransferProvider {
     }
 
     @MainActor
-    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation {
         let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
         op.customTitle = downloading ? tr("Downloading") : tr("Uploading")
         op.currentFile = tr("Preparing…")
@@ -246,6 +290,7 @@ struct S3TransferProvider: TransferProvider {
 
         let capturedClient = client
         let capturedDownloading = downloading
+        let newName = items.count == 1 ? renameTo : nil
 
         op.transferUnitsProvider = {
             var units: [FileOperation.Unit] = []
@@ -272,7 +317,8 @@ struct S3TransferProvider: TransferProvider {
                         for o in objs where !o.key.hasSuffix("/") {
                             let k = o.key
                             let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
-                                                                            destDir: destPath)
+                                                                            destDir: destPath,
+                                                                            renameTo: newName)
                             // C1: reject keys that escape the destination directory.
                             guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
                                 units.append(FileOperation.Unit(label: k) { _ in
@@ -290,7 +336,8 @@ struct S3TransferProvider: TransferProvider {
                         }
                     } else {
                         let local = S3TransferPlanner.downloadLocalPath(key: key, folderKey: nil,
-                                                                        destDir: destPath)
+                                                                        destDir: destPath,
+                                                                        renameTo: newName)
                         // C1: reject keys that escape the destination directory.
                         guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
                             units.append(FileOperation.Unit(label: key) { _ in
@@ -326,7 +373,8 @@ struct S3TransferProvider: TransferProvider {
                         }
                         for f in files {
                             let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
-                                                                  destPrefix: destPrefix)
+                                                                  destPrefix: destPrefix,
+                                                                  renameTo: newName)
                             let sz = FileOperation.sizeOnDisk(f)
                             units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent,
                                                             bytes: sz) { report in
@@ -335,7 +383,8 @@ struct S3TransferProvider: TransferProvider {
                         }
                     } else {
                         let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
-                                                              destPrefix: destPrefix)
+                                                              destPrefix: destPrefix,
+                                                              renameTo: newName)
                         let sz = FileOperation.sizeOnDisk(item.path)
                         units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent,
                                                         bytes: sz) { report in
@@ -371,7 +420,7 @@ struct S3SameStoreProvider: TransferProvider {
     @MainActor var verb: String { move ? tr("Move") : tr("Copy") }
 
     @MainActor
-    func makeOperation(items: [FileItem], destPath: String) -> FileOperation {
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation {
         let op = FileOperation(type: move ? .move : .copy,
                                sources: items.map { $0.path }, destination: destPath)
         op.customTitle = move ? tr("Moving") : tr("Copying")
@@ -381,6 +430,7 @@ struct S3SameStoreProvider: TransferProvider {
 
         let client = self.client
         let move = self.move
+        let newName = items.count == 1 ? renameTo : nil
         // Destination dir → bucket + prefix (prefix keeps its trailing slash, "" at bucket root).
         let (destBucket, destPrefix) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
 
@@ -393,7 +443,7 @@ struct S3SameStoreProvider: TransferProvider {
                 if item.isDirectory || sk.hasSuffix("/") {
                     // Folder: copy every key under the prefix, rooted at <dest>/<folderName>/.
                     let folderKey = sk.hasSuffix("/") ? sk : sk + "/"
-                    let folderName = (String(folderKey.dropLast()) as NSString).lastPathComponent
+                    let folderName = newName ?? (String(folderKey.dropLast()) as NSString).lastPathComponent
                     let objs: [S3ObjectInfo]
                     do {
                         objs = try await client.listAllObjects(bucket: sb, prefix: folderKey)
@@ -416,7 +466,7 @@ struct S3SameStoreProvider: TransferProvider {
                     }
                 } else {
                     // File: single server-side copy (+ delete for move).
-                    let name = (sk as NSString).lastPathComponent
+                    let name = newName ?? (sk as NSString).lastPathComponent
                     let dstKey = destPrefix + name
                     let sz = item.size
                     units.append(FileOperation.Unit(label: name, bytes: sz) { report in

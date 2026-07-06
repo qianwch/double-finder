@@ -90,6 +90,25 @@ class LocalFS: VirtualFS {
         }.value
     }
 
+    /// Copy to an explicit target path (rename-on-copy from the F5 confirm
+    /// dialog); overwrites an existing target.
+    func copy(from: String, toFile target: String) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: target) { try fm.removeItem(atPath: target) }
+            try fm.copyItem(atPath: from, toPath: target)
+        }.value
+    }
+
+    /// Move to an explicit target path (rename-on-move); overwrites an existing target.
+    func move(from: String, toFile target: String) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: target) { try fm.removeItem(atPath: target) }
+            try fm.moveItem(atPath: from, toPath: target)
+        }.value
+    }
+
     /// `path` expressed relative to `base` (drops the `base/` prefix); falls back
     /// to the last component when `path` isn't under `base`.
     static func relativePath(_ path: String, base: String) -> String {

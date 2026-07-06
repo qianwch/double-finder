@@ -940,18 +940,52 @@ class MainViewController: NSViewController {
     private func runTransfer(items rawItems: [FileItem], destPanel: PanelState, provider: TransferProvider) {
         let pruned = pruneSelectedAncestors(rawItems)
         guard !pruned.isEmpty else { return }
-        let dest0 = destPanel.currentPath
-        confirmTransfer(verb: provider.verb, items: pruned, defaultDest: dest0) { [weak self] dest, queued in
+        // Self-transfer can only happen when both panels address the same
+        // namespace (both local / same SFTP host / same S3 store); across
+        // namespaces equal-looking paths are different files.
+        let guardSelfTransfer = sharesNamespace(activePanelVC.panelState, destPanel)
+        // TC-style destination field: single item → <dir>/<name> (editing the
+        // last component renames on transfer); several items → <dir>/*.*.
+        let singleName = pruned.count == 1 ? pruned[0].name : nil
+        let dest0 = (destPanel.currentPath as NSString).appendingPathComponent(singleName ?? "*.*")
+        let destIsLocal = destPanel.sftp == nil && destPanel.s3 == nil
+        confirmTransfer(verb: provider.verb, items: pruned, defaultDest: dest0) { [weak self] destInput, queued in
             guard let self = self else { return }
+            let parsed = TransferDestination.parse(destInput, singleSourceName: singleName,
+                                                   isExistingDir: { path in
+                // Only the local backend can probe cheaply; remote dirs are
+                // forced with a trailing "/" instead.
+                guard destIsLocal else { return false }
+                var isDir: ObjCBool = false
+                return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+            })
+            let dest = parsed.dir
+            let renameTo = parsed.renameTo
+            if guardSelfTransfer,
+               !FileOperation.selfTransferSources(pruned.map { $0.path }, destDir: dest,
+                                                  renameTo: renameTo).isEmpty {
+                // Refuse outright: the local overwrite path deletes the
+                // destination first — which IS the source — so proceeding
+                // would destroy data, not just be a no-op.
+                if let window = self.view.window {
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = tr("Source and destination are the same")
+                    alert.informativeText = tr("Cannot transfer an item onto itself or a folder into itself.")
+                    alert.beginSheetModal(for: window)
+                }
+                return
+            }
             Task { @MainActor in
-                let existing = await self.existingDestNames(of: pruned, at: dest, destPanel: destPanel)
-                let conflicts = pruned.filter { existing.contains($0.name) }
+                let existing = await self.existingDestNames(of: pruned, at: dest,
+                                                            destPanel: destPanel, renameTo: renameTo)
+                let conflicts = pruned.filter { existing.contains(renameTo ?? $0.name) }
                 self.promptConflicts(conflicts) { [weak self] policy in
                     guard let self = self, let policy = policy else { return }
                     let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
                     let toTransfer = pruned.filter { !skip.contains($0.name) }
                     guard !toTransfer.isEmpty else { return }
-                    let op = provider.makeOperation(items: toTransfer, destPath: dest)
+                    let op = provider.makeOperation(items: toTransfer, destPath: dest, renameTo: renameTo)
                     self.dispatchOperation(op, queued: queued) { [weak self] in
                         self?.activePanelVC.panelState.refresh()
                         self?.inactivePanelVC.panelState.refresh()
@@ -964,14 +998,29 @@ class MainViewController: NSViewController {
     /// Names that already exist at the destination. Local dest → raw FileManager
     /// read (incl. hidden, matches destinationExists precision); remote dest →
     /// the destination FS listing. Failure → empty (no conflicts).
+    /// `renameTo` (single-item rename-on-transfer) makes the check target the
+    /// new name instead of the source's own.
     private func existingDestNames(of items: [FileItem], at dest: String,
-                                   destPanel: PanelState) async -> Set<String> {
+                                   destPanel: PanelState, renameTo: String? = nil) async -> Set<String> {
         if destPanel.sftp == nil && destPanel.s3 == nil {
             // Local destination: precise per-name existence (includes hidden).
-            return Set(items.filter { FileOperation.destinationExists(source: $0.path, in: dest) }.map { $0.name })
+            return Set(items.compactMap { item -> String? in
+                let name = renameTo ?? item.name
+                let target = (dest as NSString).appendingPathComponent(name)
+                return FileManager.default.fileExists(atPath: target) ? name : nil
+            })
         }
         let listed = (try? await destPanel.fs.listDirectory(dest)) ?? []
         return Set(listed.map { $0.name })
+    }
+
+    /// True when both panels address the same filesystem namespace — both
+    /// local, same SFTP host, or same S3 store — i.e. a destination path can
+    /// actually collide with a source path (precondition of the self-transfer guard).
+    private func sharesNamespace(_ a: PanelState, _ b: PanelState) -> Bool {
+        if let s = a.sftp, let d = b.sftp { return s.sameHost(as: d) }
+        if let s = a.s3, let d = b.s3 { return s.sameStore(as: d) }
+        return a.sftp == nil && a.s3 == nil && b.sftp == nil && b.s3 == nil
     }
 
     /// Pick the provider for a copy from `src` panel to `dst` panel.

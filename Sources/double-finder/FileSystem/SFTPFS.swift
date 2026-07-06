@@ -87,8 +87,12 @@ class SFTPFS: VirtualFS {
     /// `cp -a` preserves attributes & recurses; `-f` forces overwrite; `--` ends
     /// option parsing so paths starting with `-` are safe. A trailing slash on the
     /// destination enforces "copy/move INTO this directory" semantics.
-    static func serverTransferCommand(from: String, toDir: String, move: Bool) -> String {
-        let dest = toDir.hasSuffix("/") ? toDir : toDir + "/"
+    static func serverTransferCommand(from: String, toDir: String, move: Bool,
+                                      renameTo: String? = nil) -> String {
+        let base = toDir.hasSuffix("/") ? toDir : toDir + "/"
+        // renameTo (single-item rename-on-transfer): explicit target path so the
+        // remote cp/mv lands under the new name instead of the source basename.
+        let dest = renameTo.map { base + $0 } ?? base
         let tool = move ? "mv -f" : "cp -af"
         return "\(tool) -- \(shellQuote(from)) \(shellQuote(dest))"
     }
@@ -96,9 +100,11 @@ class SFTPFS: VirtualFS {
     /// Server-side copy or move between two remote paths on the **same host** (no
     /// download/upload round-trip). `toDir` is the destination directory. Throws
     /// on a non-zero remote exit.
-    func serverTransfer(from: String, toDir: String, move: Bool) async throws {
+    func serverTransfer(from: String, toDir: String, move: Bool,
+                        renameTo: String? = nil) async throws {
         try await Task.detached(priority: .userInitiated) { [self] in
-            _ = try sshChecked(Self.serverTransferCommand(from: from, toDir: toDir, move: move))
+            _ = try sshChecked(Self.serverTransferCommand(from: from, toDir: toDir,
+                                                          move: move, renameTo: renameTo))
         }.value
     }
 
