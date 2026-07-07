@@ -44,9 +44,11 @@ final class ListerTextView: NSView {
         textView.isVerticallyResizable = true
         // NSTextView's DEFAULT maxSize height is only 10,000,000pt (~660k lines):
         // past that the frame is clamped — text lays out but can't be scrolled to.
-        // Lift the ceiling up front. (In the wrapping branch AppKit pins
-        // maxSize.width back to the frame width automatically; only the height
-        // matters here.)
+        // Lift the ceiling up front. (In the wrapping branch, widthTracksTextView
+        // drives the container width from the frame directly, so this huge
+        // maxSize.width is never actually used for wrapping; AppKit will enlarge
+        // a too-small maxSize up to the frame size, but it won't shrink this one
+        // back down — only the height matters here.)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
                                   height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
@@ -173,6 +175,7 @@ final class ListerTextView: NSView {
     /// Select + reveal a search match (exact mapping; length = utf16 count of
     /// the needle bytes decoded with the current encoding).
     func highlightMatch(atByte offset: UInt64, byteLength: Int) {
+        guard byteLength >= 1 else { return }
         // ensureLoaded(to:) is exclusive (requires loadedBytes > offset), so probe
         // the LAST byte of the match (byteLength >= 1) — probing one past the end
         // would make a match ending at the file's final byte unreachable.
