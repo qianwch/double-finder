@@ -68,7 +68,12 @@ final class ListerSearchBar: NSView, NSTextFieldDelegate {
     }
 
     func markInvalid(_ invalid: Bool) {
-        field.textColor = invalid ? .systemRed : .textColor
+        // The shared field editor draws the text while editing; cell textColor
+        // alone may not repaint mid-edit (version-dependent AppKit behavior),
+        // and instant validation ONLY happens mid-edit — color both.
+        let c: NSColor = invalid ? .systemRed : .textColor
+        field.textColor = c
+        (field.currentEditor() as? NSTextView)?.textColor = c
     }
 
     /// Instant validation (design §6): the controller drives this from
