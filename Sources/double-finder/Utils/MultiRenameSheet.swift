@@ -40,6 +40,7 @@ final class MultiRenameSheet: NSWindowController {
         counterStartField.stringValue = "1"
         [searchField, replaceField, counterStartField].forEach {
             $0.bezelStyle = .roundedBezel; $0.font = .systemFont(ofSize: 12); $0.delegate = self
+            $0.useSingleLineScrolling()
         }
         regexCheck.target = self; regexCheck.action = #selector(controlChanged)
         counterCheck.target = self; counterCheck.action = #selector(controlChanged)

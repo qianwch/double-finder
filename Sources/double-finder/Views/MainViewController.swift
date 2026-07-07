@@ -1225,6 +1225,7 @@ class MainViewController: NSViewController {
         alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.bezelStyle = .roundedBezel
+        field.useSingleLineScrolling()
         alert.accessoryView = field
         beginSheet(alert, focusing: field, on: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self = self else { return }
@@ -1254,6 +1255,7 @@ class MainViewController: NSViewController {
         alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
         field.bezelStyle = .roundedBezel
+        field.useSingleLineScrolling()
         if let attrs = try? FileManager.default.attributesOfItem(atPath: items[0].path),
            let p = attrs[.posixPermissions] as? Int {
             field.stringValue = String(p, radix: 8)
@@ -1420,6 +1422,7 @@ class MainViewController: NSViewController {
         alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         field.bezelStyle = .roundedBezel
+        field.useSingleLineScrolling()
         // Suggest "name 2" as a non-colliding default.
         var suggestion = opts.baseName + " 2"
         var n = 2
@@ -1477,6 +1480,7 @@ class MainViewController: NSViewController {
         let intoSubfolders = items.count > 1
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.bezelStyle = .roundedBezel
+        field.useSingleLineScrolling()
         field.stringValue = items.count == 1
             ? (baseDir as NSString).appendingPathComponent(FileItem.archiveBaseName(of: items[0].name))
             : baseDir
@@ -1542,6 +1546,7 @@ class MainViewController: NSViewController {
         alert.addButton(withTitle: tr("Cancel"))
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.bezelStyle = .roundedBezel
+        field.useSingleLineScrolling()
         alert.accessoryView = field
         beginSheet(alert, focusing: field, on: window) { resp in
             completion(resp == .alertFirstButtonReturn ? field.stringValue : nil)
@@ -1560,6 +1565,7 @@ class MainViewController: NSViewController {
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.bezelStyle = .roundedBezel
+        field.useSingleLineScrolling()
         alert.accessoryView = field
 
         beginSheet(alert, focusing: field, on: window) { [weak self] response in
@@ -1982,6 +1988,7 @@ class MainViewController: NSViewController {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.stringValue = "*.*"
         field.bezelStyle = .roundedBezel
+        field.useSingleLineScrolling()
         alert.accessoryView = field
         beginSheet(alert, focusing: field, on: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }

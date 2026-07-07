@@ -42,6 +42,7 @@ final class TransferConfirmSheet: NSWindowController {
         destField.delegate = self
         destField.bezelStyle = .roundedBezel
         destField.font = .systemFont(ofSize: 12)
+        destField.useSingleLineScrolling()
         destField.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(destField)
 

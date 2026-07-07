@@ -53,6 +53,7 @@ final class PackSheet: NSWindowController {
 
         nameField.stringValue = defaultBaseName
         nameField.bezelStyle = .roundedBezel
+        nameField.useSingleLineScrolling()
         formatPopup.addItems(withTitles: ArchiveFormat.allCases.map { $0.displayName })
         formatPopup.target = self; formatPopup.action = #selector(formatChanged)
         levelPopup.addItems(withTitles: levels.map { tr($0.0) })
@@ -60,6 +61,7 @@ final class PackSheet: NSWindowController {
         encryptCheck.title = tr("Encrypt with password")
         encryptCheck.target = self; encryptCheck.action = #selector(encryptToggled)
         passwordField.bezelStyle = .roundedBezel
+        passwordField.useSingleLineScrolling()
         passwordField.placeholderString = tr("Password")
         passwordField.isEnabled = false
 

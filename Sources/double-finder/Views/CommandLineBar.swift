@@ -41,6 +41,7 @@ final class CommandLineBar: NSView {
         addSubview(promptLabel)
 
         input.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        input.useSingleLineScrolling()
         input.isBordered = false
         input.drawsBackground = false
         input.focusRingType = .none

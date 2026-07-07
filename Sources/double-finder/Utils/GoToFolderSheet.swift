@@ -37,6 +37,7 @@ final class GoToFolderSheet: NSWindowController, NSTextFieldDelegate {
         field.frame = NSRect(x: 20, y: 42, width: 440, height: 24)
         field.bezelStyle = .roundedBezel
         field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        field.useSingleLineScrolling()
         field.placeholderString = tr("/path · ~/path · subfolder (Tab completes; hidden folders included)")
         field.delegate = self
         field.target = self

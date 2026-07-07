@@ -1029,6 +1029,7 @@ class PathBar: NSView {
 
         editField = NCTextField()
         editField.font = NSFont.systemFont(ofSize: 12)
+        editField.useSingleLineScrolling()
         editField.isHidden = true
         editField.translatesAutoresizingMaskIntoConstraints = false
         editField.delegate = self

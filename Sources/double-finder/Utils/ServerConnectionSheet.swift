@@ -160,6 +160,10 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         discScroll.documentView = discoveredTable
         content.addSubview(discScroll)
 
+        for tf in [sftpName, sftpHost, sftpPort, sftpUser, sftpKey, sftpPath,
+                   s3Name, s3Endpoint, s3Region, s3Access, s3Secret, s3Bucket,
+                   smbName, smbHost] { tf.useSingleLineScrolling() }
+
         // --- SFTP form rows ---
         let sfN  = makeLabel(tr("Name:"),        y: 340); let sfNf  = sftpName;  sftpName.frame  = fieldRect(y: 340)
         let sfH  = makeLabel(tr("Host:"),        y: 306); let sfHf  = sftpHost;  sftpHost.frame  = fieldRect(y: 306)

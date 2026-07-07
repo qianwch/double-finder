@@ -39,7 +39,7 @@ final class FindFilesSheet: NSWindowController {
         regexCheck.title = tr("Regex name")
         spotlightCheck.title = tr("Use Spotlight index (fast; also searches inside PDF / Office files)")
         nameField.stringValue = "*"
-        [nameField, contentField].forEach { $0.bezelStyle = .roundedBezel; $0.font = .systemFont(ofSize: 12) }
+        [nameField, contentField].forEach { $0.bezelStyle = .roundedBezel; $0.font = .systemFont(ofSize: 12); $0.useSingleLineScrolling() }
         subfoldersCheck.state = .on
         statusLabel.font = .systemFont(ofSize: 10); statusLabel.textColor = .secondaryLabelColor
 

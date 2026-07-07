@@ -681,6 +681,7 @@ final class FileListBodyView: NSView {
             : NSFont.systemFont(ofSize: 12)
         tf.isBordered = true
         tf.bezelStyle = .squareBezel
+        tf.useSingleLineScrolling()
         tf.drawsBackground = true
         tf.backgroundColor = .textBackgroundColor
         tf.textColor = .labelColor
