@@ -15,7 +15,9 @@ enum HexFormatter {
         max(8, String(max(fileLength, 1) - 1, radix: 16).count)
     }
 
+    /// Precondition: `bytes.count <= bytesPerRow` — callers must pre-chunk the file into rows.
     static func row(offset: UInt64, bytes: [UInt8], digits: Int) -> HexRow {
+        assert(bytes.count <= bytesPerRow)
         var hex = ""; var ascii = ""
         for i in 0..<bytesPerRow {
             if i == 8 { hex += " " }

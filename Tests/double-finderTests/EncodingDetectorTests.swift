@@ -45,6 +45,9 @@ final class EncodingDetectorTests: XCTestCase {
         let enc = EncodingDetector.detect(sample: garbage)
         // Contract: the detected encoding strict-decodes the sample after trimming ≤4
         // trailing bytes (incomplete tails are carried over by TextChunkDecoder downstream).
+        // The full-sample assertion below still holds for random garbage because the
+        // single-byte fallback encodings accept any byte, so full-sample decoding is
+        // guaranteed for garbage input.
         XCTAssertNotNil(String(data: garbage, encoding: enc))
         XCTAssertEqual(EncodingDetector.detect(sample: Data()), .utf8)   // empty → utf8
     }
