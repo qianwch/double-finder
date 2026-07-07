@@ -89,7 +89,10 @@ final class ListerSearchTests: XCTestCase {
         }
         XCTAssertEqual(last, 31)                 // still finds the very last match
         XCTAssertTrue(s.truncated)
-        XCTAssertLessThanOrEqual(s.matches.count, 8 + 4) // halved at least once, not unbounded
+        // Bound = cap (8) + max hits per chunk (chunkSize 4): the post-trim
+        // invariant keeps count <= cap, and one chunk adds at most 4 new hits
+        // before the next trim check — so 12 is the ceiling at any observation.
+        XCTAssertLessThanOrEqual(s.matches.count, 8 + 4)
     }
 
     func testParseHexPatternRejectsSignPrefix() {

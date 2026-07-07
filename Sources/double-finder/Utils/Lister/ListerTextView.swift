@@ -42,6 +42,13 @@ final class ListerTextView: NSView {
         textView.isSelectable = true
         textView.usesFindBar = false
         textView.isVerticallyResizable = true
+        // NSTextView's DEFAULT maxSize height is only 10,000,000pt (~660k lines):
+        // past that the frame is clamped — text lays out but can't be scrolled to.
+        // Lift the ceiling up front. (In the wrapping branch AppKit pins
+        // maxSize.width back to the frame width automatically; only the height
+        // matters here.)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
@@ -113,7 +120,12 @@ final class ListerTextView: NSView {
         // Near bottom → pull the next chunk (one per notification keeps it smooth).
         let visible = scroll.contentView.bounds
         let docH = textView.frame.height
-        if visible.maxY > docH - visible.height { appendChunk() }
+        if visible.maxY > docH - visible.height, appendChunk() {
+            // Re-arm: appending only grows the document frame — the clip bounds
+            // don't change, so no new boundsDidChange fires. Without this, dragging
+            // the scroller to the bottom loads exactly one chunk and then stalls.
+            DispatchQueue.main.async { [weak self] in self?.boundsChanged() }
+        }
         onStatusChange?()
     }
 
@@ -121,6 +133,9 @@ final class ListerTextView: NSView {
 
     /// Exact utf16 index for a loaded byte offset: find the chunk anchor, then
     /// re-decode that chunk's prefix (≤4MB, only on demand for highlights).
+    /// Known edge: if the ORIGINAL decode of this chunk fell back to Latin-1 but
+    /// the (shorter) prefix re-decode succeeds in the primary encoding, the utf16
+    /// count can drift within that one chunk — accepted graceful degradation.
     private func charIndex(forByte target: UInt64) -> Int? {
         guard target <= loadedBytes, let source,
               let aIdx = anchors.lastIndex(where: { $0.byte <= target }) else { return nil }
@@ -158,7 +173,10 @@ final class ListerTextView: NSView {
     /// Select + reveal a search match (exact mapping; length = utf16 count of
     /// the needle bytes decoded with the current encoding).
     func highlightMatch(atByte offset: UInt64, byteLength: Int) {
-        guard ensureLoaded(to: offset + UInt64(byteLength)),
+        // ensureLoaded(to:) is exclusive (requires loadedBytes > offset), so probe
+        // the LAST byte of the match (byteLength >= 1) — probing one past the end
+        // would make a match ending at the file's final byte unreachable.
+        guard ensureLoaded(to: offset + UInt64(byteLength) - 1),
               let start = charIndex(forByte: offset), let source else { return }
         var len = 1
         if let nb = source.read(offset: offset, count: byteLength) {
