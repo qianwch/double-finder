@@ -27,11 +27,13 @@ struct ViewerEntry {
 
 // MARK: - InternalViewerController
 
-/// Embedded Quick Look viewer in our OWN window (via `QLPreviewView`, not the global
-/// `QLPreviewPanel`). Because the view lives in our window's responder chain, we fully
-/// control the keyboard: arrow keys step file-to-file, Esc closes, space + everything
-/// else go to QLPreviewView (e.g. pause a video). Items are loaded lazily one at a time,
-/// so opening a huge folder stays instant and remote items download on demand.
+/// Three-mode Lister window: Text (chunked NSTextView) / Hexadecimal (owner-drawn
+/// dump) / Preview (embedded `QLPreviewView`) in our OWN window. The mode is
+/// auto-chosen per file (ViewerModeChooser) and manually switchable via the
+/// titlebar segments or the 1/2/3 keys. ⌘-arrows step file-to-file, ⌘F opens the
+/// dual-mode find bar (string / hex bytes), Esc closes the bar then the window.
+/// Items are loaded lazily one at a time, so opening a huge folder stays instant
+/// and remote items download on demand.
 @MainActor
 final class InternalViewerController: NSObject, NSWindowDelegate {
     static let shared = InternalViewerController()
@@ -42,8 +44,36 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var navGeneration = 0
 
     private var window: NSWindow?
-    private var previewView: QLPreviewView?
     private var monitor: Any?
+
+    // Window chrome (all torn down exhaustively in windowWillClose)
+    private var container: NSView?                    // content area (above statusBar)
+    private var modeControl: NSSegmentedControl?      // titlebar accessory: Text/Hexadecimal/Preview
+    private var titlebarAccessory: NSTitlebarAccessoryViewController?
+    private var textContent: ListerTextView?          // lazy
+    private var hexScroll: NSScrollView?              // lazy, documentView = hexView
+    private var hexView: ListerHexView?
+    private var previewView: QLPreviewView?           // lazy (was eagerly built pre-Lister)
+    private var statusBar: NSStackView?               // bottom bar
+    private var encodingPopup: NSPopUpButton?
+    private var wrapCheck: NSButton?
+    private var positionLabel: NSTextField?
+    private var statusNote: NSTextField?              // cap/auto-switch notes, cleared after a few seconds
+    private var searchBar: ListerSearchBar?           // lazy, pinned to the content view's top
+    private var searchBarVisible = false
+    private var containerTopConstraint: NSLayoutConstraint?
+    private var noteGeneration = 0
+
+    // Per-file state
+    private var currentMode: ViewerMode = .preview
+    private var source: ListerSource?
+    private var currentURL: URL?
+    private var currentEncoding: String.Encoding = .utf8
+
+    // Search state (one ListerSearch instance per file+pattern+encoding+case key)
+    private var search: ListerSearch?
+    private var searchTask: Task<Void, Never>?
+    private var lastMatch: (offset: UInt64, length: Int)?
 
     private override init() { super.init() }
 
@@ -74,29 +104,235 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                          backing: .buffered, defer: false)
         w.delegate = self
         w.isReleasedWhenClosed = false
-        let pv = QLPreviewView(frame: w.contentView!.bounds, style: .normal)!
-        pv.autoresizingMask = [.width, .height]
-        pv.shouldCloseWithWindow = true
-        pv.autostarts = true
-        w.contentView?.addSubview(pv)
+        guard let contentView = w.contentView else { return }
+
+        let box = NSView()
+        box.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(box)
+
+        // Bottom status bar: encoding popup + wrap checkbox (text mode), a
+        // transient note in the middle, position/percent on the right.
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.controlSize = .small
+        popup.font = .systemFont(ofSize: 11)
+        for c in EncodingDetector.candidates { popup.addItem(withTitle: c.label) }
+        popup.target = self
+        popup.action = #selector(encodingChanged(_:))
+
+        let wrap = NSButton(checkboxWithTitle: tr("Wrap lines"),
+                            target: self, action: #selector(wrapToggled(_:)))
+        wrap.controlSize = .small
+        wrap.font = .systemFont(ofSize: 11)
+        wrap.state = .on
+
+        let note = NSTextField(labelWithString: "")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byTruncatingTail
+        note.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let pos = NSTextField(labelWithString: "")
+        pos.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        pos.textColor = .secondaryLabelColor
+        pos.alignment = .right
+
+        let status = NSStackView(views: [popup, wrap, note, pos])
+        status.orientation = .horizontal
+        status.edgeInsets = NSEdgeInsets(top: 2, left: 8, bottom: 2, right: 8)
+        status.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(status)
+
+        NSLayoutConstraint.activate([
+            box.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            box.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            box.bottomAnchor.constraint(equalTo: status.topAnchor),
+            status.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            status.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            status.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            status.heightAnchor.constraint(equalToConstant: 24),
+        ])
+
+        // Titlebar accessory: mode segments on the right of the title bar.
+        let seg = NSSegmentedControl(labels: [tr("Text"), tr("Hexadecimal"), tr("Preview")],
+                                     trackingMode: .selectOne,
+                                     target: self, action: #selector(modeChanged(_:)))
+        seg.controlSize = .small
+        seg.sizeToFit()
+        let holder = NSView(frame: NSRect(x: 0, y: 0,
+                                          width: seg.frame.width + 12,
+                                          height: seg.frame.height + 6))
+        seg.setFrameOrigin(NSPoint(x: 6, y: 3))
+        holder.addSubview(seg)
+        let acc = NSTitlebarAccessoryViewController()
+        acc.view = holder
+        acc.layoutAttribute = .right
+        w.addTitlebarAccessoryViewController(acc)
+
         w.center()
         self.window = w
-        self.previewView = pv
+        self.container = box
+        self.statusBar = status
+        self.encodingPopup = popup
+        self.wrapCheck = wrap
+        self.statusNote = note
+        self.positionLabel = pos
+        self.modeControl = seg
+        self.titlebarAccessory = acc
+        layoutContent()
         installMonitor()
     }
 
-    /// Window-scoped key monitor: only acts on our window. Arrow keys are consumed here
-    /// (returning nil) BEFORE the responder chain, so QLPreviewView never sees them.
-    private func installMonitor() {
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self, event.window === self.window else { return event }
-            switch event.keyCode {
-            case 123, 126: self.navigate(.prev); return nil   // ← / ↑
-            case 124, 125: self.navigate(.next); return nil   // → / ↓
-            case 53: self.close(); return nil                 // Esc
-            default: return event                             // space (49) & others → QLPreviewView
+    /// Re-pin the content area's top edge: below the search bar when visible,
+    /// at the content view's top otherwise.
+    private func layoutContent() {
+        guard let container, let contentView = window?.contentView else { return }
+        containerTopConstraint?.isActive = false
+        if searchBarVisible, let bar = searchBar {
+            containerTopConstraint = container.topAnchor.constraint(equalTo: bar.bottomAnchor)
+        } else {
+            containerTopConstraint = container.topAnchor.constraint(equalTo: contentView.topAnchor)
+        }
+        containerTopConstraint?.isActive = true
+    }
+
+    /// Lazily build the current mode's view inside `container`, hide the others.
+    private func showOnlyCurrentModeView() {
+        guard let container else { return }
+        switch currentMode {
+        case .text:
+            if textContent == nil {
+                let tv = ListerTextView(frame: container.bounds)
+                tv.autoresizingMask = [.width, .height]
+                wireTextCallbacks(tv)
+                container.addSubview(tv)
+                textContent = tv
+            }
+        case .hex:
+            if hexView == nil {
+                let hv = ListerHexView()
+                wireHexCallbacks(hv)
+                let sc = NSScrollView(frame: container.bounds)
+                sc.autoresizingMask = [.width, .height]
+                sc.hasVerticalScroller = true
+                sc.hasHorizontalScroller = true
+                sc.documentView = hv
+                sc.contentView.postsBoundsChangedNotifications = true
+                NotificationCenter.default.addObserver(
+                    self, selector: #selector(hexClipBoundsChanged),
+                    name: NSView.boundsDidChangeNotification, object: sc.contentView)
+                container.addSubview(sc)
+                hexScroll = sc
+                hexView = hv
+            }
+        case .preview:
+            if previewView == nil {
+                let pv = QLPreviewView(frame: container.bounds, style: .normal)!
+                pv.autoresizingMask = [.width, .height]
+                pv.shouldCloseWithWindow = true
+                pv.autostarts = true
+                container.addSubview(pv)
+                previewView = pv
             }
         }
+        textContent?.isHidden = currentMode != .text
+        hexScroll?.isHidden = currentMode != .hex
+        previewView?.isHidden = currentMode != .preview
+    }
+
+    private func wireTextCallbacks(_ tv: ListerTextView) {
+        tv.onStatusChange = { [weak self] in self?.updatePositionLabel() }
+        tv.onCapReached = { [weak self] in
+            self?.showStatusNote(tr("Reached text-mode load limit — use Hexadecimal (2) for deeper content"))
+            NSSound.beep()
+        }
+        tv.onReadError = { [weak self] in
+            self?.showStatusNote(tr("Read error — cannot access the file")); NSSound.beep()
+        }
+        tv.onDecodeFallback = { [weak self] in
+            // The callback fires synchronously from inside load()/appendChunk —
+            // the reload must be deferred past the current loading loop, or the
+            // re-entrant load() resets state under the outer loop's feet.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.currentEncoding != .isoLatin1, let source = self.source else { return }
+                // State consistency: reload wholesale as ISO-8859-1 so the popup,
+                // currentEncoding and the visible text agree. The guard prevents
+                // re-entry (a Latin-1 reload never falls back again).
+                self.currentEncoding = .isoLatin1
+                let anchor = self.textContent?.topVisibleByteOffset() ?? 0
+                self.textContent?.load(source: source, encoding: .isoLatin1, anchorByte: anchor)
+                self.selectEncodingInPopup(.isoLatin1)
+                self.showStatusNote(tr("Decoding failed — showing as ISO-8859-1"))
+            }
+        }
+    }
+
+    private func wireHexCallbacks(_ hv: ListerHexView) {
+        hv.onStatusChange = { [weak self] in self?.updatePositionLabel() }
+        hv.onReadError = { [weak self] in
+            self?.showStatusNote(tr("Read error — cannot access the file")); NSSound.beep()
+        }
+    }
+
+    @objc private func hexClipBoundsChanged() { updatePositionLabel() }
+
+    @objc private func modeChanged(_ sender: NSSegmentedControl) {
+        let modes: [ViewerMode] = [.text, .hex, .preview]
+        guard modes.indices.contains(sender.selectedSegment) else { return }
+        setMode(modes[sender.selectedSegment], auto: false)
+    }
+
+    @objc private func wrapToggled(_ sender: NSButton) {
+        textContent?.wrapsLines = (sender.state == .on)
+    }
+
+    // MARK: Key monitor
+
+    /// Window-scoped key monitor: only acts on our window, BEFORE the responder
+    /// chain. ⌘-arrows step file-to-file; 1/2/3 switch modes; ⌘F finds; Esc
+    /// closes the find bar then the window. Bare arrows/PgUp/PgDn/Home/space
+    /// fall through to the content view (scrolling; QL pauses videos on space).
+    private func installMonitor() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+            let cmd = event.modifierFlags.contains(.command)
+            if self.isSearchFieldFocused {                      // find field gets right of way
+                switch event.keyCode {
+                case 53: self.closeSearchBar(); return nil      // Esc
+                case 36, 76:                                    // Enter / keypad-Enter
+                    self.find(backwards: event.modifierFlags.contains(.shift)); return nil
+                default: return event                           // everything else → the field
+                }
+            }
+            if cmd {
+                switch event.keyCode {
+                case 123, 126: self.navigate(.prev); return nil // ⌘← / ⌘↑
+                case 124, 125: self.navigate(.next); return nil // ⌘→ / ⌘↓
+                default:
+                    if event.charactersIgnoringModifiers == "f" { self.toggleSearchBar(); return nil }
+                    return event
+                }
+            }
+            let bare = event.modifierFlags.intersection([.option, .control]).isEmpty
+            switch event.keyCode {
+            case 18 where bare: self.setMode(.text, auto: false); return nil     // 1 (not ⌥/⌃ combos)
+            case 19 where bare: self.setMode(.hex, auto: false); return nil      // 2
+            case 20 where bare: self.setMode(.preview, auto: false); return nil  // 3
+            case 119 where self.currentMode == .text:            // End: load to cap/EOF in one go
+                self.textContent?.loadToEnd(); return nil
+            case 53:                                             // Esc
+                if self.searchBarVisible { self.closeSearchBar() } else { self.close() }
+                return nil
+            case 49 where self.currentMode == .text: self.textContent?.pageDown(); return nil
+            case 49 where self.currentMode == .hex: self.hexView?.pageDown(); return nil
+            default: return event   // bare arrows/PgUp/PgDn/Home/End/space(QL) → responder chain
+            }
+        }
+    }
+
+    private var isSearchFieldFocused: Bool {
+        guard searchBarVisible, let fe = window?.firstResponder as? NSTextView else { return false }
+        return fe.delegate === searchBar?.field
     }
 
     private func navigate(_ dir: ViewerNavDirection) {
@@ -105,27 +341,271 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         load(ni)
     }
 
+    // MARK: Per-file loading
+
     /// Resolve and show item `index`. Remote resolves are async; a generation token
-    /// discards stale results when the user keeps pressing the arrow keys.
+    /// discards stale results when the user keeps stepping through files.
     private func load(_ index: Int) {
         guard entries.indices.contains(index) else { return }
         currentIndex = index
         navGeneration += 1
         let gen = navGeneration
-        let entry = entries[index]
-        let total = entries.count
+        let entry = entries[index]; let total = entries.count
+        cancelSearch(clearQuery: true)               // new file = new search context
         Task { [weak self] in
             let url = await entry.resolve()
-            guard let self = self, self.navGeneration == gen else { return }
-            if let url = url {
-                self.previewView?.previewItem = url as NSURL
-                self.window?.title = "\(entry.title) — (\(index + 1)/\(total))"
-            } else {
+            guard let self, self.navGeneration == gen else { return }
+            guard let url else {
+                self.source = nil; self.currentURL = nil
+                self.setMode(.preview, auto: true)
                 self.previewView?.previewItem = nil
                 self.window?.title = "\(tr("Cannot load")) — (\(index + 1)/\(total))"
-                NSSound.beep()
+                NSSound.beep(); self.onIndexChange?(index); return
             }
+            self.currentURL = url
+            self.source = ListerSource(url: url)
+            let sample = self.source?.read(offset: 0, count: 64 << 10)
+            let choice = ViewerModeChooser.choose(fileExtension: url.pathExtension, sample: sample)
+            self.currentEncoding = choice.encoding ?? .utf8
+            self.setMode(choice.mode, auto: true)
+            self.window?.title = "\(entry.title) — (\(index + 1)/\(total))"
             self.onIndexChange?(index)
+        }
+    }
+
+    // MARK: Mode switching
+
+    /// Shared by manual 1/2/3 switches and per-file auto routing; `preserveSearch`
+    /// is only used by the deep-match auto-switch to hex.
+    private func setMode(_ mode: ViewerMode, auto: Bool, preserveSearch: Bool = false) {
+        if !preserveSearch, !auto { cancelSearch(clearQuery: true) }   // manual switch clears the search (design §6)
+        // Manual same-file switches keep the reading position by byte offset
+        // (same anchoring as encoding changes; TC behavior).
+        let anchor: UInt64 = (!auto && mode != .preview) ? currentTopByteOffset() : 0
+        currentMode = mode
+        modeControl?.selectedSegment = [.text: 0, .hex: 1, .preview: 2][mode]!
+        showOnlyCurrentModeView()
+        switch mode {
+        case .text:
+            if let source { textContent?.load(source: source, encoding: currentEncoding, anchorByte: anchor) }
+            textContent?.focus()
+        case .hex:
+            if let source { hexView?.load(source: source) }
+            if anchor > 0 { hexView?.scrollToOffset(anchor) }
+            hexView?.focus()
+        case .preview:
+            previewView?.previewItem = currentURL as NSURL?
+            window?.makeFirstResponder(previewView)
+        }
+        searchBar?.mode = (mode == .hex) ? .hex : .text
+        reconfigureStatusBar()
+    }
+
+    // MARK: Search
+
+    private func toggleSearchBar() {
+        guard currentMode != .preview else { NSSound.beep(); return }  // QL mode has no byte view to search
+        searchBarVisible ? closeSearchBar() : openSearchBar()
+    }
+
+    private func openSearchBar() {
+        if searchBar == nil, let contentView = window?.contentView {
+            let bar = ListerSearchBar()
+            bar.onFind = { [weak self] back in self?.find(backwards: back) }
+            bar.onClose = { [weak self] in self?.closeSearchBar() }
+            bar.onQueryChanged = { [weak self] in self?.validateQuery() }
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                bar.topAnchor.constraint(equalTo: contentView.topAnchor),
+                bar.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            searchBar = bar
+        }
+        searchBar?.mode = (currentMode == .hex) ? .hex : .text
+        searchBar?.isHidden = false
+        searchBarVisible = true
+        layoutContent()
+        validateQuery()
+        searchBar?.focus()
+    }
+
+    private func closeSearchBar() {
+        searchTask?.cancel()                    // Esc cancels an in-flight scan
+        searchBar?.setBusy(false)
+        searchBar?.isHidden = true
+        searchBarVisible = false
+        layoutContent()
+        switch currentMode {                    // hand focus back to the content view
+        case .text: textContent?.focus()
+        case .hex: hexView?.focus()
+        case .preview: window?.makeFirstResponder(previewView)
+        }
+    }
+
+    /// Instant validation (every keystroke, not just Enter): invalid hex input
+    /// turns red and disables ‹/›.
+    private func validateQuery() {
+        guard let bar = searchBar else { return }
+        if bar.mode == .hex {
+            let ok = ListerSearch.parseHexPattern(bar.query) != nil
+            bar.markInvalid(!bar.query.isEmpty && !ok)
+            bar.setFindEnabled(ok)
+        } else {
+            bar.markInvalid(false)
+            bar.setFindEnabled(!bar.query.isEmpty)
+        }
+    }
+
+    /// Search-state reset on file change / encoding change / manual mode switch:
+    /// lastMatch goes too.
+    private func cancelSearch(clearQuery: Bool) {
+        searchTask?.cancel(); searchTask = nil
+        search = nil
+        lastMatch = nil
+        searchBar?.setBusy(false)
+        if clearQuery { searchBar?.setQuerySilently("") }   // doesn't fire onQueryChanged…
+        validateQuery()                                      // …so re-derive button enablement here
+    }
+
+    /// Where find() starts scanning: the top visible byte in the current mode.
+    private func currentTopByteOffset() -> UInt64 {
+        switch currentMode {
+        case .text: return textContent?.topVisibleByteOffset() ?? 0
+        case .hex: return hexView?.topVisibleOffset ?? 0
+        case .preview: return 0
+        }
+    }
+
+    private func find(backwards: Bool) {
+        guard let source, let bar = searchBar else { return }
+        let pattern: [UInt8]
+        if bar.mode == .hex {
+            guard let p = ListerSearch.parseHexPattern(bar.query) else {
+                bar.markInvalid(true); NSSound.beep(); return
+            }
+            pattern = p
+        } else {
+            guard let d = bar.query.data(using: currentEncoding), !d.isEmpty else { NSSound.beep(); return }
+            pattern = [UInt8](d)
+        }
+        bar.markInvalid(false)
+        let fold = bar.mode == .text && !bar.matchCase
+        if search == nil || search!.pattern != pattern || search!.foldCase != fold {
+            search = ListerSearch(pattern: pattern, foldCase: fold)  // key changed → fresh instance (= cache invalidation)
+            lastMatch = nil
+        }
+        let from = lastMatch?.offset ?? currentTopByteOffset()
+        if backwards {
+            if let hit = search!.previousMatch(before: from) { reveal(hit, length: pattern.count) }
+            else { NSSound.beep() }
+            return
+        }
+        // Cancellation & mutual exclusion: the detached task IS searchTask —
+        // cancel() is what feeds nextMatch's isCancelled probe; and a new task
+        // first awaits the old one's corpse, guaranteeing only one task ever
+        // touches a given ListerSearch instance (its @unchecked Sendable premise).
+        let previous = searchTask
+        previous?.cancel()
+        bar.setBusy(true)
+        let s = search!, len = source.length
+        let wasFirstSearch = (lastMatch == nil && from == 0)
+        searchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            _ = await previous?.value
+            var hit = s.nextMatch(after: from, fileLength: len,
+                                  isCancelled: { Task.isCancelled }, read: source.read)
+            // nextMatch is strictly-after: a hit at offset 0 only enters the cache,
+            // it is never returned. On the first search check the cache head so a
+            // match at the very start of the file isn't skipped forever (Task 5
+            // review note).
+            if wasFirstSearch, s.matches.first == 0 { hit = 0 }
+            let found = hit                                // immutable copy for the Sendable hop
+            await MainActor.run { [weak self] in
+                guard let self, !Task.isCancelled else { return }
+                self.searchBar?.setBusy(false)
+                self.validateQuery()                       // re-derive ‹/› enablement after busy
+                if let found { self.reveal(found, length: pattern.count) } else { NSSound.beep() }
+            }
+        }
+    }
+
+    private func reveal(_ offset: UInt64, length: Int) {
+        lastMatch = (offset, length)
+        switch currentMode {
+        case .text:
+            if offset + UInt64(length) > ListerTextView.maxLoadedBytes {
+                // Deep match: auto-switch to hex, keep the pattern and match cache
+                // (design §6 exception).
+                setMode(.hex, auto: true, preserveSearch: true)
+                searchBar?.mode = .hex
+                searchBar?.setQuerySilently(search!.pattern.map { String(format: "%02X ", $0) }
+                    .joined().trimmingCharacters(in: .whitespaces))
+                hexView?.highlight(offset: offset, count: length)
+                showStatusNote(tr("Match beyond text-mode limit — switched to Hexadecimal"))
+            } else {
+                textContent?.highlightMatch(atByte: offset, byteLength: length)
+            }
+        case .hex: hexView?.highlight(offset: offset, count: length)
+        case .preview: break
+        }
+        updatePositionLabel()
+    }
+
+    // MARK: Encoding
+
+    @objc private func encodingChanged(_ sender: NSPopUpButton) {
+        let enc = EncodingDetector.candidates[sender.indexOfSelectedItem].encoding
+        guard enc != currentEncoding, let source else { return }
+        let anchor = textContent?.topVisibleByteOffset() ?? 0
+        currentEncoding = enc
+        cancelSearch(clearQuery: false)     // cache key includes encoding → invalidate; keep the query string
+        textContent?.load(source: source, encoding: enc, anchorByte: anchor)
+    }
+
+    private func selectEncodingInPopup(_ enc: String.Encoding) {
+        if let idx = EncodingDetector.candidates.firstIndex(where: { $0.encoding == enc }) {
+            encodingPopup?.selectItem(at: idx)
+        }
+    }
+
+    // MARK: Status bar
+
+    /// text: encoding popup + wrap checkbox + percent; hex: offset + percent;
+    /// preview: just the index/total.
+    private func reconfigureStatusBar() {
+        encodingPopup?.isHidden = currentMode != .text
+        wrapCheck?.isHidden = currentMode != .text
+        if currentMode == .text {
+            selectEncodingInPopup(currentEncoding)
+            wrapCheck?.state = (textContent?.wrapsLines ?? true) ? .on : .off
+        }
+        updatePositionLabel()
+    }
+
+    private func updatePositionLabel() {
+        switch currentMode {
+        case .text:
+            positionLabel?.stringValue = "\(textContent?.percent ?? 0)%"
+        case .hex:
+            let off = hexView?.topVisibleOffset ?? 0
+            positionLabel?.stringValue = String(format: "0x%llX — %d%%", off, hexView?.percent ?? 0)
+        case .preview:
+            positionLabel?.stringValue = entries.isEmpty ? "" : "\(currentIndex + 1)/\(entries.count)"
+        }
+    }
+
+    /// Transient note (cap reached / auto-switch / read error); clears after 3s.
+    /// The generation token keeps an old timer from wiping a newer note, and the
+    /// optional-chained label makes a fire-after-close harmless.
+    private func showStatusNote(_ text: String) {
+        statusNote?.stringValue = text
+        noteGeneration += 1
+        let gen = noteGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.noteGeneration == gen else { return }
+            self.statusNote?.stringValue = ""
         }
     }
 
@@ -133,8 +613,33 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+        searchTask?.cancel(); searchTask = nil
+        search = nil
+        lastMatch = nil
+        searchBarVisible = false
+        noteGeneration += 1                      // invalidate any pending note-clear
+        NotificationCenter.default.removeObserver(self)
         previewView?.close()
+        titlebarAccessory?.removeFromParent()
+        // Exhaustive teardown of every lazily-built view reference — anything left
+        // dangling here would make the SECOND F3 open an empty content area (the
+        // views would "exist" but belong to the dead window).
         previewView = nil
+        textContent = nil
+        hexScroll = nil
+        hexView = nil
+        searchBar = nil
+        statusBar = nil
+        container = nil
+        modeControl = nil
+        titlebarAccessory = nil
+        encodingPopup = nil
+        wrapCheck = nil
+        positionLabel = nil
+        statusNote = nil
+        containerTopConstraint = nil
+        source = nil
+        currentURL = nil
         window = nil
         entries = []
         onIndexChange = nil
