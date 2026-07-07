@@ -75,4 +75,24 @@ final class ListerSearchTests: XCTestCase {
         XCTAssertNil(strict.nextMatch(after: 0, fileLength: 2, chunkSize: 2, read: reader(bytes)))
         XCTAssertEqual(strict.matches, [])
     }
+
+    func testMatchCacheCapTruncatesButKeepsForwardSemantics() {
+        // 32 'a' bytes, pattern "a" (every offset matches), cap = 8.
+        let bytes: [UInt8] = Array(repeating: 0x61, count: 32)
+        let s = ListerSearch(pattern: [0x61], foldCase: false, maxCachedMatches: 8)
+        let r = reader(bytes)
+        var last: UInt64? = nil
+        var hit = s.nextMatch(after: 0, fileLength: 32, chunkSize: 4, read: r)
+        while let h = hit {
+            last = h
+            hit = s.nextMatch(after: h, fileLength: 32, chunkSize: 4, read: r)
+        }
+        XCTAssertEqual(last, 31)                 // still finds the very last match
+        XCTAssertTrue(s.truncated)
+        XCTAssertLessThanOrEqual(s.matches.count, 8 + 4) // halved at least once, not unbounded
+    }
+
+    func testParseHexPatternRejectsSignPrefix() {
+        XCTAssertNil(ListerSearch.parseHexPattern("+f"))
+    }
 }

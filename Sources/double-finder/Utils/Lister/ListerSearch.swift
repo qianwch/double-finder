@@ -6,21 +6,36 @@ import Foundation
 /// Find Previous never scans — it only walks the cache (offsets before the
 /// current position are guaranteed already scanned).
 ///
+/// The cache is capped at `maxCachedMatches` to guard against unbounded growth
+/// (e.g. searching "00" in a zero-filled disk image can produce billions of
+/// hits). Once the cap is exceeded the oldest half of the cached offsets is
+/// dropped and `truncated` is set. Forward semantics (Find Next reads the
+/// tail of the cache) are unaffected by this; Find Previous may lose access
+/// to old, already-scanned offsets — that is an accepted trade-off, and is
+/// exposed via `truncated` so the controller can show a status note instead
+/// of a plain beep when Find Previous can no longer find an earlier match.
+///
 /// @unchecked Sendable: captured by ONE detached search task at a time; the
-/// controller awaits the previous task before starting the next.
+/// controller awaits the previous task before starting the next. ALL
+/// accessors — including `previousMatch`, `matches`, `scannedUpTo`, and
+/// `truncated` property reads — require that same single-task exclusivity;
+/// reading them from MainActor while a scan task is running is a data race.
 final class ListerSearch: @unchecked Sendable {
     let pattern: [UInt8]
     let foldCase: Bool
+    let maxCachedMatches: Int
     private let foldedPattern: [UInt8]
     private(set) var matches: [UInt64] = []
     private(set) var scannedUpTo: UInt64 = 0
     private(set) var reachedEOF = false
+    private(set) var truncated = false
     private var carry: [UInt8] = []              // last pattern.count-1 scanned bytes
 
-    init(pattern: [UInt8], foldCase: Bool) {
+    init(pattern: [UInt8], foldCase: Bool, maxCachedMatches: Int = 1 << 22) {
         self.pattern = pattern
         self.foldCase = foldCase
         self.foldedPattern = pattern.map { Self.fold($0, foldCase) }
+        self.maxCachedMatches = maxCachedMatches
     }
 
     private static func fold(_ b: UInt8, _ on: Bool) -> UInt8 {
@@ -31,6 +46,10 @@ final class ListerSearch: @unchecked Sendable {
     static func parseHexPattern(_ s: String) -> [UInt8]? {
         let cleaned = s.replacingOccurrences(of: " ", with: "")
         guard !cleaned.isEmpty, cleaned.count % 2 == 0 else { return nil }
+        // UInt8(_:radix:) tolerates a leading "+" (e.g. "+f" → 0x0F); whitelist
+        // strictly to hex digits so stray sign characters are rejected.
+        let hexDigits = Set("0123456789abcdefABCDEF")
+        guard cleaned.allSatisfy({ hexDigits.contains($0) }) else { return nil }
         var out: [UInt8] = []
         var i = cleaned.startIndex
         while i < cleaned.endIndex {
@@ -64,6 +83,10 @@ final class ListerSearch: @unchecked Sendable {
                     }
                     if ok { matches.append(windowStart + UInt64(p)) }
                 }
+            }
+            if matches.count > maxCachedMatches {
+                matches.removeFirst(matches.count / 2)
+                truncated = true
             }
             scannedUpTo += UInt64(chunk.count)
             if scannedUpTo >= fileLength { reachedEOF = true }
