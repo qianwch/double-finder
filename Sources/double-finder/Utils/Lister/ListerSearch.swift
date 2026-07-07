@@ -11,9 +11,9 @@ import Foundation
 /// hits). Once the cap is exceeded the oldest half of the cached offsets is
 /// dropped and `truncated` is set. Forward semantics (Find Next reads the
 /// tail of the cache) are unaffected by this; Find Previous may lose access
-/// to old, already-scanned offsets — that is an accepted trade-off, and is
-/// exposed via `truncated` so the controller can show a status note instead
-/// of a plain beep when Find Previous can no longer find an earlier match.
+/// to old, already-scanned offsets — that is an accepted trade-off, exposed
+/// via `truncated` for callers that want to distinguish it from a genuine
+/// no-match (the controller itself just beeps either way, by design).
 ///
 /// @unchecked Sendable: captured by ONE detached search task at a time; the
 /// controller awaits the previous task before starting the next. ALL

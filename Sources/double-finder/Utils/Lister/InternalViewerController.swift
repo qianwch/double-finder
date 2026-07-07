@@ -74,6 +74,11 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var search: ListerSearch?
     private var searchTask: Task<Void, Never>?
     private var lastMatch: (offset: UInt64, length: Int)?
+    // True for the duration of an in-flight forward scan. Guards every synchronous,
+    // main-actor read of `search!.matches` (Find Previous, and `validateQuery`'s
+    // re-enabling of ‹/›) against the detached scan task concurrently appending to
+    // that same array — `ListerSearch` is only safe under single-task exclusivity.
+    private var searchBusy = false
 
     private override init() { super.init() }
 
@@ -313,7 +318,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                     return event
                 }
             }
-            let bare = event.modifierFlags.intersection([.option, .control]).isEmpty
+            let bare = event.modifierFlags.intersection([.option, .control, .shift]).isEmpty
             switch event.keyCode {
             case 18 where bare: self.setMode(.text, auto: false); return nil     // 1 (not ⌥/⌃ combos)
             case 19 where bare: self.setMode(.hex, auto: false); return nil      // 2
@@ -434,6 +439,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
 
     private func closeSearchBar() {
         searchTask?.cancel()                    // Esc cancels an in-flight scan
+        searchBusy = false
         searchBar?.setBusy(false)
         searchBar?.isHidden = true
         searchBarVisible = false
@@ -452,10 +458,10 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         if bar.mode == .hex {
             let ok = ListerSearch.parseHexPattern(bar.query) != nil
             bar.markInvalid(!bar.query.isEmpty && !ok)
-            bar.setFindEnabled(ok)
+            bar.setFindEnabled(ok && !searchBusy)
         } else {
             bar.markInvalid(false)
-            bar.setFindEnabled(!bar.query.isEmpty)
+            bar.setFindEnabled(!bar.query.isEmpty && !searchBusy)
         }
     }
 
@@ -465,6 +471,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         searchTask?.cancel(); searchTask = nil
         search = nil
         lastMatch = nil
+        searchBusy = false
         searchBar?.setBusy(false)
         if clearQuery { searchBar?.setQuerySilently("") }   // doesn't fire onQueryChanged…
         validateQuery()                                      // …so re-derive button enablement here
@@ -480,6 +487,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     }
 
     private func find(backwards: Bool) {
+        guard currentMode != .preview else { NSSound.beep(); return }  // QL mode has no byte view to search
         guard let source, let bar = searchBar else { return }
         let pattern: [UInt8]
         if bar.mode == .hex {
@@ -499,6 +507,10 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         }
         let from = lastMatch?.offset ?? currentTopByteOffset()
         if backwards {
+            // Cache-only and runs synchronously on the main actor — but the detached
+            // forward-scan task concurrently appends to search!.matches, so this must
+            // not run while a scan is in flight (data race on the shared array).
+            guard !searchBusy else { NSSound.beep(); return }
             if let hit = search!.previousMatch(before: from) { reveal(hit, length: pattern.count) }
             else { NSSound.beep() }
             return
@@ -509,6 +521,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         // touches a given ListerSearch instance (its @unchecked Sendable premise).
         let previous = searchTask
         previous?.cancel()
+        searchBusy = true
         bar.setBusy(true)
         let s = search!, len = source.length
         let wasFirstSearch = (lastMatch == nil && from == 0)
@@ -524,6 +537,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             let found = hit                                // immutable copy for the Sendable hop
             await MainActor.run { [weak self] in
                 guard let self, !Task.isCancelled else { return }
+                self.searchBusy = false
                 self.searchBar?.setBusy(false)
                 self.validateQuery()                       // re-derive ‹/› enablement after busy
                 if let found { self.reveal(found, length: pattern.count) } else { NSSound.beep() }
@@ -613,6 +627,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+        navGeneration += 1                       // invalidate any in-flight entry.resolve() (e.g. remote download)
         searchTask?.cancel(); searchTask = nil
         search = nil
         lastMatch = nil
