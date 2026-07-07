@@ -31,17 +31,20 @@ final class EncodingDetectorTests: XCTestCase {
         XCTAssertEqual(EncodingDetector.detect(sample: zh.dropLast(1)), .utf8)
 
         // Same guarantee for GB18030: tail trimming keeps the truncated sample from
-        // landing on the ISO-8859-1 fallback.
+        // landing on any single-byte fallback (ISO-8859-1 or Windows-1252 — same class
+        // of demotion this test guards against).
         let text = "简体中文编码检测样本：文件管理器。"
         let gbk = try XCTUnwrap(text.data(using: EncodingDetector.gb18030))
-        XCTAssertNotEqual(EncodingDetector.detect(sample: gbk.dropLast(1)), .isoLatin1)
+        let detected = EncodingDetector.detect(sample: gbk.dropLast(1))
+        XCTAssertFalse([.isoLatin1, .windowsCP1252].contains(detected))
     }
 
     func testGarbageNeverFails() {
         var garbage = Data((0..<200).map { _ in UInt8.random(in: 0...255) })
         garbage[0] = 0x41   // never start with a BOM prefix (1/65536 flake otherwise)
         let enc = EncodingDetector.detect(sample: garbage)
-        // Whatever the detector picks (or the ISO-8859-1 fallback), it MUST decode the sample.
+        // Contract: the detected encoding strict-decodes the sample after trimming ≤4
+        // trailing bytes (incomplete tails are carried over by TextChunkDecoder downstream).
         XCTAssertNotNil(String(data: garbage, encoding: enc))
         XCTAssertEqual(EncodingDetector.detect(sample: Data()), .utf8)   // empty → utf8
     }
