@@ -49,6 +49,10 @@ class MainViewController: NSViewController {
 
     @MainActor @objc private func languageDidChange() {
         relocalize()
+        // The Help window builds its strings at construction and is cached —
+        // drop the cache so the next open renders in the new language.
+        helpWindow?.close()
+        helpWindow = nil
     }
 
     /// Re-apply localized text to all always-visible main-window chrome.
