@@ -21,23 +21,49 @@ enum EncodingDetector {
     /// fall back ISO-8859-1 (single-byte map — never fails). Empty → UTF-8.
     static func detect(sample: Data) -> String.Encoding {
         guard !sample.isEmpty else { return .utf8 }
+        // BOM branches: a BOM is an explicit declaration, so accept it without the
+        // strict-decode verification below — the downstream decoder's lossy fallback
+        // handles any garbage that follows. Note FF FE is also the prefix of the
+        // UTF-32LE BOM; UTF-32 is not in the candidate set, so treating it as
+        // UTF-16LE is an accepted trade-off.
         if sample.starts(with: [0xEF, 0xBB, 0xBF]) { return .utf8 }
         if sample.starts(with: [0xFF, 0xFE]) { return .utf16LittleEndian }
         if sample.starts(with: [0xFE, 0xFF]) { return .utf16BigEndian }
-        var converted: NSString?
-        var lossy: ObjCBool = false
         let allowed = candidates.map { NSNumber(value: $0.encoding.rawValue) }
-        let raw = NSString.stringEncoding(
-            for: sample,
-            encodingOptions: [.suggestedEncodingsKey: allowed, .useOnlySuggestedEncodingsKey: true],
-            convertedString: &converted, usedLossyConversion: &lossy)
-        // `usedLossyConversion` can be true even when the strict (non-lossy) `String(data:encoding:)`
-        // decode used elsewhere in the Lister would fail outright — verify it actually round-trips
-        // before trusting it, otherwise fall back to ISO-8859-1 (single-byte map — never fails).
-        if raw != 0 {
-            let candidate = String.Encoding(rawValue: raw)
-            if String(data: sample, encoding: candidate) != nil { return candidate }
+        // The caller samples only the first N bytes of a file, which for large CJK
+        // files almost always cuts a multi-byte character in half. NSString's detector
+        // validates the WHOLE sample, so a truncated tail makes it skip the true
+        // encoding and settle on a single-byte map (ISO-8859-1 → garbled page).
+        // Fix: run detection on up-to-4-byte-trimmed variants too (max sequence length
+        // across UTF-8/UTF-16/GB18030; also covers odd-length UTF-16) — same spirit as
+        // TextChunkDecoder carrying incomplete trailing sequences over. Single-byte
+        // results (isoLatin1/cp1252 decode ANY bytes, so they carry no confidence) are
+        // deferred: a later trim may reveal the real multi-byte encoding. Trimming only
+        // affects detection/verification; the returned encoding covers the full data.
+        let singleByte: Set<String.Encoding> = [.isoLatin1, .windowsCP1252]
+        var deferredSingleByte: String.Encoding?
+        for back in 0...min(4, sample.count) {
+            let trimmed = sample.prefix(sample.count - back)
+            if trimmed.isEmpty { break }
+            // Out parameters passed nil: we never read the converted string, and we
+            // don't trust the lossy flag either — `usedLossyConversion` can be false
+            // even when the strict (non-lossy) `String(data:encoding:)` decode used
+            // elsewhere in the Lister would fail, so we verify by strict decode below.
+            let raw = NSString.stringEncoding(
+                for: trimmed,
+                encodingOptions: [.suggestedEncodingsKey: allowed, .useOnlySuggestedEncodingsKey: true],
+                convertedString: nil, usedLossyConversion: nil)
+            guard raw != 0 else { continue }
+            let enc = String.Encoding(rawValue: raw)
+            guard String(data: trimmed, encoding: enc) != nil else { continue }
+            if singleByte.contains(enc) {
+                if deferredSingleByte == nil { deferredSingleByte = enc }
+            } else {
+                return enc
+            }
         }
-        return .isoLatin1
+        // No multi-byte candidate survived strict decoding at any trim: use the
+        // detector's single-byte pick, else ISO-8859-1 (single-byte map — never fails).
+        return deferredSingleByte ?? .isoLatin1
     }
 }

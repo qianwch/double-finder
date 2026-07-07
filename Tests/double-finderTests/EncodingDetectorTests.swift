@@ -23,8 +23,23 @@ final class EncodingDetectorTests: XCTestCase {
         XCTAssertEqual(String(data: gbk, encoding: detected), text)
     }
 
+    func testTruncatedTailDoesNotDemoteToFallback() throws {
+        // The caller samples the first N bytes of a file; for CJK text that almost
+        // always cuts a multi-byte character in half. The detector must trim the
+        // incomplete tail during verification instead of falling back to ISO-8859-1.
+        let zh = "双面板文件管理器，复刻 Total Commander。".data(using: .utf8)!
+        XCTAssertEqual(EncodingDetector.detect(sample: zh.dropLast(1)), .utf8)
+
+        // Same guarantee for GB18030: tail trimming keeps the truncated sample from
+        // landing on the ISO-8859-1 fallback.
+        let text = "简体中文编码检测样本：文件管理器。"
+        let gbk = try XCTUnwrap(text.data(using: EncodingDetector.gb18030))
+        XCTAssertNotEqual(EncodingDetector.detect(sample: gbk.dropLast(1)), .isoLatin1)
+    }
+
     func testGarbageNeverFails() {
-        let garbage = Data((0..<200).map { _ in UInt8.random(in: 0...255) })
+        var garbage = Data((0..<200).map { _ in UInt8.random(in: 0...255) })
+        garbage[0] = 0x41   // never start with a BOM prefix (1/65536 flake otherwise)
         let enc = EncodingDetector.detect(sample: garbage)
         // Whatever the detector picks (or the ISO-8859-1 fallback), it MUST decode the sample.
         XCTAssertNotNil(String(data: garbage, encoding: enc))
