@@ -501,16 +501,18 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         }
         bar.markInvalid(false)
         let fold = bar.mode == .text && !bar.matchCase
+        // A backwards step is cache-only and runs synchronously on the main actor,
+        // but the detached forward-scan task concurrently appends to the shared
+        // match list — refuse BEFORE mutating any search state, so the beep is
+        // truly side-effect-free (a mid-scan ⇧Enter with a changed query must not
+        // replace the ListerSearch instance the running task is using).
+        if backwards, searchBusy { NSSound.beep(); return }
         if search == nil || search!.pattern != pattern || search!.foldCase != fold {
             search = ListerSearch(pattern: pattern, foldCase: fold)  // key changed → fresh instance (= cache invalidation)
             lastMatch = nil
         }
         let from = lastMatch?.offset ?? currentTopByteOffset()
         if backwards {
-            // Cache-only and runs synchronously on the main actor — but the detached
-            // forward-scan task concurrently appends to search!.matches, so this must
-            // not run while a scan is in flight (data race on the shared array).
-            guard !searchBusy else { NSSound.beep(); return }
             if let hit = search!.previousMatch(before: from) { reveal(hit, length: pattern.count) }
             else { NSSound.beep() }
             return
@@ -629,6 +631,10 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
         navGeneration += 1                       // invalidate any in-flight entry.resolve() (e.g. remote download)
         searchTask?.cancel(); searchTask = nil
+        // The cancelled task's MainActor.run exits at its isCancelled guard and
+        // never resets the flag; the singleton outlives the window, so a leak
+        // here would leave ‹/› disabled in the NEXT viewer session.
+        searchBusy = false
         search = nil
         lastMatch = nil
         searchBarVisible = false
