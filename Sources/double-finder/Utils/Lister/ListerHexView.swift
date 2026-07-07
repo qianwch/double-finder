@@ -1,7 +1,8 @@
 import AppKit
 
 /// Hex-mode document view (design §4): draws only visible 16-byte rows, bytes
-/// fetched through a 64KB-page LRU cache over ListerSource. Wrapped in an
+/// fetched through a true 64KB-page LRU cache over ListerSource (hits refresh
+/// recency; eviction drops the least-recently-used page). Wrapped in an
 /// NSScrollView by the controller. Handles its own scroll keys.
 @MainActor
 final class ListerHexView: NSView {
@@ -52,6 +53,8 @@ final class ListerHexView: NSView {
             pages[page] = d
             lru.append(page)
             if lru.count > Self.maxPages { pages[lru.removeFirst()] = nil }
+        } else if let i = lru.firstIndex(of: page) {
+            lru.remove(at: i); lru.append(page)
         }
         guard let d = pages[page] else { return [] }
         let local = Int(offset - page * Self.pageSize)
@@ -101,6 +104,7 @@ final class ListerHexView: NSView {
     }
 
     func highlight(offset: UInt64, count: Int) {
+        guard count >= 1 else { return }
         highlightRange = (offset, count)
         scrollToOffset(offset)
         needsDisplay = true
