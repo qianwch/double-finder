@@ -28,4 +28,10 @@ final class ViewerModeChooserTests: XCTestCase {
         XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "txt", sample: Data()).mode, .text)
         XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "txt", sample: nil).mode, .preview) // unreadable → QL keeps old behavior
     }
+
+    func testNonUTF8GarbageWithoutNULOrBOMFallsBackToText() {
+        // No BOM, no NUL, non-UTF-8 garbage → text with single-byte fallback encoding.
+        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "txt",
+                                                 sample: Data([0xC0, 0xC1, 0xFE])).mode, .text)
+    }
 }
