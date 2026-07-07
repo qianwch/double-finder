@@ -33,10 +33,26 @@ final class ListerHexView: NSView {
         charW = ("0" as NSString).size(withAttributes: [.font: font]).width
         highlightRange = nil; pages = [:]; lru = []; readErrorNotified = false
         let rows = (source.length + 15) / 16
-        setFrameSize(NSSize(width: enclosingScrollView?.contentSize.width ?? 800,
+        // Width = max(intrinsic row width, clip width): a narrow window gets a
+        // horizontal scroller instead of a clipped ASCII column.
+        setFrameSize(NSSize(width: max(intrinsicContentWidth,
+                                       enclosingScrollView?.contentSize.width ?? 800),
                             height: max(rowHeight, CGFloat(rows) * rowHeight)))
+        // Hard clip reset (belt-and-braces with the draw guard): after shrinking
+        // the frame, force the clip back to origin so no stale deep-scroll offset
+        // survives the reload.
+        if let sv = enclosingScrollView {
+            sv.contentView.scroll(to: .zero)
+            sv.reflectScrolledClipView(sv.contentView)
+        }
         scroll(.zero)
         needsDisplay = true
+    }
+
+    /// Intrinsic width of one full row: offset column (digits + 2-char gap) +
+    /// hex column (49 cells incl. the mid-gap) + ASCII column (16) + margins.
+    private var intrinsicContentWidth: CGFloat {
+        pad + CGFloat(digits + 2 + 49 + 16) * charW + 4 * pad
     }
 
     private var rowCount: UInt64 { ((source?.length ?? 0) + 15) / 16 }
@@ -74,7 +90,11 @@ final class ListerHexView: NSView {
         let dim: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
         let first = UInt64(max(0, Int(dirtyRect.minY / rowHeight)))
         let last = min(rowCount == 0 ? 0 : rowCount - 1, UInt64(dirtyRect.maxY / rowHeight) + 1)
-        guard rowCount > 0 else { return }
+        // A redraw scheduled against the OLD (taller) bounds can arrive right
+        // after a smaller file was loaded (file switch / mode re-load while
+        // scrolled deep): dirtyRect then lies entirely below the new content,
+        // first > last, and an inverted ClosedRange traps. Smoke-test caught.
+        guard rowCount > 0, first <= last else { return }
         for row in first...last {
             let y = CGFloat(row) * rowHeight + 1
             let b = bytes(forRow: row)
@@ -123,13 +143,15 @@ final class ListerHexView: NSView {
     func focus() { window?.makeFirstResponder(self) }
 
     override func keyDown(with event: NSEvent) {
+        // Vertical keys keep the current horizontal scroll (visibleRect.minX),
+        // so arrowing after a horizontal scroll doesn't snap back to column 0.
         switch event.keyCode {
-        case 126: scroll(NSPoint(x: 0, y: max(0, visibleRect.minY - rowHeight * 3)))
-        case 125: scroll(NSPoint(x: 0, y: visibleRect.minY + rowHeight * 3))
+        case 126: scroll(NSPoint(x: visibleRect.minX, y: max(0, visibleRect.minY - rowHeight * 3)))
+        case 125: scroll(NSPoint(x: visibleRect.minX, y: visibleRect.minY + rowHeight * 3))
         case 116: scrollPageUp(nil)
         case 121: scrollPageDown(nil)
-        case 115: scroll(.zero)
-        case 119: scroll(NSPoint(x: 0, y: frame.height - visibleRect.height))
+        case 115: scroll(NSPoint(x: visibleRect.minX, y: 0))
+        case 119: scroll(NSPoint(x: visibleRect.minX, y: frame.height - visibleRect.height))
         default: super.keyDown(with: event); return
         }
         onStatusChange?()
