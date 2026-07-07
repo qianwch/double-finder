@@ -733,12 +733,13 @@ class MainViewController: NSViewController {
         }
     }
 
-    /// F3 / Space / right-click Quick Look: open the embedded internal viewer
-    /// (`InternalViewerController`) on the WHOLE panel listing (display order, dirs / ".."
-    /// removed), starting on the cursor — arrow keys then step file-to-file with no need to
-    /// pre-select. Items load lazily one at a time: local = identity, remote = downloaded on
-    /// demand, so opening a huge folder stays instant. The viewer's cursor change is mirrored
-    /// back to the panel via `onIndexChange`.
+    /// F3 / right-click Quick Look (bare Space in the file list toggles selection, it does
+    /// NOT open the viewer): open the Lister-style internal viewer (`InternalViewerController`)
+    /// on the WHOLE panel listing (display order, dirs / ".." removed), starting on the
+    /// cursor — ⌘-arrows then step file-to-file with no need to pre-select. Items load lazily
+    /// one at a time: local = identity, remote = downloaded on demand, so opening a huge
+    /// folder stays instant. The viewer's cursor change is mirrored back to the panel via
+    /// `onIndexChange`.
     func actionQuickLook() {
         let panel = activePanelVC.panelState
         let entries = panel.items.filter { !$0.isDirectory && $0.name != ".." }
