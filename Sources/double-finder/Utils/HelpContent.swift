@@ -47,6 +47,15 @@ enum HelpContent {
             Shortcut(nameKey: "Delete", keys: "F8"),
             Shortcut(nameKey: "Move to Trash", keys: "⌘⌫"),
         ]),
+        ShortcutGroup(titleKey: "Viewer", shortcuts: [
+            Shortcut(nameKey: "Open Viewer", keys: "F3"),
+            Shortcut(nameKey: "Previous / Next File", keys: "⌘← ⌘↑ / ⌘→ ⌘↓"),
+            Shortcut(nameKey: "Text / Hexadecimal / Preview Mode", keys: "1 / 2 / 3"),
+            Shortcut(nameKey: "Find in Viewer", keys: "⌘F"),
+            Shortcut(nameKey: "Next / Previous Match", keys: "⏎ / ⇧⏎"),
+            Shortcut(nameKey: "Scroll Content", keys: "↑↓ · PgUp/PgDn · Home/End"),
+            Shortcut(nameKey: "Close Find Bar / Viewer", keys: "Esc"),
+        ]),
         ShortcutGroup(titleKey: "Panels & Tabs", shortcuts: [
             Shortcut(nameKey: "New Tab", keys: "⌘T"),
             Shortcut(nameKey: "Close Tab", keys: "⌘W"),
