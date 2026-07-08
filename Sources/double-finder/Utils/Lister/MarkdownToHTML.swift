@@ -251,8 +251,49 @@ enum MarkdownToHTML {
         }
     }
 
-    /// GFM tables — implemented in Task 4 (inline parser needed for cell content).
-    private static func tableBlock(_ rows: [String], baseDir: URL?) -> String { "" }
+    /// Splits a table row on `|`, dropping one optional leading/trailing
+    /// empty cell produced by a leading/trailing pipe (`| a | b |` → ["a",
+    /// "b"], not ["", "a", "b", ""]).
+    private static func tableCells(_ row: String) -> [String] {
+        var cells = row.components(separatedBy: "|")
+        if let first = cells.first, first.trimmingCharacters(in: .whitespaces).isEmpty { cells.removeFirst() }
+        if let last = cells.last, last.trimmingCharacters(in: .whitespaces).isEmpty { cells.removeLast() }
+        return cells.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// GFM table: `rows[0]` is the header, `rows[1]` the alignment row
+    /// (`:--` left / `--:` right / `:-:` center / plain `-` no alignment),
+    /// the rest are data rows. Cell content is inline-parsed.
+    private static func tableBlock(_ rows: [String], baseDir: URL?) -> String {
+        guard rows.count >= 2 else { return "" }
+        let headerCells = tableCells(rows[0])
+        let aligns: [String?] = tableCells(rows[1]).map { spec in
+            let left = spec.hasPrefix(":")
+            let right = spec.hasSuffix(":")
+            if left, right { return "center" }
+            if left { return "left" }
+            if right { return "right" }
+            return nil
+        }
+        func alignAttr(_ index: Int) -> String {
+            guard index < aligns.count, let a = aligns[index] else { return "" }
+            return " style=\"text-align:\(a)\""
+        }
+        var out = "<table>\n<thead><tr>"
+        for (idx, cell) in headerCells.enumerated() {
+            out += "<th\(alignAttr(idx))>\(inline(cell, baseDir: baseDir))</th>"
+        }
+        out += "</tr></thead>\n<tbody>\n"
+        for row in rows.dropFirst(2) {
+            out += "<tr>"
+            for (idx, cell) in tableCells(row).enumerated() {
+                out += "<td\(alignAttr(idx))>\(inline(cell, baseDir: baseDir))</td>"
+            }
+            out += "</tr>\n"
+        }
+        out += "</tbody>\n</table>\n"
+        return out
+    }
 
     /// Fenced code：语言可识别 → SyntaxHighlighter token 着色 <span class="kw|str|com|num">
     private static func codeBlock(_ code: String, language: String) -> String {
@@ -298,8 +339,143 @@ enum MarkdownToHTML {
         }
     }
 
-    /// Task 4 会替换为真正的行内解析；Task 3 先直通转义。
-    static func inline(_ text: String, baseDir: URL?) -> String { escapeHTML(text) }
+    /// Inline parser (design §4.2). Order: backslash escape → inline code →
+    /// image → link → strong (**/__) → em (*/_) → del (~~). Content inside
+    /// strong/em/link text is parsed recursively; inline code is not.
+    static func inline(_ text: String, baseDir: URL?) -> String {
+        var out = ""
+        let chars = Array(text)
+        var i = 0
+
+        func find(_ marker: [Character], from: Int) -> Int? {
+            guard marker.count > 0, chars.count >= marker.count else { return nil }
+            var j = from
+            while j <= chars.count - marker.count {
+                if Array(chars[j..<j + marker.count]) == marker { return j }
+                j += 1
+            }
+            return nil
+        }
+
+        // Tries to match a delimiter run (e.g. "**", "__", "~~", "*", "_") at
+        // position `i`. On success, appends the wrapped, recursively-parsed
+        // inner HTML to `out`, advances `i` past the closing delimiter and
+        // returns true. On failure (no closer, or empty content) returns
+        // false and leaves `out`/`i` untouched so the caller can try the
+        // next marker.
+        func matchDelimited(_ marker: String, tag: String) -> Bool {
+            let m = Array(marker)
+            guard i + m.count <= chars.count, Array(chars[i..<i + m.count]) == m else { return false }
+            guard var close = find(m, from: i + m.count), close > i + m.count else { return false }
+            // Align the closing delimiter to the END of its run of identical
+            // characters, so "**bold *and em***" closes the outer "**" on the
+            // last two "*" of the trailing "***" run — leaving "bold *and em*"
+            // as the inner content, whose single "*" pair recurses into <em>.
+            while close + m.count < chars.count, chars[close + m.count] == m[0] { close += 1 }
+            let inner = String(chars[(i + m.count)..<close])
+            out += "<\(tag)>" + inline(inner, baseDir: baseDir) + "</\(tag)>"
+            i = close + m.count
+            return true
+        }
+
+        while i < chars.count {
+            let c = chars[i]
+            // Backslash escape: \ + punctuation/symbol → literal character.
+            if c == "\\", i + 1 < chars.count, (chars[i + 1].isPunctuation || chars[i + 1].isSymbol) {
+                out += escapeHTML(String(chars[i + 1])); i += 2; continue
+            }
+            // Inline code — content is NOT parsed further.
+            if c == "`", let close = find(["`"], from: i + 1) {
+                out += "<code>" + escapeHTML(String(chars[(i + 1)..<close])) + "</code>"
+                i = close + 1; continue
+            }
+            // Image.
+            if c == "!", i + 1 < chars.count, chars[i + 1] == "[",
+               let (alt, url, next) = bracketPair(chars, from: i + 1) {
+                out += imageHTML(alt: alt, src: url, baseDir: baseDir); i = next; continue
+            }
+            // Link.
+            if c == "[", let (label, url, next) = bracketPair(chars, from: i) {
+                out += "<a href=\"\(escapeHTML(url))\">\(inline(label, baseDir: baseDir))</a>"
+                i = next; continue
+            }
+            // Strong / del must be checked before single-char em, since "**"
+            // and "~~" both begin with a character that also has a
+            // single-char meaning ("*"). "__" likewise must precede "_".
+            if matchDelimited("**", tag: "strong") { continue }
+            if matchDelimited("__", tag: "strong") { continue }
+            if matchDelimited("~~", tag: "del") { continue }
+            if matchDelimited("*", tag: "em") { continue }
+            if matchDelimited("_", tag: "em") { continue }
+            out += escapeHTML(String(c)); i += 1
+        }
+        return out
+    }
+
+    /// Parses `[label](url)` starting at `from` (which must point at the
+    /// opening `[`). No nested brackets/parens are supported inside label or
+    /// url (accepted degradation). Returns (label, url, index just past the
+    /// closing `)`), or nil if the pattern doesn't match.
+    private static func bracketPair(_ chars: [Character], from: Int) -> (String, String, Int)? {
+        guard from < chars.count, chars[from] == "[" else { return nil }
+        var j = from + 1
+        var label = ""
+        while j < chars.count, chars[j] != "]" { label.append(chars[j]); j += 1 }
+        guard j < chars.count, chars[j] == "]" else { return nil }
+        j += 1
+        guard j < chars.count, chars[j] == "(" else { return nil }
+        j += 1
+        var url = ""
+        while j < chars.count, chars[j] != ")" { url.append(chars[j]); j += 1 }
+        guard j < chars.count, chars[j] == ")" else { return nil }
+        j += 1
+        return (label, url, j)
+    }
+
+    /// Renders `![alt](src)`. Remote (http/https) sources pass through as a
+    /// plain `<img>` tag. Local/relative sources are resolved against
+    /// `baseDir` and inlined as a base64 data URI (so the rendered HTML has
+    /// no external file dependencies); on any failure — nil baseDir, path
+    /// escaping outside baseDir, unreadable file, oversized file, or
+    /// unresolvable path — a `.img-missing` placeholder span is emitted
+    /// instead of a broken `<img>` tag.
+    private static let maxImageBytes = 8 * 1024 * 1024
+
+    private static func imageHTML(alt: String, src: String, baseDir: URL?) -> String {
+        let altEscaped = escapeHTML(alt)
+        if src.hasPrefix("http://") || src.hasPrefix("https://") {
+            return "<img src=\"\(escapeHTML(src))\" alt=\"\(altEscaped)\">"
+        }
+        let fileName = (src as NSString).lastPathComponent
+        guard let baseDir else {
+            return "<span class=\"img-missing\">[image: \(escapeHTML(fileName))]</span>"
+        }
+        let resolved = baseDir.appendingPathComponent(src).standardizedFileURL
+        let baseStandardized = baseDir.standardizedFileURL
+        // Trailing slash is mandatory: without it, "/a/b" would prefix-match
+        // the sibling directory "/a/b-evil", letting a crafted relative path
+        // escape baseDir undetected.
+        guard resolved.path.hasPrefix(baseStandardized.path + "/") else {
+            return "<span class=\"img-missing\">[image: \(escapeHTML(fileName))]</span>"
+        }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolved.path),
+              let size = attrs[.size] as? Int, size <= maxImageBytes,
+              let data = try? Data(contentsOf: resolved) else {
+            return "<span class=\"img-missing\">[image: \(escapeHTML(fileName))]</span>"
+        }
+        let ext = resolved.pathExtension.lowercased()
+        let mime: String
+        switch ext {
+        case "png": mime = "image/png"
+        case "jpg", "jpeg": mime = "image/jpeg"
+        case "gif": mime = "image/gif"
+        case "svg": mime = "image/svg+xml"
+        case "webp": mime = "image/webp"
+        default: mime = "application/octet-stream"
+        }
+        let base64 = data.base64EncodedString()
+        return "<img src=\"data:\(mime);base64,\(base64)\" alt=\"\(altEscaped)\">"
+    }
 
     static func escapeHTML(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;")

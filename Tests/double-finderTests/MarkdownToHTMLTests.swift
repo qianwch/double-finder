@@ -95,4 +95,65 @@ final class MarkdownToHTMLTests: XCTestCase {
         XCTAssertTrue(h.contains("<h1>T</h1>"))
         XCTAssertTrue(h.contains("<hr"))
     }
+
+    // MARK: inline (Task 4)
+
+    func testEmphasis() {
+        let h = body("**bold** __bold__ *em* _em_ ~~del~~")
+        XCTAssertEqual(h.components(separatedBy: "<strong>bold</strong>").count, 3)  // 两种定界各一次
+        XCTAssertTrue(h.contains("<em>em</em>"))
+        XCTAssertTrue(h.contains("<del>del</del>"))
+    }
+
+    func testInlineCodeNotParsedInside() {
+        let h = body("use `**not bold**` here")
+        XCTAssertTrue(h.contains("<code>**not bold**</code>"))
+        XCTAssertFalse(h.contains("<strong>"))
+    }
+
+    func testBackslashEscape() {
+        let h = body(#"\*literal\* stars"#)
+        XCTAssertTrue(h.contains("*literal* stars"))
+        XCTAssertFalse(h.contains("<em>"))
+    }
+
+    func testLink() {
+        let h = body("[site](https://example.com)")
+        XCTAssertTrue(h.contains("<a href=\"https://example.com\">site</a>"))
+    }
+
+    func testNestedEmphasisInStrong() {
+        let h = body("**bold *and em***")
+        XCTAssertTrue(h.contains("<strong>bold <em>and em</em></strong>"))
+    }
+
+    func testTableWithAlignment() {
+        let h = body("| a | b |\n|:--|--:|\n| 1 | 2 |")
+        XCTAssertTrue(h.contains("<table>"))
+        XCTAssertTrue(h.contains("<th style=\"text-align:left\">a</th>"))
+        XCTAssertTrue(h.contains("<td style=\"text-align:right\">2</td>"))
+    }
+
+    func testLocalImageBecomesDataURI() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("md-img-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])  // PNG magic 足矣
+        try png.write(to: dir.appendingPathComponent("pic.png"))
+        let h = MarkdownToHTML.render("![alt](pic.png)", baseDir: dir)
+        XCTAssertTrue(h.contains("src=\"data:image/png;base64,"))
+        XCTAssertTrue(h.contains("alt=\"alt\""))
+    }
+
+    func testMissingImagePlaceholder() {
+        let h = MarkdownToHTML.render("![x](nope.png)", baseDir: FileManager.default.temporaryDirectory)
+        XCTAssertTrue(h.contains("[image: nope.png]"))
+        XCTAssertFalse(h.contains("<img"))
+    }
+
+    func testRemoteImagePassthrough() {
+        let h = body("![r](https://example.com/i.png)")
+        XCTAssertTrue(h.contains("src=\"https://example.com/i.png\""))
+    }
 }
