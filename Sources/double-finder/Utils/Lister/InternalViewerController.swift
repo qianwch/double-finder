@@ -443,6 +443,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                                   fileExtension: currentURL?.pathExtension)
             }
             textContent?.focus()
+            // Revealing the text view right after the markdown WKWebView (a
+            // layer-backed sibling that forces the whole container subtree
+            // layer-backed) leaves the freshly-unhidden view uninvalidated: on
+            // the FIRST preview→text switch it would paint blank until the next
+            // layout pass. Force one synchronous redraw of the revealed subtree.
+            textContent?.display()
         case .hex:
             if let source { hexView?.load(source: source) }
             if anchor > 0 { hexView?.scrollToOffset(anchor) }
