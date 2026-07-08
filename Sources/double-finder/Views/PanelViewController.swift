@@ -173,6 +173,10 @@ class PanelViewController: NSViewController {
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         tabBar.onSelect = { [weak self] i in self?.selectTab(i) }
         tabBar.onClose = { [weak self] i in self?.closeTab(at: i) }
+        tabBar.onNewTab = { [weak self] in self?.newTab() }
+        tabBar.onCloseOthers = { [weak self] i in self?.closeOtherTabs(keeping: i) }
+        tabBar.onCloseRight = { [weak self] i in self?.closeTabsToRight(of: i) }
+        tabBar.onToggleLock = { [weak self] i in self?.toggleTabLock(at: i) }
         view.addSubview(tabBar)
 
         // File list view (owner-drawn)
@@ -290,6 +294,7 @@ class PanelViewController: NSViewController {
     func closeTab(at index: Int) {
         ensureTabsInitialized()
         guard tabs.count > 1, index >= 0, index < tabs.count else { return }
+        guard !tabs[index].isLocked else { return }   // locked tabs are protected
         tabs.remove(at: index)
         if activeTab >= tabs.count { activeTab = tabs.count - 1 }
         else if index < activeTab { activeTab -= 1 }
@@ -297,6 +302,41 @@ class PanelViewController: NSViewController {
     }
 
     func closeCurrentTab() { closeTab(at: activeTab) }
+
+    /// Close every tab except `index` and any locked tab (context menu).
+    func closeOtherTabs(keeping index: Int) {
+        ensureTabsInitialized()
+        guard index >= 0, index < tabs.count else { return }
+        let keep = tabs[index]
+        for i in TabClosePlan.othersToClose(count: tabs.count, keep: index, locked: tabs.map(\.isLocked)) {
+            tabs.remove(at: i)
+        }
+        activeTab = tabs.firstIndex(where: { $0 === keep }) ?? 0
+        switchToActiveTab(load: false)
+    }
+
+    /// Close every unlocked tab to the right of `index` (context menu).
+    func closeTabsToRight(of index: Int) {
+        ensureTabsInitialized()
+        guard index >= 0, index < tabs.count else { return }
+        let current = tabs[activeTab]
+        for i in TabClosePlan.rightToClose(count: tabs.count, from: index, locked: tabs.map(\.isLocked)) {
+            tabs.remove(at: i)
+        }
+        // rightToClose only removes indices > index, so `index` and everything to
+        // its left survive. If the active tab was one of the closed (right,
+        // unlocked) tabs, fall back to the anchor at `index`.
+        activeTab = tabs.firstIndex(where: { $0 === current }) ?? min(index, tabs.count - 1)
+        switchToActiveTab(load: false)
+    }
+
+    /// Toggle the lock state of a tab (context menu).
+    func toggleTabLock(at index: Int) {
+        ensureTabsInitialized()
+        guard index >= 0, index < tabs.count else { return }
+        tabs[index].isLocked.toggle()
+        refreshTabBar()
+    }
 
     func selectTab(_ index: Int) {
         ensureTabsInitialized()
@@ -331,7 +371,7 @@ class PanelViewController: NSViewController {
     private func refreshTabBar() {
         ensureTabsInitialized()
         let titles = tabs.map { ($0.currentPath as NSString).lastPathComponent.isEmpty ? "/" : ($0.currentPath as NSString).lastPathComponent }
-        tabBar.configure(titles: titles, active: activeTab)
+        tabBar.configure(titles: titles, active: activeTab, locked: tabs.map(\.isLocked))
         tabBarHeightConstraint.constant = tabs.count > 1 ? 24 : 0
         tabBar.isHidden = tabs.count <= 1
     }

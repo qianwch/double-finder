@@ -23,6 +23,12 @@ class PanelState: ObservableObject {
     var history: [String] = []
     var historyIndex: Int = -1
 
+    /// Session-only tab-lock flag (a tab-UI concept, not observed via onChange —
+    /// PanelViewController refreshes the tab bar on toggle). Rides the PanelState
+    /// object, so a locked tab stays locked across a ⌘U panel swap. Locked tabs
+    /// are protected from close (no ✕, ⌘W ignores them, bulk-close skips them).
+    var isLocked = false
+
     /// Per-path cursor memory (path → item name), so returning to a directory
     /// restores the cursor to where it was.
     var cursorMemory: [String: String] = [:]
