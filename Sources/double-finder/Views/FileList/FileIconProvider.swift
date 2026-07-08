@@ -69,6 +69,27 @@ final class FileIconProvider {
         // Keep placeholderCache — those are generic and never stale.
     }
 
+    /// Drops cached bitmaps whose path is not in `keepPaths`, keeping the icons
+    /// of files that are still listed. Called on every directory (re)load: a
+    /// same-directory refresh (focus-regain, DirectoryWatcher fire, sort/filter)
+    /// then keeps every still-present file's icon — no placeholder flash and no
+    /// wasteful re-resolution — while navigating to a different listing still
+    /// drops the old directory's icons so the cache stays bounded.
+    ///
+    /// Trade-off: a file whose content changes in place (same path) keeps its
+    /// cached thumbnail until the next navigation. Acceptable — the alternative
+    /// (wiping the whole cache on every reload) reloaded every icon on every
+    /// focus change. Running background ops are left to finish; any that write a
+    /// no-longer-listed path are pruned by the next call.
+    func retainCached(paths keepPaths: Set<String>) {
+        guard !cache.isEmpty else { return }
+        cache = cache.filter { key, _ in
+            // Key is "path|<side>"; the path is everything before the last "|".
+            guard let sep = key.lastIndex(of: "|") else { return false }
+            return keepPaths.contains(String(key[key.startIndex..<sep]))
+        }
+    }
+
     // MARK: - Private state
 
     /// Path+side keyed bitmap cache. All reads and writes on the main thread.

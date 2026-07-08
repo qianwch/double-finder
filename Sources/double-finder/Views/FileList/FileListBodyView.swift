@@ -15,7 +15,11 @@ final class FileListBodyView: NSView {
     var items: [FileItem] = [] {
         didSet {
             reloadLayout()
-            iconProvider.clear()
+            // Keep cached icons for files still present (a same-directory refresh
+            // on focus-regain / DirectoryWatcher must NOT wipe every icon and
+            // flash placeholders); drop icons for files no longer listed so the
+            // cache stays bounded when navigating to a different directory.
+            iconProvider.retainCached(paths: Set(items.map(\.path)))
             if !items.isEmpty {
                 let side = iconSizePoints
                 iconProvider.prefetch(items, side: side, thumbnails: false)
