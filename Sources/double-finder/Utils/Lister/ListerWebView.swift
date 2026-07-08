@@ -14,6 +14,13 @@ final class ListerWebView: NSView, WKNavigationDelegate {
 
     override init(frame: NSRect) {
         let conf = WKWebViewConfiguration()
+        // Defense in depth: this renderer only ever shows our own escaped HTML
+        // (never scripts) and exists solely to view UNTRUSTED files — so disable
+        // JavaScript outright. Belt-and-suspenders against any future escaping
+        // regression; the render path never needs JS.
+        let prefs = WKWebpagePreferences()
+        prefs.allowsContentJavaScript = false
+        conf.defaultWebpagePreferences = prefs
         webView = WKWebView(frame: .zero, configuration: conf)
         super.init(frame: frame)
         webView.navigationDelegate = self
@@ -42,10 +49,9 @@ final class ListerWebView: NSView, WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if navigationAction.navigationType == .linkActivated {
-            // Task 4 review handoff (must implement): the converter only HTML-escapes
-            // hrefs, so `[x](javascript:alert(1))` produces a clickable link — only
-            // allow http/https to the system browser, drop every other scheme
-            // (javascript:/file:/data: etc.).
+            // The converter only HTML-escapes hrefs, so `[x](javascript:alert(1))`
+            // would produce a clickable link — allow only http/https to the system
+            // browser and drop every other scheme (javascript:/file:/data: etc.).
             if let url = navigationAction.request.url,
                let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) {
                 NSWorkspace.shared.open(url)

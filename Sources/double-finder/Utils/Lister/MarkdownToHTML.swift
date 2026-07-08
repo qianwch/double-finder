@@ -40,7 +40,7 @@ enum MarkdownToHTML {
         while i < lines.count {
             let line = lines[i]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            // fenced code block（优先级最高）
+            // fenced code block (highest priority)
             if trimmed.hasPrefix("```") {
                 flushParagraph()
                 let lang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
@@ -62,7 +62,8 @@ enum MarkdownToHTML {
             }
             // horizontal rule
             if isHR(trimmed) { flushParagraph(); out += "<hr>\n"; i += 1; continue }
-            // blockquote：收集连续 > 行，剥一层递归（深度封顶，超限落入普通段落）
+            // blockquote: gather consecutive > lines, strip one level, recurse
+            // (depth-capped; over the cap the > lines fall through to a paragraph)
             if trimmed.hasPrefix(">"), depth < maxQuoteDepth {
                 flushParagraph()
                 var quoted: [String] = []
@@ -74,8 +75,9 @@ enum MarkdownToHTML {
                 out += "<blockquote>\(blocks(quoted, baseDir: baseDir, depth: depth + 1))</blockquote>\n"
                 continue
             }
-            // list（有序/无序/任务，缩进嵌套）——收集整个列表块交给 listBlock。
-            // 续行判定与 listMarker 的缩进规则一致：两空格或一个 tab 都算缩进。
+            // list (ordered/unordered/task, indent-nested) — collect the whole
+            // list block and hand it to listBlock. Continuation detection matches
+            // listMarker's indent rule: two spaces or one tab both count.
             if listMarker(line) != nil {
                 flushParagraph()
                 var block: [String] = []
@@ -562,7 +564,7 @@ enum MarkdownToHTML {
     hr { border: none; border-top: 1px solid #8888; margin: 1.5em 0; }
     .kw { color: #cf51b7; font-weight: 600; }
     .str { color: #d2412c; }
-    .com { color: #6b7280; font-style: italic; }
+    .com { color: #6b7280; font-style: italic; } /* gray = conventional HTML comment color; text mode uses systemGreen, intentional divergence */
     .num { color: #1c6fd6; }
     @media (prefers-color-scheme: light) {
       body { background: #ffffff; color: #1b1b1b; }
