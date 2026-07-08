@@ -17,20 +17,6 @@ final class TabBarView: NSView {
     private var lastActive = 0
     private var lastLocked: [Bool] = []
 
-    /// One tab pill; carries its index so a right-click can build the menu.
-    private final class TabPillView: NSView {
-        let index: Int
-        weak var bar: TabBarView?
-        init(index: Int, bar: TabBarView) {
-            self.index = index; self.bar = bar
-            super.init(frame: .zero)
-        }
-        required init?(coder: NSCoder) { fatalError() }
-        override func rightMouseDown(with event: NSEvent) {
-            bar?.showContextMenu(for: index, with: event, in: self)
-        }
-    }
-
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -78,7 +64,7 @@ final class TabBarView: NSView {
     }
 
     private func makeTab(title: String, index: Int, active: Bool, locked: Bool) -> NSView {
-        let tab = TabPillView(index: index, bar: self)
+        let tab = NSView()
         tab.wantsLayer = true
         tab.layer?.cornerRadius = 4
         effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -88,6 +74,13 @@ final class TabBarView: NSView {
         }
         tab.translatesAutoresizingMaskIntoConstraints = false
 
+        // Right-clicking anywhere on the pill pops the context menu. Assign the
+        // menu to the pill AND its child buttons: an NSButton consumes its own
+        // rightMouseDown (it doesn't forward up the responder chain), so the menu
+        // must live on every view the click can land on.
+        let menu = buildMenu(forIndex: index, locked: locked)
+        tab.menu = menu
+
         // Locked tabs show a 🔒 prefix and NO close button (full protection).
         let label = NSButton(title: locked ? "🔒 " + title : title,
                              target: self, action: #selector(tabClicked(_:)))
@@ -96,6 +89,7 @@ final class TabBarView: NSView {
         label.font = .systemFont(ofSize: 11, weight: active ? .semibold : .regular)
         label.contentTintColor = .labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
+        label.menu = menu
         tab.addSubview(label)
 
         var constraints = [
@@ -113,6 +107,7 @@ final class TabBarView: NSView {
             close.font = .systemFont(ofSize: 9)
             close.contentTintColor = .secondaryLabelColor
             close.translatesAutoresizingMaskIntoConstraints = false
+            close.menu = menu
             tab.addSubview(close)
             constraints.append(contentsOf: [
                 close.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 2),
@@ -126,8 +121,7 @@ final class TabBarView: NSView {
 
     // MARK: Context menu
 
-    fileprivate func showContextMenu(for index: Int, with event: NSEvent, in view: NSView) {
-        let locked = lastLocked[safe: index] ?? false
+    private func buildMenu(forIndex index: Int, locked: Bool) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false           // else the valid target-action re-enables "Close"
         addItem(menu, tr("New Tab")) { [weak self] in self?.onNewTab?() }
@@ -138,7 +132,7 @@ final class TabBarView: NSView {
         addItem(menu, tr("Close Tabs to the Right")) { [weak self] in self?.onCloseRight?(index) }
         menu.addItem(.separator())
         addItem(menu, locked ? tr("Unlock Tab") : tr("Lock Tab")) { [weak self] in self?.onToggleLock?(index) }
-        NSMenu.popUpContextMenu(menu, with: event, for: view)
+        return menu
     }
 
     @discardableResult
