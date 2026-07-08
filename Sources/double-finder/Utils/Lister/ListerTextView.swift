@@ -107,10 +107,13 @@ final class ListerTextView: NSView {
             .keyword: .systemPurple, .string: .systemRed,
             .comment: .systemGreen, .number: .systemBlue,
         ]
+        // Coalesce N per-attribute processEditing passes into one.
+        storage.beginEditing()
         for token in SyntaxHighlighter.tokenize(storage.string, spec: spec) {
             guard NSMaxRange(token.range) <= storage.length else { continue }  // belt & braces
             storage.addAttribute(.foregroundColor, value: colors[token.kind]!, range: token.range)
         }
+        storage.endEditing()
     }
 
     /// Append the next chunk. false = EOF, cap, or read error.
