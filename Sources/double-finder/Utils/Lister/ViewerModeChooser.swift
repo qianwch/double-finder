@@ -22,6 +22,10 @@ enum ViewerModeChooser {
         if !hasBOM && sample.contains(0) { return (.hex, nil) }
         // No NULs (or has a BOM) → treat as text; detection picks the encoding
         // and its ISO-8859-1 fallback guarantees decodability.
-        return (.text, EncodingDetector.detect(sample: sample))
+        let enc = EncodingDetector.detect(sample: sample)
+        // Markdown routes to preview (rendered by ListerWebView, §4.1) but MUST
+        // keep the detected encoding — pressing 1 shows correctly-decoded source.
+        if ["md", "markdown"].contains(ext.lowercased()) { return (.preview, enc) }
+        return (.text, enc)
     }
 }

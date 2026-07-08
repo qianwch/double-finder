@@ -54,6 +54,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var hexScroll: NSScrollView?              // lazy, documentView = hexView
     private var hexView: ListerHexView?
     private var previewView: QLPreviewView?           // lazy (was eagerly built pre-Lister)
+    private var mdWebView: ListerWebView?             // lazy, rendered markdown in preview mode
     private var statusBar: NSStackView?               // bottom bar
     private var encodingPopup: NSPopUpButton?
     private var wrapCheck: NSButton?
@@ -69,6 +70,13 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var source: ListerSource?
     private var currentURL: URL?
     private var currentEncoding: String.Encoding = .utf8
+    /// Set ONLY when a crashed WKWebView gives up twice (design §4.1) — makes
+    /// showWeb false so preview stays on source. Reset per-file in load(). It is
+    /// deliberately NOT set on oversize/read-error redirects: those fall to source
+    /// too, but a second press-3 must re-attempt the render, not jump to QL.
+    private var mdRenderFellBack = false
+    /// Max markdown size we read fully into memory to render (design §4.1).
+    private let mdRenderMaxBytes: UInt64 = 2 << 20
 
     // Search state (one ListerSearch instance per file+pattern+encoding+case key)
     private var search: ListerSearch?
@@ -201,9 +209,23 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         containerTopConstraint?.isActive = true
     }
 
+    /// True when preview mode should show rendered markdown (ListerWebView)
+    /// rather than QLPreviewView. False after a WKWebView crash-give-up.
+    private func shouldShowWeb() -> Bool {
+        currentMode == .preview && isMarkdownURL(currentURL) && !mdRenderFellBack
+    }
+
+    /// A markdown file by extension (md/markdown), routed to rendered preview.
+    private func isMarkdownURL(_ url: URL?) -> Bool {
+        guard let ext = url?.pathExtension.lowercased() else { return false }
+        return ext == "md" || ext == "markdown"
+    }
+
     /// Lazily build the current mode's view inside `container`, hide the others.
+    /// Preview mode routes to either the rendered-markdown web view or QL.
     private func showOnlyCurrentModeView() {
         guard let container else { return }
+        let showWeb = shouldShowWeb()
         switch currentMode {
         case .text:
             if textContent == nil {
@@ -231,7 +253,20 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 hexView = hv
             }
         case .preview:
-            if previewView == nil {
+            if showWeb {
+                if mdWebView == nil {
+                    let wv = ListerWebView(frame: container.bounds)
+                    wv.autoresizingMask = [.width, .height]
+                    wv.onGiveUp = { [weak self] in
+                        guard let self else { return }
+                        self.mdRenderFellBack = true
+                        self.setMode(.text, auto: true)
+                        self.showStatusNote(tr("Preview failed — showing source"))
+                    }
+                    container.addSubview(wv)
+                    mdWebView = wv
+                }
+            } else if previewView == nil {
                 let pv = QLPreviewView(frame: container.bounds, style: .normal)!
                 pv.autoresizingMask = [.width, .height]
                 pv.shouldCloseWithWindow = true
@@ -242,7 +277,16 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         }
         textContent?.isHidden = currentMode != .text
         hexScroll?.isHidden = currentMode != .hex
-        previewView?.isHidden = currentMode != .preview
+        previewView?.isHidden = !(currentMode == .preview && !showWeb)
+        mdWebView?.isHidden = !showWeb
+        if currentMode == .preview {
+            if showWeb {
+                previewView?.previewItem = nil          // free QL, hand focus to web
+                mdWebView?.focus()
+            } else {
+                mdWebView?.loadHTML("")                  // drop any stale rendered doc
+            }
+        }
     }
 
     private func wireTextCallbacks(_ tv: ListerTextView) {
@@ -265,7 +309,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 // re-entry (a Latin-1 reload never falls back again).
                 self.currentEncoding = .isoLatin1
                 let anchor = self.textContent?.topVisibleByteOffset() ?? 0
-                self.textContent?.load(source: source, encoding: .isoLatin1, anchorByte: anchor)
+                self.textContent?.load(source: source, encoding: .isoLatin1, anchorByte: anchor,
+                                       fileExtension: self.currentURL?.pathExtension)
                 self.selectEncodingInPopup(.isoLatin1)
                 self.showStatusNote(tr("Decoding failed — showing as ISO-8859-1"))
             }
@@ -357,6 +402,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         let gen = navGeneration
         let entry = entries[index]; let total = entries.count
         cancelSearch(clearQuery: true)               // new file = new search context
+        mdRenderFellBack = false                     // per-file: give the next md a fresh render attempt
         Task { [weak self] in
             let url = await entry.resolve()
             guard let self, self.navGeneration == gen else { return }
@@ -392,15 +438,40 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         showOnlyCurrentModeView()
         switch mode {
         case .text:
-            if let source { textContent?.load(source: source, encoding: currentEncoding, anchorByte: anchor) }
+            if let source {
+                textContent?.load(source: source, encoding: currentEncoding, anchorByte: anchor,
+                                  fileExtension: currentURL?.pathExtension)
+            }
             textContent?.focus()
         case .hex:
             if let source { hexView?.load(source: source) }
             if anchor > 0 { hexView?.scrollToOffset(anchor) }
             hexView?.focus()
         case .preview:
-            previewView?.previewItem = currentURL as NSURL?
-            window?.makeFirstResponder(previewView)
+            if shouldShowWeb(), let source {
+                // Size-before-read (order is critical: never read a huge md fully
+                // into memory). Oversize/read-error redirect to source WITHOUT
+                // setting mdRenderFellBack — that flag is crash-only, and setting
+                // it here would make a second press-3 wrongly jump to QL.
+                if source.length > mdRenderMaxBytes {
+                    setMode(.text, auto: true)
+                    showStatusNote(tr("Markdown too large — showing source"))
+                    return
+                }
+                guard let data = source.read(offset: 0, count: Int(source.length)) else {
+                    setMode(.text, auto: true)
+                    showStatusNote(tr("Read error — cannot access the file"))
+                    return
+                }
+                var decoder = TextChunkDecoder(encoding: currentEncoding)
+                let text = decoder.decode(data, isFinal: true)
+                let html = MarkdownToHTML.render(text, baseDir: currentURL?.deletingLastPathComponent())
+                mdWebView?.loadHTML(html)
+                mdWebView?.focus()
+            } else {
+                previewView?.previewItem = currentURL as NSURL?
+                window?.makeFirstResponder(previewView)
+            }
         }
         searchBar?.mode = (mode == .hex) ? .hex : .text
         reconfigureStatusBar()
@@ -583,7 +654,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         let anchor = textContent?.topVisibleByteOffset() ?? 0
         currentEncoding = enc
         cancelSearch(clearQuery: false)     // cache key includes encoding → invalidate; keep the query string
-        textContent?.load(source: source, encoding: enc, anchorByte: anchor)
+        textContent?.load(source: source, encoding: enc, anchorByte: anchor,
+                          fileExtension: currentURL?.pathExtension)
     }
 
     private func selectEncodingInPopup(_ enc: String.Encoding) {
@@ -654,11 +726,14 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         noteGeneration += 1                      // invalidate any pending note-clear
         NotificationCenter.default.removeObserver(self)
         previewView?.close()
+        mdWebView?.teardown()
         titlebarAccessory?.removeFromParent()
         // Exhaustive teardown of every lazily-built view reference — anything left
         // dangling here would make the SECOND F3 open an empty content area (the
         // views would "exist" but belong to the dead window).
         previewView = nil
+        mdWebView = nil
+        mdRenderFellBack = false
         textContent = nil
         hexScroll = nil
         hexView = nil

@@ -34,4 +34,19 @@ final class ViewerModeChooserTests: XCTestCase {
         XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "txt",
                                                  sample: Data([0xC0, 0xC1, 0xFE])).mode, .text)
     }
+
+    func testMarkdownRoutesToPreviewKeepingEncoding() {
+        let r = ViewerModeChooser.choose(fileExtension: "md", sample: "# t".data(using: .utf8)!)
+        XCTAssertEqual(r.mode, .preview)
+        XCTAssertNotNil(r.encoding)                       // encoding detection still runs (design §4.1)
+        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "MARKDOWN",
+                                                sample: "x".data(using: .utf8)!).mode, .preview)
+    }
+    func testMarkdownWithNULStillSniffsToHex() {
+        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "md",
+                                                sample: Data([0x4D, 0x00])).mode, .hex)
+    }
+    func testEmptyMarkdownStaysText() {
+        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "md", sample: Data()).mode, .text)
+    }
 }
