@@ -149,8 +149,11 @@ final class ListerTextView: NSView {
     }
 
     /// Approximate utf16 index for a byte offset by linear interpolation between
-    /// chunk anchors — used when exact re-decoding fails (e.g. anchoring across
-    /// an encoding switch whose decode fell back).
+    /// chunk anchors — used when the exact mapping returns nil: the target byte
+    /// lies beyond `loadedBytes` (e.g. a hex-mode anchor past the 256MB cap) or
+    /// the prefix re-read failed. For beyond-cap targets frac > 1 extrapolates
+    /// past storage.length — callers rely on `scrollRangeToVisible` clamping
+    /// out-of-range locations to the end of the loaded text (deepest loaded spot).
     private func approxCharIndex(forByte target: UInt64) -> Int {
         guard let aIdx = anchors.lastIndex(where: { $0.byte <= target }) else { return 0 }
         let a = anchors[aIdx]
@@ -181,9 +184,10 @@ final class ListerTextView: NSView {
 
     private func scrollToByte(_ byte: UInt64) {
         guard byte > 0 else { textView.scroll(.zero); return }
-        // Exact re-decoding of the chunk prefix can fail to map cleanly (e.g.
-        // anchoring across an encoding switch whose decode fell back) — degrade
-        // to the interpolated anchor mapping rather than jumping to the top.
+        // charIndex is nil when the byte is beyond loadedBytes (anchor past the
+        // cap) or the prefix re-read failed — degrade to the interpolated anchor
+        // mapping rather than jumping to the top. Out-of-range results are
+        // clamped by scrollRangeToVisible (do not add a bounds assertion here).
         let idx = charIndex(forByte: byte) ?? approxCharIndex(forByte: byte)
         textView.scrollRangeToVisible(NSRange(location: idx, length: 0))
     }

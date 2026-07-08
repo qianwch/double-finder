@@ -500,7 +500,13 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             pattern = [UInt8](d)
         }
         bar.markInvalid(false)
-        let fold = bar.mode == .text && !bar.matchCase
+        var fold = bar.mode == .text && !bar.matchCase
+        // Deep-match auto-switch flips the bar to hex while the search context
+        // lives on (design §6 exception). In hex mode the Match-case checkbox is
+        // hidden, so a recomputed fold=false is a mode artifact — keep the existing
+        // instance's folding for the same pattern instead of silently invalidating
+        // its match cache (and quietly changing folded → exact matching).
+        if bar.mode == .hex, let s = search, s.pattern == pattern { fold = s.foldCase }
         // A backwards step is cache-only and runs synchronously on the main actor,
         // but the detached forward-scan task concurrently appends to the shared
         // match list — refuse BEFORE mutating any search state, so the beep is
