@@ -148,6 +148,20 @@ final class ListerTextView: NSView {
         return a.char + d.decode(prefix, isFinal: false).utf16.count
     }
 
+    /// Approximate utf16 index for a byte offset by linear interpolation between
+    /// chunk anchors — used when exact re-decoding fails (e.g. anchoring across
+    /// an encoding switch whose decode fell back).
+    private func approxCharIndex(forByte target: UInt64) -> Int {
+        guard let aIdx = anchors.lastIndex(where: { $0.byte <= target }) else { return 0 }
+        let a = anchors[aIdx]
+        let endByte = aIdx + 1 < anchors.count ? anchors[aIdx + 1].byte : loadedBytes
+        let endChar = aIdx + 1 < anchors.count ? anchors[aIdx + 1].char
+                                               : (textView.textStorage?.length ?? a.char)
+        guard endByte > a.byte, endChar > a.char else { return a.char }
+        let frac = Double(target - a.byte) / Double(endByte - a.byte)
+        return a.char + Int(frac * Double(endChar - a.char))
+    }
+
     /// Approximate byte offset of the top visible line (linear interpolation
     /// between chunk anchors — design §3/§5 allows this).
     func topVisibleByteOffset() -> UInt64 {
@@ -166,9 +180,11 @@ final class ListerTextView: NSView {
     }
 
     private func scrollToByte(_ byte: UInt64) {
-        guard byte > 0, let idx = charIndex(forByte: byte) else {
-            textView.scroll(.zero); return
-        }
+        guard byte > 0 else { textView.scroll(.zero); return }
+        // Exact re-decoding of the chunk prefix can fail to map cleanly (e.g.
+        // anchoring across an encoding switch whose decode fell back) — degrade
+        // to the interpolated anchor mapping rather than jumping to the top.
+        let idx = charIndex(forByte: byte) ?? approxCharIndex(forByte: byte)
         textView.scrollRangeToVisible(NSRange(location: idx, length: 0))
     }
 

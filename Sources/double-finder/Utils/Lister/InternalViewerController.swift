@@ -616,12 +616,19 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// The generation token keeps an old timer from wiping a newer note, and the
     /// optional-chained label makes a fire-after-close harmless.
     private func showStatusNote(_ text: String) {
-        statusNote?.stringValue = text
         noteGeneration += 1
         let gen = noteGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+        // Defer display AND the clear countdown to the next runloop turn: callers
+        // may fire mid-way through a >3s synchronous load (End on a huge file),
+        // and a wall-clock deadline scheduled now would expire before the first
+        // redraw — the note would be cleared without ever being seen.
+        DispatchQueue.main.async { [weak self] in
             guard let self, self.noteGeneration == gen else { return }
-            self.statusNote?.stringValue = ""
+            self.statusNote?.stringValue = text
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, self.noteGeneration == gen else { return }
+                self.statusNote?.stringValue = ""
+            }
         }
     }
 
