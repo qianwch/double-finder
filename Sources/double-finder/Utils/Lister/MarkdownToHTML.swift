@@ -346,12 +346,30 @@ enum MarkdownToHTML {
         var out = ""
         let chars = Array(text)
         var i = 0
+        // Start index of the current run of consecutive markup-free
+        // characters, or nil when no run is open. The run is sliced and
+        // escaped in one batch at flush — per-character escapeHTML(String(c))
+        // has a heavy constant factor (5.4s on a 2MB single line, vs. well
+        // under a second batched).
+        var runStart: Int? = nil
+        func flushPlain() {
+            guard let start = runStart else { return }
+            out += escapeHTML(String(chars[start..<i]))
+            runStart = nil
+        }
 
+        // Element-wise comparison — building an Array slice per scanned
+        // position allocates and dominates runtime on large inputs.
         func find(_ marker: [Character], from: Int) -> Int? {
-            guard marker.count > 0, chars.count >= marker.count else { return nil }
+            let mc = marker.count
+            guard mc > 0, chars.count >= mc else { return nil }
             var j = from
-            while j <= chars.count - marker.count {
-                if Array(chars[j..<j + marker.count]) == marker { return j }
+            while j <= chars.count - mc {
+                if chars[j] == marker[0] {
+                    var ok = true
+                    for k in 1..<mc where chars[j + k] != marker[k] { ok = false; break }
+                    if ok { return j }
+                }
                 j += 1
             }
             return nil
@@ -365,7 +383,8 @@ enum MarkdownToHTML {
         // next marker.
         func matchDelimited(_ marker: String, tag: String) -> Bool {
             let m = Array(marker)
-            guard i + m.count <= chars.count, Array(chars[i..<i + m.count]) == m else { return false }
+            guard i + m.count <= chars.count else { return false }
+            for k in 0..<m.count where chars[i + k] != m[k] { return false }
             guard var close = find(m, from: i + m.count), close > i + m.count else { return false }
             // Align the closing delimiter to the END of its run of identical
             // characters, so "**bold *and em***" closes the outer "**" on the
@@ -373,6 +392,7 @@ enum MarkdownToHTML {
             // as the inner content, whose single "*" pair recurses into <em>.
             while close + m.count < chars.count, chars[close + m.count] == m[0] { close += 1 }
             let inner = String(chars[(i + m.count)..<close])
+            flushPlain()
             out += "<\(tag)>" + inline(inner, baseDir: baseDir) + "</\(tag)>"
             i = close + m.count
             return true
@@ -381,53 +401,89 @@ enum MarkdownToHTML {
         while i < chars.count {
             let c = chars[i]
             // Backslash escape: \ + punctuation/symbol → literal character.
+            // Flush the run up to the backslash, then resume the run AT the
+            // escaped character (skipping only the backslash itself) so it
+            // still gets batch-escaped with whatever plain text follows.
             if c == "\\", i + 1 < chars.count, (chars[i + 1].isPunctuation || chars[i + 1].isSymbol) {
-                out += escapeHTML(String(chars[i + 1])); i += 2; continue
+                flushPlain()
+                runStart = i + 1
+                i += 2; continue
             }
             // Inline code — content is NOT parsed further.
             if c == "`", let close = find(["`"], from: i + 1) {
+                flushPlain()
                 out += "<code>" + escapeHTML(String(chars[(i + 1)..<close])) + "</code>"
                 i = close + 1; continue
             }
             // Image.
             if c == "!", i + 1 < chars.count, chars[i + 1] == "[",
                let (alt, url, next) = bracketPair(chars, from: i + 1) {
+                flushPlain()
                 out += imageHTML(alt: alt, src: url, baseDir: baseDir); i = next; continue
             }
             // Link.
             if c == "[", let (label, url, next) = bracketPair(chars, from: i) {
+                flushPlain()
                 out += "<a href=\"\(escapeHTML(url))\">\(inline(label, baseDir: baseDir))</a>"
                 i = next; continue
             }
             // Strong / del must be checked before single-char em, since "**"
-            // and "~~" both begin with a character that also has a
-            // single-char meaning ("*"). "__" likewise must precede "_".
-            if matchDelimited("**", tag: "strong") { continue }
-            if matchDelimited("__", tag: "strong") { continue }
-            if matchDelimited("~~", tag: "del") { continue }
-            if matchDelimited("*", tag: "em") { continue }
-            if matchDelimited("_", tag: "em") { continue }
-            out += escapeHTML(String(c)); i += 1
+            // begins with a character that also has a single-char meaning
+            // ("*"); "__" likewise must precede "_". Dispatch on the first
+            // character so ordinary text skips all delimiter machinery —
+            // calling matchDelimited 5x per character dominated large inputs.
+            if c == "*" {
+                if matchDelimited("**", tag: "strong") { continue }
+                if matchDelimited("*", tag: "em") { continue }
+            } else if c == "_" {
+                if matchDelimited("__", tag: "strong") { continue }
+                if matchDelimited("_", tag: "em") { continue }
+            } else if c == "~" {
+                if matchDelimited("~~", tag: "del") { continue }
+            }
+            if runStart == nil { runStart = i }
+            i += 1
         }
+        flushPlain()
         return out
     }
+
+    /// Scan caps for `bracketPair`. Without them a flood of `[` characters
+    /// makes every position run a failing O(n) scan — quadratic overall
+    /// (measured: 50K `[` took 41s; a 2MB file extrapolates to hours, on the
+    /// main thread). 999 is the CommonMark link-label limit; 4096 is a
+    /// generous URL bound. Past the cap the pattern fails fast and the `[`
+    /// renders literally — flood inputs are linear again.
+    private static let maxLinkLabelLength = 999
+    private static let maxLinkURLLength = 4096
 
     /// Parses `[label](url)` starting at `from` (which must point at the
     /// opening `[`). No nested brackets/parens are supported inside label or
     /// url (accepted degradation). Returns (label, url, index just past the
     /// closing `)`), or nil if the pattern doesn't match.
     private static func bracketPair(_ chars: [Character], from: Int) -> (String, String, Int)? {
+        // Hoisted out of the scan loops: building a Character from a literal
+        // per iteration is a measurable constant in unoptimized builds.
+        let closeBracket: Character = "]"
+        let closeParen: Character = ")"
         guard from < chars.count, chars[from] == "[" else { return nil }
         var j = from + 1
-        var label = ""
-        while j < chars.count, chars[j] != "]" { label.append(chars[j]); j += 1 }
-        guard j < chars.count, chars[j] == "]" else { return nil }
+        let labelStart = j
+        // Length caps use index arithmetic, NOT String.count (which is O(n)
+        // and would reintroduce quadratic cost inside the capped scan). The
+        // scan window is also bounded up front so the cap costs one min().
+        var limit = min(chars.count, labelStart + maxLinkLabelLength + 1)
+        while j < limit, chars[j] != closeBracket { j += 1 }
+        guard j < chars.count, chars[j] == closeBracket, j - labelStart <= maxLinkLabelLength else { return nil }
+        let label = String(chars[labelStart..<j])
         j += 1
         guard j < chars.count, chars[j] == "(" else { return nil }
         j += 1
-        var url = ""
-        while j < chars.count, chars[j] != ")" { url.append(chars[j]); j += 1 }
-        guard j < chars.count, chars[j] == ")" else { return nil }
+        let urlStart = j
+        limit = min(chars.count, urlStart + maxLinkURLLength + 1)
+        while j < limit, chars[j] != closeParen { j += 1 }
+        guard j < chars.count, chars[j] == closeParen, j - urlStart <= maxLinkURLLength else { return nil }
+        let url = String(chars[urlStart..<j])
         j += 1
         return (label, url, j)
     }
@@ -450,15 +506,22 @@ enum MarkdownToHTML {
         guard let baseDir else {
             return "<span class=\"img-missing\">[image: \(escapeHTML(fileName))]</span>"
         }
-        let resolved = baseDir.appendingPathComponent(src).standardizedFileURL
-        let baseStandardized = baseDir.standardizedFileURL
+        // standardizedFileURL only folds "../" textually; resolvingSymlinksInPath
+        // additionally resolves symlinks, so a link INSIDE baseDir pointing
+        // OUTSIDE cannot smuggle external files past the containment check.
+        // Both sides are resolved so /var ↔ /private/var stay consistent.
+        let resolved = baseDir.appendingPathComponent(src).standardizedFileURL.resolvingSymlinksInPath()
+        let baseStandardized = baseDir.standardizedFileURL.resolvingSymlinksInPath()
         // Trailing slash is mandatory: without it, "/a/b" would prefix-match
         // the sibling directory "/a/b-evil", letting a crafted relative path
         // escape baseDir undetected.
         guard resolved.path.hasPrefix(baseStandardized.path + "/") else {
             return "<span class=\"img-missing\">[image: \(escapeHTML(fileName))]</span>"
         }
+        // Regular files only: a FIFO named pic.png would make Data(contentsOf:)
+        // block the main thread forever.
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolved.path),
+              attrs[.type] as? FileAttributeType == .typeRegular,
               let size = attrs[.size] as? Int, size <= maxImageBytes,
               let data = try? Data(contentsOf: resolved) else {
             return "<span class=\"img-missing\">[image: \(escapeHTML(fileName))]</span>"

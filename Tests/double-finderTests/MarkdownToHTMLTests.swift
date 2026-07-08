@@ -156,4 +156,51 @@ final class MarkdownToHTMLTests: XCTestCase {
         let h = body("![r](https://example.com/i.png)")
         XCTAssertTrue(h.contains("src=\"https://example.com/i.png\""))
     }
+
+    func testImagePathTraversalBlocked() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("md-esc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // A real file OUTSIDE baseDir that ../ would reach if not blocked.
+        let outside = dir.deletingLastPathComponent().appendingPathComponent("x.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: outside)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let h = MarkdownToHTML.render("![](../x.png)", baseDir: dir)
+        XCTAssertTrue(h.contains("[image: x.png]"))
+        XCTAssertFalse(h.contains("<img"))
+    }
+
+    func testImageSiblingDirectoryPrefixBlocked() throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("md-sib-\(UUID().uuidString)")
+        let base = parent.appendingPathComponent("xxx")
+        let evil = parent.appendingPathComponent("xxx-evil")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: evil, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: evil.appendingPathComponent("p.png"))
+        // "../xxx-evil/p.png" resolves to a path whose string starts with the
+        // baseDir path ("…/xxx") — only the trailing-slash check rejects it.
+        let h = MarkdownToHTML.render("![](../xxx-evil/p.png)", baseDir: base)
+        XCTAssertTrue(h.contains("[image: p.png]"))
+        XCTAssertFalse(h.contains("<img"))
+    }
+
+    func testImageSymlinkEscapeBlocked() throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("md-sym-\(UUID().uuidString)")
+        let base = parent.appendingPathComponent("base")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        // Real image OUTSIDE baseDir, reached via a symlink INSIDE baseDir.
+        let outside = parent.appendingPathComponent("secret.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: outside)
+        let link = base.appendingPathComponent("pic.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        let h = MarkdownToHTML.render("![](pic.png)", baseDir: base)
+        XCTAssertTrue(h.contains("[image: pic.png]"))
+        XCTAssertFalse(h.contains("<img"))
+    }
 }
+
