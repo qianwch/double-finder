@@ -26,9 +26,12 @@ struct LanguageSpec {
         byExtension[ext.lowercased()]
     }
 
+    /// Number of registered file-extension → language mappings (registry completeness check).
+    static var registeredExtensionCount: Int { byExtension.count }
+
     // MARK: - Language definitions
 
-    static let swiftLang = LanguageSpec(
+    private static let swiftLang = LanguageSpec(
         name: "swift",
         keywords: [
             "func", "let", "var", "if", "else", "guard", "for", "while", "switch", "case",
@@ -46,7 +49,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let cFamily = LanguageSpec(
+    private static let cFamily = LanguageSpec(
         name: "c",
         keywords: [
             "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue",
@@ -63,7 +66,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let java = LanguageSpec(
+    private static let java = LanguageSpec(
         name: "java",
         keywords: [
             "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue",
@@ -71,7 +74,7 @@ struct LanguageSpec {
             "public", "private", "protected", "static", "final", "abstract", "synchronized",
             "volatile", "transient", "native", "void", "int", "char", "float", "double", "long",
             "short", "boolean", "byte", "new", "this", "super", "try", "catch", "finally", "throw",
-            "throws", "instanceof", "null", "true", "false", "assert", "enum"
+            "throws", "instanceof", "null", "true", "false", "assert"
         ],
         lineCommentPrefixes: ["//"],
         blockComment: (open: "/*", close: "*/"),
@@ -80,7 +83,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let kotlin = LanguageSpec(
+    private static let kotlin = LanguageSpec(
         name: "kotlin",
         keywords: [
             "fun", "val", "var", "if", "else", "for", "while", "do", "when", "return", "class",
@@ -96,7 +99,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let javascript = LanguageSpec(
+    private static let javascript = LanguageSpec(
         name: "javascript",
         keywords: [
             "function", "var", "let", "const", "if", "else", "for", "while", "do", "switch",
@@ -112,7 +115,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let typescript = LanguageSpec(
+    private static let typescript = LanguageSpec(
         name: "typescript",
         keywords: javascript.keywords.union([
             "interface", "type", "enum", "implements", "declare", "readonly", "namespace",
@@ -126,7 +129,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let goLang = LanguageSpec(
+    private static let goLang = LanguageSpec(
         name: "go",
         keywords: [
             "func", "var", "const", "if", "else", "for", "switch", "case", "default", "break",
@@ -141,7 +144,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let rust = LanguageSpec(
+    private static let rust = LanguageSpec(
         name: "rust",
         keywords: [
             "fn", "let", "mut", "if", "else", "for", "while", "loop", "match", "return", "struct",
@@ -151,12 +154,12 @@ struct LanguageSpec {
         ],
         lineCommentPrefixes: ["//"],
         blockComment: (open: "/*", close: "*/"),
-        stringDelimiters: [(delim: "\"", escapable: true), (delim: "'", escapable: true)],
+        stringDelimiters: [(delim: "\"", escapable: true)],
         lineRules: [],
         keyValueSeparator: nil
     )
 
-    static let sql = LanguageSpec(
+    private static let sql = LanguageSpec(
         name: "sql",
         keywords: {
             let base = [
@@ -173,7 +176,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let python = LanguageSpec(
+    private static let python = LanguageSpec(
         name: "python",
         keywords: [
             "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from",
@@ -188,9 +191,9 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let json = LanguageSpec(
+    private static let json = LanguageSpec(
         name: "json",
-        keywords: [],
+        keywords: ["true", "false", "null"],
         lineCommentPrefixes: [],
         blockComment: nil,
         stringDelimiters: [(delim: "\"", escapable: true)],
@@ -198,7 +201,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let xmlHTML = LanguageSpec(
+    private static let xmlHTML = LanguageSpec(
         name: "xml",
         keywords: [],
         lineCommentPrefixes: [],
@@ -208,7 +211,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let css = LanguageSpec(
+    private static let css = LanguageSpec(
         name: "css",
         keywords: [],
         lineCommentPrefixes: [],
@@ -218,7 +221,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let shell = LanguageSpec(
+    private static let shell = LanguageSpec(
         name: "shell",
         keywords: [
             "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "case", "esac",
@@ -232,7 +235,7 @@ struct LanguageSpec {
         keyValueSeparator: nil
     )
 
-    static let yaml = LanguageSpec(
+    private static let yaml = LanguageSpec(
         name: "yaml",
         keywords: ["true", "false", "null", "yes", "no"],
         lineCommentPrefixes: ["#"],
@@ -242,7 +245,7 @@ struct LanguageSpec {
         keyValueSeparator: ":"
     )
 
-    static let toml = LanguageSpec(
+    private static let toml = LanguageSpec(
         name: "toml",
         keywords: ["true", "false"],
         lineCommentPrefixes: ["#"],
@@ -252,7 +255,7 @@ struct LanguageSpec {
         keyValueSeparator: "="
     )
 
-    static let markdown = LanguageSpec(
+    private static let markdown = LanguageSpec(
         name: "markdown",
         keywords: [],
         lineCommentPrefixes: [],
@@ -268,7 +271,7 @@ struct LanguageSpec {
 
     // MARK: - Extension registry
 
-    static let byExtension: [String: LanguageSpec] = [
+    private static let byExtension: [String: LanguageSpec] = [
         "swift": swiftLang,
         "c": cFamily, "h": cFamily, "cpp": cFamily, "hpp": cFamily, "cc": cFamily,
         "m": cFamily, "mm": cFamily,

@@ -31,4 +31,20 @@ final class LanguageSpecTests: XCTestCase {
         XCTAssertTrue(md.lineRules.contains { $0.prefix == ">" && $0.kind == .comment })
         XCTAssertTrue(md.lineRules.contains { $0.prefix == "```" && $0.kind == .string })
     }
+
+    func testRegistryCompleteness() {
+        // 35 extension → language mappings registered (registry completeness guard).
+        XCTAssertEqual(LanguageSpec.registeredExtensionCount, 35)
+    }
+
+    func testAllSpecsHaveNonEmptyName() {
+        // Spot-check names across the registry (every LanguageSpec must self-identify).
+        let extensions = ["swift", "c", "java", "kt", "py", "js", "ts", "json", "xml", "css",
+                           "sh", "yaml", "toml", "sql", "go", "rs", "md"]
+        for ext in extensions {
+            let spec = LanguageSpec.language(forExtension: ext)
+            XCTAssertNotNil(spec, "missing spec for extension \(ext)")
+            XCTAssertFalse(spec?.name.isEmpty ?? true, "empty name for extension \(ext)")
+        }
+    }
 }
