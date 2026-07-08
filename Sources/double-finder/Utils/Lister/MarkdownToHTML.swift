@@ -7,7 +7,13 @@ import Foundation
 enum MarkdownToHTML {
 
     static func render(_ markdown: String, baseDir: URL?) -> String {
-        let bodyHTML = blocks(markdown.components(separatedBy: "\n"), baseDir: baseDir)
+        // Normalize CRLF and lone CR to LF first: lines are split on "\n" only,
+        // and a trailing \r would break hr detection ("---\r"), fence language
+        // lookup ("swift\r") and table-separator detection.
+        let normalized = markdown
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let bodyHTML = blocks(normalized.components(separatedBy: "\n"), baseDir: baseDir)
         return """
         <!DOCTYPE html><html><head><meta charset="utf-8">
         <style>\(css)</style></head><body>\(bodyHTML)</body></html>
@@ -16,7 +22,13 @@ enum MarkdownToHTML {
 
     // MARK: block-level state machine
 
-    private static func blocks(_ lines: [String], baseDir: URL?) -> String {
+    /// Blockquote nesting recurses one level per leading `>`; a hostile file of
+    /// thousands of `> > > …` prefixes would otherwise blow the stack (observed
+    /// segfault at ~5000 levels) with quadratic cost. Past this depth, `>` lines
+    /// degrade to escaped paragraph text — ugly but safe ("Never fails").
+    private static let maxQuoteDepth = 64
+
+    private static func blocks(_ lines: [String], baseDir: URL?, depth: Int = 0) -> String {
         var out = ""
         var i = 0
         var paragraph: [String] = []
@@ -50,8 +62,8 @@ enum MarkdownToHTML {
             }
             // horizontal rule
             if isHR(trimmed) { flushParagraph(); out += "<hr>\n"; i += 1; continue }
-            // blockquote：收集连续 > 行，剥一层递归
-            if trimmed.hasPrefix(">") {
+            // blockquote：收集连续 > 行，剥一层递归（深度封顶，超限落入普通段落）
+            if trimmed.hasPrefix(">"), depth < maxQuoteDepth {
                 flushParagraph()
                 var quoted: [String] = []
                 while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
@@ -59,14 +71,15 @@ enum MarkdownToHTML {
                     quoted.append(String(t.dropFirst(t.hasPrefix("> ") ? 2 : 1)))
                     i += 1
                 }
-                out += "<blockquote>\(blocks(quoted, baseDir: baseDir))</blockquote>\n"
+                out += "<blockquote>\(blocks(quoted, baseDir: baseDir, depth: depth + 1))</blockquote>\n"
                 continue
             }
-            // list（有序/无序/任务，缩进嵌套）——收集整个列表块交给 listBlock
+            // list（有序/无序/任务，缩进嵌套）——收集整个列表块交给 listBlock。
+            // 续行判定与 listMarker 的缩进规则一致：两空格或一个 tab 都算缩进。
             if listMarker(line) != nil {
                 flushParagraph()
                 var block: [String] = []
-                while i < lines.count, listMarker(lines[i]) != nil || (lines[i].hasPrefix("  ") && !lines[i].trimmingCharacters(in: .whitespaces).isEmpty) {
+                while i < lines.count, listMarker(lines[i]) != nil || (isListContinuation(lines[i]) && !lines[i].trimmingCharacters(in: .whitespaces).isEmpty) {
                     block.append(lines[i]); i += 1
                 }
                 out += listBlock(block, baseDir: baseDir)
@@ -120,6 +133,12 @@ enum MarkdownToHTML {
     /// (leading whitespace width, tab = 1 level worth of columns handled by
     /// caller) and whether it's ordered — used by `listBlock`.
     private struct ListMarkerInfo { let indent: Int; let ordered: Bool; let rest: Substring }
+
+    /// A non-marker line continues the current list item when it is indented —
+    /// two spaces or one tab, mirroring `listMarker`'s indent counting.
+    private static func isListContinuation(_ line: String) -> Bool {
+        line.hasPrefix("  ") || line.hasPrefix("\t")
+    }
 
     private static func listMarker(_ line: String) -> ListMarkerInfo? {
         var indent = 0
@@ -176,8 +195,8 @@ enum MarkdownToHTML {
                 }
                 i += 1; continue
             }
-            // Pop levels deeper than or equal-but-different-type to this marker's indent,
-            // until we find (or create) the right level.
+            // Pop only levels strictly deeper than this marker's indent; a
+            // same-indent type change (ul↔ol) is handled by the `else if` below.
             while let top = stack.last, marker.indent < top.indent {
                 closeTopLI()
                 let level = stack.removeLast()

@@ -79,4 +79,20 @@ final class MarkdownToHTMLTests: XCTestCase {
         let h = body("")
         XCTAssertTrue(h.contains("<body>"))
     }
+
+    func testDeeplyNestedBlockquoteDoesNotCrash() {
+        // Hostile input: ~5000 quote levels used to segfault (unbounded recursion).
+        let h = body(String(repeating: "> ", count: 5000) + "x")
+        XCTAssertFalse(h.isEmpty)
+        // Depth is capped: nowhere near 5000 blockquote levels in the output.
+        XCTAssertTrue(h.components(separatedBy: "<blockquote>").count <= 66)
+        // The overflow degrades to escaped paragraph text, not dropped content.
+        XCTAssertTrue(h.contains("&gt;"))
+    }
+
+    func testCRLFNormalized() {
+        let h = body("# T\r\n---\r\n")
+        XCTAssertTrue(h.contains("<h1>T</h1>"))
+        XCTAssertTrue(h.contains("<hr"))
+    }
 }
