@@ -8,6 +8,9 @@ import AppKit
 final class ListerTextView: NSView {
     static let chunkSize = 4 << 20
     static let maxLoadedBytes: UInt64 = 256 << 20
+    /// Design §3.2: only single-chunk files get highlighted (full decoded string
+    /// maps 1:1 onto textStorage — no carry to worry about).
+    static let highlightMaxBytes: UInt64 = UInt64(chunkSize)
 
     var onStatusChange: (() -> Void)?
     var onCapReached: (() -> Void)?          // once per load(); controller shows status note + beep
@@ -28,6 +31,7 @@ final class ListerTextView: NSView {
     /// length before the append). NOTE: the start is `loadedBytes - decoder.carryCount`,
     /// not `loadedBytes` — see appendChunk.
     private var anchors: [(byte: UInt64, char: Int)] = []
+    private var highlightSpec: LanguageSpec?
     private let attrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
         .foregroundColor: NSColor.textColor,
@@ -68,16 +72,45 @@ final class ListerTextView: NSView {
 
     /// Reset and load from `source` with `encoding`, then scroll so that
     /// `anchorByte` is at the top (loads sequentially up to it, capped).
-    func load(source: ListerSource, encoding: String.Encoding, anchorByte: UInt64 = 0) {
+    func load(source: ListerSource, encoding: String.Encoding, anchorByte: UInt64 = 0,
+              fileExtension: String? = nil) {
         self.source = source
         self.encoding = encoding
         decoder = TextChunkDecoder(encoding: encoding)
         loadedBytes = 0; reachedEOF = false; capNotified = false
         fallbackNotified = false; readErrorNotified = false; anchors = []
+        // Design §3.2: only offer highlighting for files that fit in one chunk —
+        // beyond that the decoded string is split across appends and token
+        // NSRanges (computed against the full single-chunk string) would not
+        // line up with textStorage.
+        highlightSpec = (source.length <= Self.highlightMaxBytes)
+            ? fileExtension.flatMap { LanguageSpec.language(forExtension: $0) } : nil
         textView.textStorage?.setAttributedString(NSAttributedString())
         while loadedBytes <= anchorByte, !reachedEOF, appendChunk() {}
+        applyHighlightIfEligible()
         scrollToByte(anchorByte)
         onStatusChange?()
+    }
+
+    /// Design §3.2: lexical coloring for files that fit in one chunk. The full
+    /// decoded string maps 1:1 onto textStorage (no carry), so token NSRanges
+    /// apply directly. Dynamic system colors adapt to light/dark automatically.
+    private func applyHighlightIfEligible() {
+        // Double-guard is deliberate: `highlightSpec` is already nil for files
+        // over highlightMaxBytes (set in load()), but `reachedEOF` additionally
+        // confirms this specific load actually finished in one chunk (a file of
+        // exactly chunkSize bytes hits EOF on the first appendChunk; the nil-spec
+        // short-circuit alone wouldn't catch a caller passing a mismatched source).
+        guard let spec = highlightSpec, reachedEOF,
+              let storage = textView.textStorage, storage.length > 0 else { return }
+        let colors: [TokenKind: NSColor] = [
+            .keyword: .systemPurple, .string: .systemRed,
+            .comment: .systemGreen, .number: .systemBlue,
+        ]
+        for token in SyntaxHighlighter.tokenize(storage.string, spec: spec) {
+            guard NSMaxRange(token.range) <= storage.length else { continue }  // belt & braces
+            storage.addAttribute(.foregroundColor, value: colors[token.kind]!, range: token.range)
+        }
     }
 
     /// Append the next chunk. false = EOF, cap, or read error.

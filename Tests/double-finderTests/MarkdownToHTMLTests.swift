@@ -158,14 +158,14 @@ final class MarkdownToHTMLTests: XCTestCase {
     }
 
     func testImagePathTraversalBlocked() throws {
-        let dir = FileManager.default.temporaryDirectory
+        let parent = FileManager.default.temporaryDirectory
             .appendingPathComponent("md-esc-\(UUID().uuidString)")
+        let dir = parent.appendingPathComponent("inner")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { try? FileManager.default.removeItem(at: parent) }
         // A real file OUTSIDE baseDir that ../ would reach if not blocked.
-        let outside = dir.deletingLastPathComponent().appendingPathComponent("x.png")
+        let outside = parent.appendingPathComponent("x.png")
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: outside)
-        defer { try? FileManager.default.removeItem(at: outside) }
         let h = MarkdownToHTML.render("![](../x.png)", baseDir: dir)
         XCTAssertTrue(h.contains("[image: x.png]"))
         XCTAssertFalse(h.contains("<img"))
