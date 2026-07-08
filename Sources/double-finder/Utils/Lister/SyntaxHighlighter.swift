@@ -5,15 +5,45 @@ import Foundation
 /// containment); line rules (markdown/yaml) run before character scanning.
 /// Input is the FULL decoded string of a ≤4MB file (single chunk, no carry),
 /// so utf16 offsets map 1:1 onto the textStorage the caller colors.
+/// Perf: the <100ms/4MB budget is a RELEASE-build number — debug builds are
+/// several× slower (array bounds checks on every `chars[i]` access); don't
+/// use a debug timing to judge whether the budget is met.
 enum SyntaxHighlighter {
     struct Token: Equatable {
         let range: NSRange   // utf16, ready for textStorage.addAttribute
         let kind: TokenKind
     }
 
+    /// Spec patterns pre-converted to UTF-16 code units once per `tokenize` call,
+    /// instead of re-deriving `Array(needle.utf16)` / `String(delim).utf16.first`
+    /// at every scan position — that per-character heap churn was the hot-path
+    /// cost (178–424ms on 4MB files, measured before this change).
+    private struct CompiledSpec {
+        let keywords: Set<String>
+        let lineCommentPrefixes: [[UInt16]]
+        let blockOpen: [UInt16]?
+        let blockClose: [UInt16]?
+        let stringDelimiters: [(unit: UInt16, escapable: Bool)]
+        let lineRules: [(prefix: [UInt16], kind: TokenKind)]
+        let keySeparator: UInt16?
+
+        init(_ spec: LanguageSpec) {
+            keywords = spec.keywords
+            lineCommentPrefixes = spec.lineCommentPrefixes.map { Array($0.utf16) }
+            blockOpen = spec.blockComment.map { Array($0.open.utf16) }
+            blockClose = spec.blockComment.map { Array($0.close.utf16) }
+            stringDelimiters = spec.stringDelimiters.compactMap { d in
+                String(d.delim).utf16.first.map { (unit: $0, escapable: d.escapable) }
+            }
+            lineRules = spec.lineRules.map { (prefix: Array($0.prefix.utf16), kind: $0.kind) }
+            keySeparator = spec.keyValueSeparator.flatMap { String($0).utf16.first }
+        }
+    }
+
     static func tokenize(_ text: String, spec: LanguageSpec) -> [Token] {
         var tokens: [Token] = []
         var inBlockComment = false
+        let compiled = CompiledSpec(spec)
         let ns = text as NSString
         var lineStart = 0
         while lineStart < ns.length {
@@ -26,7 +56,7 @@ enum SyntaxHighlighter {
             }
             let line = ns.substring(with: NSRange(location: lineRange.location,
                                                   length: contentEnd - lineRange.location))
-            scanLine(line, at: lineRange.location, spec: spec,
+            scanLine(line, at: lineRange.location, spec: compiled,
                      inBlockComment: &inBlockComment, into: &tokens)
             lineStart = NSMaxRange(lineRange)
         }
@@ -35,7 +65,7 @@ enum SyntaxHighlighter {
 
     // MARK: per-line scan
 
-    private static func scanLine(_ line: String, at base: Int, spec: LanguageSpec,
+    private static func scanLine(_ line: String, at base: Int, spec: CompiledSpec,
                                  inBlockComment: inout Bool, into tokens: inout [Token]) {
         let chars = Array(line.utf16)
         let count = chars.count
@@ -43,8 +73,7 @@ enum SyntaxHighlighter {
             guard end > start else { return }
             tokens.append(Token(range: NSRange(location: base + start, length: end - start), kind: kind))
         }
-        func matches(_ needle: String, at i: Int) -> Bool {
-            let n = Array(needle.utf16)
+        func matches(_ n: [UInt16], at i: Int) -> Bool {
             guard i + n.count <= count else { return false }
             for j in 0..<n.count where chars[i + j] != n[j] { return false }
             return true
@@ -52,11 +81,18 @@ enum SyntaxHighlighter {
         var i = 0
 
         // Continuing a multi-line block comment: comment until close or EOL.
+        // Invariant: `inBlockComment` is only ever set true below when
+        // `spec.blockOpen`/`blockClose` are non-nil (a spec with no block
+        // comment never sets it), and `tokenize` threads one `spec` across
+        // every line of a single call — so the force-unwrap here is safe.
+        // Any future incremental/partial-rehighlight entry point that carries
+        // `inBlockComment` across a *different* spec must re-establish this
+        // invariant itself (e.g. by resetting the flag on language change).
         if inBlockComment {
-            let close = Array(spec.blockComment!.close.utf16)
+            let close = spec.blockClose!
             var j = 0
             while j <= count - close.count {
-                if matches(spec.blockComment!.close, at: j) {
+                if matches(close, at: j) {
                     emit(0, j + close.count, .comment)
                     inBlockComment = false
                     i = j + close.count
@@ -69,13 +105,18 @@ enum SyntaxHighlighter {
 
         // Line rules first (markdown/yaml): whole-line or key-prefix coloring.
         if i == 0 {
+            // Leading whitespace is trimmed with no column limit before matching
+            // lineRules/key rule below — intentional: yaml nested keys can sit at
+            // any indent, and it's a deliberate (accepted) lexical-level departure
+            // from CommonMark's 0-3-space rule for markdown headings (e.g.
+            // "    # x" still colors as a heading here).
             let trimmedStart = firstNonSpace(chars)
             for rule in spec.lineRules where matchesPrefix(rule.prefix, chars, from: trimmedStart) {
                 emit(trimmedStart, count, rule.kind)
                 return
             }
             // yaml/toml key rule: bare word from line start to separator.
-            if let sep = spec.keyValueSeparator, let sepIdx = keyEnd(chars, from: trimmedStart, separator: sep) {
+            if let sep = spec.keySeparator, let sepIdx = keyEnd(chars, from: trimmedStart, separator: sep) {
                 emit(trimmedStart, sepIdx, .keyword)
                 i = sepIdx   // continue normal scan after the key
             }
@@ -84,12 +125,12 @@ enum SyntaxHighlighter {
         // Character scan.
         while i < count {
             // block comment open
-            if let bc = spec.blockComment, matches(bc.open, at: i) {
-                let close = Array(bc.close.utf16)
-                var j = i + Array(bc.open.utf16).count
+            if let open = spec.blockOpen, matches(open, at: i) {
+                let close = spec.blockClose!
+                var j = i + open.count
                 var closed = false
                 while j <= count - close.count {
-                    if matches(bc.close, at: j) { emit(i, j + close.count, .comment); i = j + close.count; closed = true; break }
+                    if matches(close, at: j) { emit(i, j + close.count, .comment); i = j + close.count; closed = true; break }
                     j += 1
                 }
                 if !closed { emit(i, count, .comment); inBlockComment = true; return }
@@ -100,12 +141,11 @@ enum SyntaxHighlighter {
                 emit(i, count, .comment); return
             }
             // string
-            if let d = spec.stringDelimiters.first(where: { String($0.delim).utf16.first == chars[i] }) {
-                let delimUnit = String(d.delim).utf16.first!
+            if let d = spec.stringDelimiters.first(where: { $0.unit == chars[i] }) {
                 var j = i + 1
                 while j < count {
                     if d.escapable && chars[j] == 0x5C /* \ */ { j += 2; continue }
-                    if chars[j] == delimUnit { j += 1; break }
+                    if chars[j] == d.unit { j += 1; break }
                     j += 1
                 }
                 emit(i, min(j, count), .string); i = min(j, count); continue
@@ -164,8 +204,7 @@ enum SyntaxHighlighter {
         return i
     }
 
-    private static func matchesPrefix(_ prefix: String, _ chars: [UInt16], from start: Int) -> Bool {
-        let p = Array(prefix.utf16)
+    private static func matchesPrefix(_ p: [UInt16], _ chars: [UInt16], from start: Int) -> Bool {
         guard !p.isEmpty, start + p.count <= chars.count else { return false }
         for j in 0..<p.count where chars[start + j] != p[j] { return false }
         return true
@@ -177,8 +216,7 @@ enum SyntaxHighlighter {
     /// "find the first separator" would misfire on comment lines like
     /// `# url: http://x`, coloring "# url" as a key and never reaching the
     /// line-comment branch. Any non-key char before the separator aborts (nil).
-    private static func keyEnd(_ chars: [UInt16], from start: Int, separator: Character) -> Int? {
-        guard let sepUnit = String(separator).utf16.first else { return nil }
+    private static func keyEnd(_ chars: [UInt16], from start: Int, separator sepUnit: UInt16) -> Int? {
         var i = start
         while i < chars.count, chars[i] != sepUnit {
             guard isKeyChar(chars[i]) else { return nil }

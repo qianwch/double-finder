@@ -74,4 +74,25 @@ final class SyntaxHighlighterTests: XCTestCase {
     func testEmptyInput() {
         XCTAssertTrue(SyntaxHighlighter.tokenize("", spec: LanguageSpec.language(forExtension: "swift")!).isEmpty)
     }
+
+    func testYAMLCommentLineWithColonIsNotKey() {
+        // "#" is not a key char, so keyEnd must bail before the line-comment
+        // branch gets a chance to run — pins the strict keyEnd contract.
+        let t = kinds("# url: http://x", "yaml")
+        XCTAssertEqual(t.count, 1)
+        XCTAssertEqual(t.first?.0, "# url: http://x")
+        XCTAssertEqual(t.first?.1, .comment)
+        XCTAssertFalse(t.contains { $0.1 == .keyword })
+    }
+
+    func testCRLFLineEndings() {
+        let t = kinds("let a = 1\r\nlet b = 2", "swift")
+        let keywords = t.filter { $0.1 == .keyword }.map(\.0)
+        XCTAssertEqual(keywords, ["let", "let"])
+        XCTAssertTrue(keywords.allSatisfy { !$0.contains("\r") })
+
+        let numbers = t.filter { $0.1 == .number }
+        XCTAssertEqual(numbers.map(\.0), ["1", "2"])
+        XCTAssertTrue(numbers.allSatisfy { !$0.0.contains("\r") })
+    }
 }
