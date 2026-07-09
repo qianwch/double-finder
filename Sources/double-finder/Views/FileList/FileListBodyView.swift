@@ -260,6 +260,7 @@ final class FileListBodyView: NSView {
                 bg.setFill()
                 rowRect.fill()
             }
+            drawCursorOutline(rowRect, cursor: cursor, active: isActivePanel)
 
             // Name column.
             if let nameRange = layout.xRange(of: "name") {
@@ -311,6 +312,7 @@ final class FileListBodyView: NSView {
                 bg.setFill()
                 rowRect.fill()
             }
+            drawCursorOutline(rowRect, cursor: cursor, active: isActivePanel)
 
             // Disclosure triangle + icon (gutter reserved for all rows so they align).
             let textLeft = drawLeading(item: item, row: row, geo: geo, side: side)
@@ -346,6 +348,7 @@ final class FileListBodyView: NSView {
                 bg.setFill()
                 rowRect.fill()
             }
+            drawCursorOutline(rowRect, cursor: cursor, active: isActivePanel)
 
             // Thumbnail (or placeholder) — centered vertically in the row.
             let thumbX = leadingMargin
@@ -416,6 +419,31 @@ final class FileListBodyView: NSView {
             return NSColor.labelColor.withAlphaComponent(0.05)
         }
         return nil
+    }
+
+    /// Draws a focus outline around the cursor row on top of its background fill.
+    /// The row-background colour alone can't tell "cursor" from "marked": a row
+    /// that is BOTH the cursor AND part of the space-marked selection paints as a
+    /// plain marked row (the `selected` branch wins over `cursor` in
+    /// `rowBackground`), so the cursor becomes invisible while navigating a
+    /// multi-selection (TC's cursor bar). The outline keeps the cursor visible
+    /// regardless of selection state, in every view mode.
+    ///
+    /// The stroke colour must **contrast** with every possible fill under it —
+    /// the cursor row itself is filled with the accent colour (0.7α unmarked,
+    /// 0.4α when also marked), so an accent-coloured border would blend in on an
+    /// unmarked cursor row and look like it vanished. `labelColor` is
+    /// theme-adaptive (near-white in dark mode, near-black in light) and reads
+    /// clearly over any accent fill; the inactive panel uses a dimmer tint.
+    func drawCursorOutline(_ rowRect: NSRect, cursor: Bool, active: Bool) {
+        guard cursor else { return }
+        let color = active
+            ? NSColor.labelColor
+            : NSColor.secondaryLabelColor.withAlphaComponent(0.6)
+        let path = NSBezierPath(rect: rowRect.insetBy(dx: 1, dy: 1))
+        path.lineWidth = 1.5
+        color.setStroke()
+        path.stroke()
     }
 
     // MARK: - Meta text (parity with FileTableView.metaText)
