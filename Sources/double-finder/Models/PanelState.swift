@@ -91,7 +91,7 @@ class PanelState: ObservableObject {
 
     /// Builds FileItems for search results: name is the path relative to `base`
     /// (so files from different folders don't collide), path is the full path.
-    static func searchResultItems(paths: [String], base: String, showHidden: Bool) -> [FileItem] {
+    nonisolated static func searchResultItems(paths: [String], base: String, showHidden: Bool) -> [FileItem] {
         // Resolve symlinks on both sides so the relative-name prefix matches even
         // when one side is /tmp and the other /private/tmp (etc.).
         let rb = (base as NSString).resolvingSymlinksInPath
@@ -114,7 +114,7 @@ class PanelState: ObservableObject {
     }
 
     /// Recursively collects all files under `root` with names as relative paths.
-    static func branchItems(root: String, showHidden: Bool) -> [FileItem] {
+    nonisolated static func branchItems(root: String, showHidden: Bool) -> [FileItem] {
         var items: [FileItem] = []
         let url = URL(fileURLWithPath: root)
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
@@ -402,13 +402,22 @@ class PanelState: ObservableObject {
         let branch = branchView && sftp == nil
         let searchPaths = searchResults
         let searchBaseDir = searchBase
+        let showHiddenSnapshot = showHidden
         Task {
             do {
                 var loaded: [FileItem]
                 if let sp = searchPaths {
-                    loaded = Self.searchResultItems(paths: sp, base: searchBaseDir, showHidden: showHidden)
+                    // Building result items stats every path — run off the main actor
+                    // (up to 5000 files) or the panel freezes while it lists results.
+                    loaded = await Task.detached(priority: .userInitiated) {
+                        Self.searchResultItems(paths: sp, base: searchBaseDir, showHidden: showHiddenSnapshot)
+                    }.value
                 } else if branch {
-                    loaded = Self.branchItems(root: path, showHidden: showHidden)
+                    // Branch view recursively enumerates the whole tree (up to 20k
+                    // files); keep that heavy walk off the main actor.
+                    loaded = await Task.detached(priority: .userInitiated) {
+                        Self.branchItems(root: path, showHidden: showHiddenSnapshot)
+                    }.value
                 } else {
                     loaded = try await fs.listDirectory(path)
                     if !showHidden { loaded = loaded.filter { !$0.isHidden } }

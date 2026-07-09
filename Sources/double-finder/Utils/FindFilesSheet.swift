@@ -16,6 +16,7 @@ final class FindFilesSheet: NSWindowController {
     private let statusLabel = NSTextField(labelWithString: "")
     private let table = ResultsTableView()
     private var results: [String] = []
+    private var searchTask: Task<Void, Never>?
 
     init(startDir: String) {
         self.startDir = startDir
@@ -115,10 +116,17 @@ final class FindFilesSheet: NSWindowController {
         let spotlight = spotlightCheck.state == .on
         statusLabel.stringValue = tr("Searching…")
         let start = startDir
-        Task {
+        // Run the scan on a background task — the recursive file walk / mdfind can
+        // take seconds and MUST NOT run on the main actor or the UI freezes. The
+        // static search helpers are `nonisolated`, so inside `Task.detached` they
+        // execute off the main thread; only the UI update hops back via MainActor.run.
+        searchTask?.cancel()
+        searchTask = Task.detached(priority: .userInitiated) { [weak self] in
             let found = spotlight
                 ? Self.spotlightSearch(start: start, namePattern: name, content: text, subfolders: sub)
                 : Self.search(start: start, namePattern: name, content: text, subfolders: sub, regexName: regex)
+            if Task.isCancelled { return }
+            guard let self else { return }
             await MainActor.run {
                 self.results = found
                 self.table.reloadData()
@@ -134,7 +142,7 @@ final class FindFilesSheet: NSWindowController {
     /// Spotlight has indexed). Name pattern → kMDItemFSName, content →
     /// kMDItemTextContent, both case/diacritic-insensitive. Regex isn't supported
     /// by Spotlight, so it's ignored in this mode.
-    static func spotlightSearch(start: String, namePattern: String, content: String, subfolders: Bool) -> [String] {
+    nonisolated static func spotlightSearch(start: String, namePattern: String, content: String, subfolders: Bool) -> [String] {
         func esc(_ s: String) -> String {
             s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         }
@@ -167,7 +175,7 @@ final class FindFilesSheet: NSWindowController {
         return paths.sorted()
     }
 
-    private static func runMdfind(start: String, query: String) -> [String] {
+    nonisolated private static func runMdfind(start: String, query: String) -> [String] {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
         proc.arguments = ["-onlyin", start, query]
@@ -180,7 +188,7 @@ final class FindFilesSheet: NSWindowController {
         return (String(data: data, encoding: .utf8) ?? "").split(separator: "\n").map(String.init)
     }
 
-    static func search(start: String, namePattern: String, content: String,
+    nonisolated static func search(start: String, namePattern: String, content: String,
                        subfolders: Bool, regexName: Bool) -> [String] {
         let fm = FileManager.default
         let startURL = URL(fileURLWithPath: start)
@@ -214,6 +222,7 @@ final class FindFilesSheet: NSWindowController {
             guard let en = fm.enumerator(at: startURL, includingPropertiesForKeys: [.isRegularFileKey],
                                          options: [], errorHandler: { _, _ in true }) else { return [] }
             while let url = en.nextObject() as? URL {
+                if Task.isCancelled { break }   // a newer search superseded this one
                 if nameMatches(url.lastPathComponent), contentMatches(url) {
                     results.append(url.path)
                     if results.count >= 5000 { break }
