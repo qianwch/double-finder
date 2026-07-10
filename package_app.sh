@@ -86,6 +86,15 @@ rm -rf "$ICONSET" "$PNG"
 echo "==> Ad-hoc code signing"
 codesign --force --deep --sign - "$APPDIR"
 
+echo "==> Install to ~/Applications"
+INSTALL_DIR="$HOME/Applications"
+mkdir -p "$INSTALL_DIR"
+# Replace any previous install (a running instance may hold the old bundle;
+# ditto overwrites in place). --noqtn strips the quarantine flag.
+rm -rf "$INSTALL_DIR/$APP.app"
+ditto --noqtn "$APPDIR" "$INSTALL_DIR/$APP.app"
+echo "    installed $INSTALL_DIR/$APP.app"
+
 echo "==> Done"
 echo "    $APPDIR"
 lipo -info "$APPDIR/Contents/MacOS/$APP"
