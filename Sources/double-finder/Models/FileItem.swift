@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct FileItem: Identifiable, Hashable {
     let id: UUID
-    let name: String
+    var name: String          // usually the leaf; a virtual listing (search / branch view) puts a display path here
     let path: String          // full absolute path
     let isDirectory: Bool
     let isArchive: Bool       // .zip .jar etc

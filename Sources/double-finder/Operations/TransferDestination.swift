@@ -20,6 +20,16 @@ struct TransferDestination: Equatable {
     /// Transfer the (single) item under this name instead of its own; nil keeps names.
     let renameTo: String?
 
+    /// The filesystem leaf of a listing item's `name`. Virtual listings (search
+    /// results, branch view) put a display *path* in `name` (e.g. "sub/f.docx")
+    /// so files from different folders don't collide in the list — but the
+    /// transfer's destination side only ever wants the final component. Without
+    /// this, the prefilled "<destDir>/sub/f.docx" parses as a rename into a
+    /// non-existent "<destDir>/sub" sub-folder and the copy fails.
+    static func transferName(for itemName: String) -> String {
+        itemName.contains("/") ? (itemName as NSString).lastPathComponent : itemName
+    }
+
     /// - singleSourceName: the sole selected item's name, or nil when several are selected.
     /// - isExistingDir: backend-specific probe (local → FileManager; remote → `{ _ in false }`,
     ///   where only a trailing "/" can force directory mode).

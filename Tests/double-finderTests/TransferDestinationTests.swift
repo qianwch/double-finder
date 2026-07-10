@@ -82,6 +82,42 @@ final class TransferDestinationTests: XCTestCase {
         XCTAssertEqual(d.dir, "/")
         XCTAssertEqual(d.renameTo, "g.txt")
     }
+
+    // MARK: virtual listing (search results / branch view) leaf normalization
+
+    /// Regression: copying a single file from a search-results / branch-view
+    /// listing, whose `name` is a display *path* ("subA/report.docx"). Feeding
+    /// the raw path-name into the prefill/parse mis-detects a rename into a
+    /// non-existent "<dst>/subA" sub-folder — the copy then fails with
+    /// "file doesn't exist". The pipeline flattens `name` to its leaf first.
+    func testTransferNameFlattensDisplayPathToLeaf() {
+        XCTAssertEqual(TransferDestination.transferName(for: "subA/report.docx"), "report.docx")
+        XCTAssertEqual(TransferDestination.transferName(for: "a/b/deep/notes.md"), "notes.md")
+    }
+
+    func testTransferNameLeavesPlainLeafUntouched() {
+        XCTAssertEqual(TransferDestination.transferName(for: "report.docx"), "report.docx")
+    }
+
+    /// The pre-fix bug, pinned: the raw display-path name parses as a rename into
+    /// a sub-folder that doesn't exist at the destination.
+    func testDisplayPathNameMisparsesAsSubfolderRename() {
+        let name = "subA/report.docx"
+        let prefill = "/dst/" + name
+        let d = TransferDestination.parse(prefill, singleSourceName: name, isExistingDir: notADir)
+        XCTAssertEqual(d.dir, "/dst/subA")       // non-existent sub-folder → copy fails
+        XCTAssertEqual(d.renameTo, "report.docx")
+    }
+
+    /// The fix end-to-end: flattening the name to its leaf before prefill/parse
+    /// yields a plain flat copy into the destination directory, no rename.
+    func testFlattenedNameParsesAsFlatCopyIntoDestDir() {
+        let leaf = TransferDestination.transferName(for: "subA/report.docx")
+        let prefill = "/dst/" + leaf
+        let d = TransferDestination.parse(prefill, singleSourceName: leaf, isExistingDir: notADir)
+        XCTAssertEqual(d.dir, "/dst")
+        XCTAssertNil(d.renameTo)
+    }
 }
 
 /// Rename-aware self-transfer guard: copying a file to its own directory under a

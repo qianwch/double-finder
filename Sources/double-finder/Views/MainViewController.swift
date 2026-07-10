@@ -943,7 +943,23 @@ class MainViewController: NSViewController {
     /// One transfer pipeline for every backend: prune → confirm → unified conflict
     /// detection → Overwrite/Skip/Cancel → drop skipped → provider builds the op → dispatch.
     private func runTransfer(items rawItems: [FileItem], destPanel: PanelState, provider: TransferProvider) {
-        let pruned = pruneSelectedAncestors(rawItems)
+        // Virtual listings (search results, branch view) carry a display *path*
+        // in `name` (e.g. "sub/dir/file.docx") so files from different folders
+        // don't collide in the listing. But the transfer pipeline — dest prefill,
+        // TransferDestination.parse, conflict detection, byte tracking — assumes
+        // `name` is a single filesystem component; a slash makes it mis-parse the
+        // prefilled "<destDir>/sub/dir/file.docx" as a rename into a non-existent
+        // sub-folder, so the copy fails ("file doesn't exist"). Flatten `name` to
+        // its leaf here; paths are untouched, so the copy reads the real source
+        // and lands flat in the destination directory.
+        let flattened = rawItems.map { item -> FileItem in
+            let leaf = TransferDestination.transferName(for: item.name)
+            guard leaf != item.name else { return item }
+            var i = item
+            i.name = leaf
+            return i
+        }
+        let pruned = pruneSelectedAncestors(flattened)
         guard !pruned.isEmpty else { return }
         // Self-transfer can only happen when both panels address the same
         // namespace (both local / same SFTP host / same S3 store); across
