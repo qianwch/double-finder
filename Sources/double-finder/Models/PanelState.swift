@@ -38,6 +38,11 @@ class PanelState: ObservableObject {
     /// refresh leave it false so they can restore/keep scroll instead.
     var pendingScrollToCursor = false
 
+    /// One-shot: when set, the next completed load puts the cursor on the item
+    /// with this name (and scrolls to it). Used by F7 so the cursor lands on
+    /// the just-created directory. Consumed (cleared) by the next loadDirectory.
+    var pendingCursorName: String?
+
     /// Normalized memory key — resolves symlinks (e.g. /tmp → /private/tmp) so a
     /// directory matches whether reached directly or via a child's resolved path.
     static func memoryKey(_ path: String) -> String {
@@ -389,6 +394,10 @@ class PanelState: ObservableObject {
         // (preserveSelection) keeps it.
         if !preserveSelection { clearExpansion() }
         let path = currentPath
+        // Consume the one-shot cursor request up front so a failed load can't
+        // leak it into a later, unrelated load.
+        let pendingCursor = pendingCursorName
+        pendingCursorName = nil
         let prevSelectedNames: Set<String> = preserveSelection
             ? Set(items.filter { selectedItems.contains($0.id) }.map { $0.path })
             : []
@@ -441,7 +450,12 @@ class PanelState: ObservableObject {
                     self.isLoading = false
                     // On refresh keep the current cursor; on navigation restore the
                     // remembered cursor for this path (so back/up lands where you were).
-                    let cursorName = preserveSelection ? prevCursorName : self.cursorMemory[Self.memoryKey(path)]
+                    // An explicit one-shot request (e.g. F7 new directory) wins over both.
+                    var cursorName = preserveSelection ? prevCursorName : self.cursorMemory[Self.memoryKey(path)]
+                    if let pending = pendingCursor {
+                        cursorName = pending
+                        self.pendingScrollToCursor = true
+                    }
                     self.rebuildItems(selectedNames: prevSelectedNames, cursorName: cursorName, sizes: prevSizes)
                     self.watcher.watch(path)
                 }

@@ -1598,6 +1598,8 @@ class MainViewController: NSViewController {
                 do {
                     try await self.appState.activePanelState.fs.createDirectory(newPath)
                     await MainActor.run {
+                        // TC behavior: after F7 the cursor lands on the new directory.
+                        self.activePanelVC.panelState.pendingCursorName = name
                         self.activePanelVC.panelState.loadDirectory()
                         self.activePanelVC.updateDisplay()
                     }
