@@ -54,6 +54,7 @@ enum HelpContent {
             Shortcut(nameKey: "Find in Viewer", keys: "⌘F"),
             Shortcut(nameKey: "Next / Previous Match", keys: "⏎ / ⇧⏎"),
             Shortcut(nameKey: "Scroll Content", keys: "↑↓ · PgUp/PgDn · Home/End"),
+            Shortcut(nameKey: "Zoom In / Out / Reset", keys: "⌘= / ⌘- / ⌘0"),
             Shortcut(nameKey: "Close Find Bar / Viewer", keys: "Esc"),
         ]),
         ShortcutGroup(titleKey: "Panels & Tabs", shortcuts: [

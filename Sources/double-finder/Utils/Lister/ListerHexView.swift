@@ -19,9 +19,10 @@ final class ListerHexView: NSView {
     private var pages: [UInt64: Data] = [:]
     private var lru: [UInt64] = []
 
-    private let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    private var fontSize: CGFloat = 12
+    private var font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     private var charW: CGFloat = 8
-    private let rowHeight: CGFloat = 16
+    private var rowHeight: CGFloat = 16
     private let pad: CGFloat = 8
 
     override var isFlipped: Bool { true }
@@ -137,6 +138,25 @@ final class ListerHexView: NSView {
     var percent: Int {
         guard let source, source.length > 0 else { return 100 }
         return Int(min(100, (topVisibleOffset * 100) / source.length))
+    }
+
+    /// ⌘=/⌘-/⌘0 zoom. Metrics (font/charW/rowHeight) always update; with
+    /// `reapply` and a loaded source the frame is re-derived and the top
+    /// visible offset re-anchored (captured BEFORE rowHeight changes).
+    func setFontSize(_ size: CGFloat, reapply: Bool) {
+        guard size != fontSize else { return }
+        let anchor = (reapply && source != nil) ? topVisibleOffset : 0
+        fontSize = size
+        font = .monospacedSystemFont(ofSize: size, weight: .regular)
+        charW = ("0" as NSString).size(withAttributes: [.font: font]).width
+        rowHeight = size + 4
+        guard reapply, let source else { return }
+        let rows = (source.length + 15) / 16
+        setFrameSize(NSSize(width: max(intrinsicContentWidth,
+                                       enclosingScrollView?.contentSize.width ?? 800),
+                            height: max(rowHeight, CGFloat(rows) * rowHeight)))
+        scrollToOffset(anchor)
+        needsDisplay = true
     }
 
     func pageDown() { scrollPageDown(nil) }

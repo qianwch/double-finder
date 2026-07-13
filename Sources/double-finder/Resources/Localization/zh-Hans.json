@@ -411,6 +411,7 @@
   "Volume size:": "分卷大小：",
   "Wildcard pattern, e.g. *.txt or report?.pdf": "通配符模式，例如 *.txt 或 report?.pdf",
   "Wrap lines": "自动换行",
+  "Zoom In / Out / Reset": "放大 / 缩小 / 复位",
   "cannot be recovered — this does not use the Trash.": "将无法恢复——此操作不经过废纸篓。",
   "files/s": "文件/秒",
   "filter: “%@” (%d/%d)": "过滤：“%@” (%d/%d)",

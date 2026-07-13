@@ -78,6 +78,13 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// Max markdown size we read fully into memory to render (design §4.1).
     private let mdRenderMaxBytes: UInt64 = 2 << 20
 
+    // Zoom (⌘= / ⌘- / ⌘0). Deliberately NOT reset in windowWillClose — the
+    // singleton keeps the user's chosen size for the next viewer session.
+    // Text & hex share one monospaced font size; rendered markdown zooms the
+    // whole page; QL preview has no zoom.
+    private var listerFontSize: CGFloat = 12
+    private var webZoom: CGFloat = 1
+
     // Search state (one ListerSearch instance per file+pattern+encoding+case key)
     private var search: ListerSearch?
     private var searchTask: Task<Void, Never>?
@@ -231,6 +238,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             if textContent == nil {
                 let tv = ListerTextView(frame: container.bounds)
                 tv.autoresizingMask = [.width, .height]
+                tv.setFontSize(listerFontSize, reapply: false)
                 wireTextCallbacks(tv)
                 container.addSubview(tv)
                 textContent = tv
@@ -238,6 +246,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         case .hex:
             if hexView == nil {
                 let hv = ListerHexView()
+                hv.setFontSize(listerFontSize, reapply: false)
                 wireHexCallbacks(hv)
                 let sc = NSScrollView(frame: container.bounds)
                 sc.autoresizingMask = [.width, .height]
@@ -257,6 +266,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 if mdWebView == nil {
                     let wv = ListerWebView(frame: container.bounds)
                     wv.autoresizingMask = [.width, .height]
+                    wv.setZoom(webZoom)
                     wv.onGiveUp = { [weak self] in
                         guard let self else { return }
                         self.mdRenderFellBack = true
@@ -336,6 +346,28 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         textContent?.wrapsLines = (sender.state == .on)
     }
 
+    /// ⌘= / ⌘- / ⌘0 → step +1 / -1 / reset. Text & hex share one font size
+    /// (8–32pt, reset 12); only the ACTIVE view restyles in place — the hidden
+    /// sibling just records the size, its content is reloaded on every mode
+    /// switch anyway. Markdown preview zooms the page (50–300%, reset 100%);
+    /// QL preview has nothing to zoom.
+    private func adjustZoom(_ step: Int) {
+        switch currentMode {
+        case .text, .hex:
+            let size = step == 0 ? 12 : min(32, max(8, listerFontSize + CGFloat(step)))
+            guard size != listerFontSize else { return }
+            listerFontSize = size
+            textContent?.setFontSize(size, reapply: currentMode == .text)
+            hexView?.setFontSize(size, reapply: currentMode == .hex)
+        case .preview:
+            guard shouldShowWeb() else { NSSound.beep(); return }
+            let zoom = step == 0 ? 1 : min(3, max(0.5, webZoom + CGFloat(step) * 0.1))
+            guard zoom != webZoom else { return }
+            webZoom = zoom
+            mdWebView?.setZoom(zoom)
+        }
+    }
+
     // MARK: Key monitor
 
     /// Window-scoped key monitor: only acts on our window, BEFORE the responder
@@ -359,8 +391,13 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 case 123, 126: self.navigate(.prev); return nil // ⌘← / ⌘↑
                 case 124, 125: self.navigate(.next); return nil // ⌘→ / ⌘↓
                 default:
-                    if event.charactersIgnoringModifiers == "f" { self.toggleSearchBar(); return nil }
-                    return event
+                    switch event.charactersIgnoringModifiers {
+                    case "f": self.toggleSearchBar(); return nil
+                    case "=", "+": self.adjustZoom(+1); return nil   // ⌘= / ⌘⇧= zoom in
+                    case "-": self.adjustZoom(-1); return nil        // ⌘- zoom out
+                    case "0": self.adjustZoom(0); return nil         // ⌘0 reset
+                    default: return event
+                    }
                 }
             }
             let bare = event.modifierFlags.intersection([.option, .control, .shift]).isEmpty

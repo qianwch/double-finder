@@ -411,6 +411,7 @@
   "Volume size:": "분할 크기:",
   "Wildcard pattern, e.g. *.txt or report?.pdf": "와일드카드 패턴, 예: *.txt 또는 report?.pdf",
   "Wrap lines": "줄 바꿈",
+  "Zoom In / Out / Reset": "확대 / 축소 / 재설정",
   "cannot be recovered — this does not use the Trash.": "복구할 수 없습니다 — 휴지통을 사용하지 않습니다.",
   "files/s": "파일/초",
   "filter: “%@” (%d/%d)": "필터: “%@” (%d/%d)",

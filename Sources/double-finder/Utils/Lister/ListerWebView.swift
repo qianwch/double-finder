@@ -42,6 +42,10 @@ final class ListerWebView: NSView, WKNavigationDelegate {
         onGiveUp = nil
     }
 
+    /// ⌘=/⌘-/⌘0 zoom of the rendered page (persists across loadHTML calls —
+    /// pageZoom is a WKWebView property, not per-document).
+    func setZoom(_ zoom: CGFloat) { webView.pageZoom = zoom }
+
     func focus() { window?.makeFirstResponder(webView) }
 
     // MARK: WKNavigationDelegate

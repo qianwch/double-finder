@@ -411,6 +411,7 @@
   "Volume size:": "Taille des volumes :",
   "Wildcard pattern, e.g. *.txt or report?.pdf": "Motif générique, par ex. *.txt ou report?.pdf",
   "Wrap lines": "Retour à la ligne",
+  "Zoom In / Out / Reset": "Zoom avant / arrière / réinitialiser",
   "cannot be recovered — this does not use the Trash.": "ne peut pas être récupéré — la corbeille n’est pas utilisée.",
   "files/s": "fichiers/s",
   "filter: “%@” (%d/%d)": "filtre : « %@ » (%d/%d)",

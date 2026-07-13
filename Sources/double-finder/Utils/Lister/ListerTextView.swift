@@ -32,10 +32,11 @@ final class ListerTextView: NSView {
     /// not `loadedBytes` — see appendChunk.
     private var anchors: [(byte: UInt64, char: Int)] = []
     private var highlightSpec: LanguageSpec?
-    private let attrs: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-        .foregroundColor: NSColor.textColor,
-    ]
+    private(set) var fontSize: CGFloat = 12
+    private var attrs: [NSAttributedString.Key: Any] {
+        [.font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular),
+         .foregroundColor: NSColor.textColor]
+    }
 
     var wrapsLines = true { didSet { applyWrap() } }
 
@@ -246,6 +247,21 @@ final class ListerTextView: NSView {
         textView.setSelectedRange(range)
         textView.scrollRangeToVisible(range)
         textView.showFindIndicator(for: range)
+    }
+
+    /// ⌘=/⌘-/⌘0 zoom. With `reapply` the loaded text is restyled in place
+    /// (foregroundColor highlights survive) keeping the top byte anchored;
+    /// without it only the size is recorded — the next load() picks it up
+    /// (the controller reloads text content on every mode switch).
+    func setFontSize(_ size: CGFloat, reapply: Bool) {
+        guard size != fontSize else { return }
+        fontSize = size
+        guard reapply, let storage = textView.textStorage, storage.length > 0 else { return }
+        let anchor = topVisibleByteOffset()
+        storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: size, weight: .regular),
+                             range: NSRange(location: 0, length: storage.length))
+        scrollToByte(anchor)
+        onStatusChange?()
     }
 
     func pageDown() { textView.scrollPageDown(nil) }

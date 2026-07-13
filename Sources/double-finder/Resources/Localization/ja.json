@@ -411,6 +411,7 @@
   "Volume size:": "分割サイズ：",
   "Wildcard pattern, e.g. *.txt or report?.pdf": "ワイルドカードパターン（例: *.txt や report?.pdf）",
   "Wrap lines": "行を折り返す",
+  "Zoom In / Out / Reset": "拡大 / 縮小 / リセット",
   "cannot be recovered — this does not use the Trash.": "は復元できません — ゴミ箱は使用されません。",
   "files/s": "ファイル/秒",
   "filter: “%@” (%d/%d)": "フィルタ：「%@」(%d/%d)",
