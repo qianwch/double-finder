@@ -119,6 +119,25 @@ enum LibArchive {
         return enc == .utf8 ? nil : enc
     }
 
+    /// True when any entry name is stored in a legacy (non-UTF-8) codepage —
+    /// e.g. Windows-made zips without the UTF-8 flag (GBK / Shift-JIS / …).
+    /// Header-only scan, cheap. Callers use this to keep such archives on
+    /// libarchive (which decodes via charset detection) instead of 7zz, whose
+    /// macOS build has no Windows codepage tables and mangles these names.
+    static func hasLegacyEntryNames(archivePath: String, password: String?) -> Bool {
+        guard let a = try? openReader(archivePath, password: password) else { return false }
+        defer { archive_read_free(a) }
+        var entry: OpaquePointer?
+        while true {
+            let r = archive_read_next_header(a, &entry)
+            if r == EOFR || r < WARN { break }
+            if let e = entry, let bytes = rawName(e).bytes,
+               String(data: bytes, encoding: .utf8) == nil { return true }
+            archive_read_data_skip(a)
+        }
+        return false
+    }
+
     /// Pre-scans an archive's headers (no data decompression) to detect the
     /// charset of its legacy entry names, so a streaming extract/rewrite can
     /// decode names consistently. Cheap: reads only the header/central-directory.

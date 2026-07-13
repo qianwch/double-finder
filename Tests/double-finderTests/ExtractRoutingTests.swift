@@ -29,6 +29,43 @@ final class ExtractRoutingTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: out + "/t.tar"), "tarball must not extract to a .tar")
     }
 
+    /// Windows-made zips without the UTF-8 flag store names in a legacy codepage
+    /// (GBK here). The macOS 7zz has no Windows codepage tables and mangles such
+    /// names, so extractAll must route these zips to libarchive (charset-detected).
+    func testLegacyGBKZipExtractsCorrectNames() throws {
+        let dir = NSTemporaryDirectory() + "exr-gbk-\(ProcessInfo.processInfo.globallyUniqueString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        // Hand-built stored zip: one entry "华为文档.txt" (GBK bytes, UTF-8 flag off).
+        let name: [UInt8] = [0xbb, 0xaa, 0xce, 0xaa, 0xce, 0xc4, 0xb5, 0xb5, 0x2e, 0x74, 0x78, 0x74]
+        let body = Array("hello".utf8)                 // crc32("hello") = 0x3610A686
+        var zip = Data()
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { zip.append(contentsOf: $0) } }
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { zip.append(contentsOf: $0) } }
+        // local file header
+        u32(0x04034b50); u16(20); u16(0); u16(0); u16(0); u16(0)
+        u32(0x3610A686); u32(UInt32(body.count)); u32(UInt32(body.count))
+        u16(UInt16(name.count)); u16(0); zip.append(contentsOf: name); zip.append(contentsOf: body)
+        let cdOffset = UInt32(zip.count)
+        // central directory
+        u32(0x02014b50); u16(20); u16(20); u16(0); u16(0); u16(0); u16(0)
+        u32(0x3610A686); u32(UInt32(body.count)); u32(UInt32(body.count))
+        u16(UInt16(name.count)); u16(0); u16(0); u16(0); u16(0); u32(0); u32(0)
+        zip.append(contentsOf: name)
+        let cdSize = UInt32(zip.count) - cdOffset
+        // end of central directory
+        u32(0x06054b50); u16(0); u16(0); u16(1); u16(1); u32(cdSize); u32(cdOffset); u16(0)
+        let zipPath = dir + "/gbk.zip"
+        try zip.write(to: URL(fileURLWithPath: zipPath))
+
+        XCTAssertTrue(LibArchive.hasLegacyEntryNames(archivePath: zipPath, password: nil))
+        let out = dir + "/out"
+        try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+        try ZipFS.extractAll(archivePath: zipPath, to: out)
+        XCTAssertEqual(try String(contentsOfFile: out + "/华为文档.txt", encoding: .utf8), "hello",
+                       "GBK-named entry must land on disk with its correct UTF-8 name")
+    }
+
     func testSevenZAndZipExtract() throws {
         guard let zz = sevenZip() else { throw XCTSkip("no 7z tool") }
         let dir = NSTemporaryDirectory() + "exr-7z-\(ProcessInfo.processInfo.globallyUniqueString)"

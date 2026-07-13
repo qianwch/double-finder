@@ -411,6 +411,22 @@ class ZipFS: VirtualFS {
         }
         let k = kind(of: archivePath)
         if prefersSevenZip(k), let tool = SevenZip.resolve() {
+            // Windows zips without the UTF-8 flag store names in a legacy codepage
+            // (GBK / Shift-JIS / …). The macOS 7zz has no Windows codepage tables and
+            // mangles those names on disk; libarchive decodes them via per-archive
+            // charset detection — so keep such zips on libarchive. (7z/rar store
+            // Unicode names, so hasLegacyEntryNames is false there.)
+            if k == .zip, LibArchive.hasLegacyEntryNames(archivePath: archivePath, password: password) {
+                do {
+                    try LibArchive.extractAll(archivePath: archivePath, to: dest, password: password)
+                    return
+                } catch is ArchiveEncryptedError {
+                    throw ArchiveEncryptedError(archivePath: archivePath)   // → password prompt
+                } catch {
+                    // libarchive couldn't cope (exotic codec) — fall through to 7zz:
+                    // mangled names still beat a failed extraction.
+                }
+            }
             do {
                 try sevenZipExtract(tool: tool, archivePath: archivePath, entry: nil, to: dest, password: password)
             } catch is ArchiveEncryptedError {
