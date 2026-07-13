@@ -57,16 +57,93 @@ enum S3ConnectionStore {
     }
 }
 
-/// Keychain storage for S3 secret keys (internet-password; server=endpoint host,
-/// account=access key).
+/// Keychain storage for S3 secret keys. All secrets live in ONE generic-password
+/// item (service/label "double-finder") whose payload is a JSON dictionary keyed
+/// by "<endpointHost>|<accessKey>". Legacy per-connection internet-password items
+/// are migrated into the blob lazily on load and then deleted.
 enum S3SecretStore {
-    static func query(endpointHost: String, accessKey: String) -> [String: Any] {
+    static let service = "double-finder"
+    static let account = "S3Secrets"
+
+    // MARK: pure logic (unit-tested)
+
+    static func blobKey(endpointHost: String, accessKey: String) -> String {
+        "\(endpointHost)|\(accessKey)"
+    }
+    static func decodeBlob(_ data: Data) -> [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }
+    static func encodeBlob(_ dict: [String: String]) -> Data {
+        (try? JSONEncoder().encode(dict)) ?? Data("{}".utf8)
+    }
+
+    // MARK: unified item
+
+    private static var itemQuery: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
+    }
+
+    private static func loadAll() -> [String: String] {
+        var q = itemQuery
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return [:] }
+        return decodeBlob(data)
+    }
+
+    private static func saveAll(_ dict: [String: String]) {
+        let data = encodeBlob(dict)
+        let status = SecItemUpdate(itemQuery as CFDictionary,
+                                   [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var q = itemQuery
+            q[kSecAttrLabel as String] = service   // display name in Keychain Access
+            q[kSecValueData as String] = data
+            SecItemAdd(q as CFDictionary, nil)
+        }
+    }
+
+    // MARK: API (unchanged signatures)
+
+    static func load(endpointHost: String, accessKey: String) -> String? {
+        let key = blobKey(endpointHost: endpointHost, accessKey: accessKey)
+        var all = loadAll()
+        if let s = all[key] { return s }
+        // Lazy migration from the legacy per-connection internet-password item.
+        guard let s = legacyLoad(endpointHost: endpointHost, accessKey: accessKey) else { return nil }
+        all[key] = s
+        saveAll(all)
+        legacyDelete(endpointHost: endpointHost, accessKey: accessKey)
+        return s
+    }
+
+    static func save(endpointHost: String, accessKey: String, secret: String) {
+        var all = loadAll()
+        all[blobKey(endpointHost: endpointHost, accessKey: accessKey)] = secret
+        saveAll(all)
+        legacyDelete(endpointHost: endpointHost, accessKey: accessKey)
+    }
+
+    static func delete(endpointHost: String, accessKey: String) {
+        var all = loadAll()
+        all.removeValue(forKey: blobKey(endpointHost: endpointHost, accessKey: accessKey))
+        saveAll(all)
+        legacyDelete(endpointHost: endpointHost, accessKey: accessKey)
+    }
+
+    // MARK: legacy internet-password items (pre-consolidation)
+
+    static func legacyQuery(endpointHost: String, accessKey: String) -> [String: Any] {
         [kSecClass as String: kSecClassInternetPassword,
          kSecAttrServer as String: endpointHost,
          kSecAttrAccount as String: accessKey]
     }
-    static func load(endpointHost: String, accessKey: String) -> String? {
-        var q = query(endpointHost: endpointHost, accessKey: accessKey)
+    private static func legacyLoad(endpointHost: String, accessKey: String) -> String? {
+        var q = legacyQuery(endpointHost: endpointHost, accessKey: accessKey)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -74,13 +151,7 @@ enum S3SecretStore {
               let data = item as? Data, let s = String(data: data, encoding: .utf8) else { return nil }
         return s
     }
-    static func save(endpointHost: String, accessKey: String, secret: String) {
-        delete(endpointHost: endpointHost, accessKey: accessKey)
-        var q = query(endpointHost: endpointHost, accessKey: accessKey)
-        q[kSecValueData as String] = Data(secret.utf8)
-        SecItemAdd(q as CFDictionary, nil)
-    }
-    static func delete(endpointHost: String, accessKey: String) {
-        SecItemDelete(query(endpointHost: endpointHost, accessKey: accessKey) as CFDictionary)
+    private static func legacyDelete(endpointHost: String, accessKey: String) {
+        SecItemDelete(legacyQuery(endpointHost: endpointHost, accessKey: accessKey) as CFDictionary)
     }
 }
