@@ -1098,8 +1098,17 @@ class PathBar: NSView {
     }
 
     func setPath(_ path: String) {
+        let changed = path != currentPath
         currentPath = path
-        guard !isEditing else { return }
+        if isEditing {
+            // The directory changed under an in-progress edit (list navigation,
+            // drive switch, …) — the typed path is stale, so drop the edit and
+            // show the new location (TC behavior).
+            guard changed else { return }
+            editField.abortEditing()
+            endEditing(navigate: false)
+            return
+        }
         rebuildSegments(path)
     }
 
