@@ -458,6 +458,9 @@ class PanelState: ObservableObject {
                     }
                     self.rebuildItems(selectedNames: prevSelectedNames, cursorName: cursorName, sizes: prevSizes)
                     self.watcher.watch(path)
+                    // A load also means "something may have changed on disk"
+                    // (navigation, F5 refresh, post-copy/delete refresh, watcher).
+                    self.refreshDiskSpace()
                 }
             } catch let enc as ArchiveEncryptedError {
                 await MainActor.run {
@@ -1007,36 +1010,75 @@ class PanelState: ObservableObject {
         return tr("%d items", total) + "\(filterNote)\(searchNote)\(diskNote)"
     }
 
-    /// Cache for diskNote: (path, note). Recomputed only when currentPath changes.
-    private var diskNoteCache: (path: String, note: String)?
-
     /// Free / total space of the volume backing the current path. Empty for
-    /// remote (SFTP) or in-archive listings, where it doesn't apply (TC shows
+    /// remote (SFTP/S3) or in-archive listings, where it doesn't apply (TC shows
     /// the same kind of drive-space note above each panel).
-    private var diskNote: String {
-        // Return cached value when path hasn't changed -- avoids a syscall on
-        // every cursor move.
-        if let cached = diskNoteCache, cached.path == currentPath {
-            return cached.note
-        }
-        let note: String
-        if sftp != nil || PanelState.archiveRoot(in: currentPath) != nil {
-            note = ""
-        } else {
-            let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
-            if let vals = try? URL(fileURLWithPath: currentPath).resourceValues(forKeys: keys),
-               let total = vals.volumeTotalCapacity, total > 0 {
-                let free = vals.volumeAvailableCapacityForImportantUsage ?? 0
-                let fmt = ByteCountFormatter()
-                fmt.allowedUnits = [.useGB, .useTB]
-                fmt.countStyle = .file
-                note = "  ·  " + tr("%@ free of %@", fmt.string(fromByteCount: free), fmt.string(fromByteCount: Int64(total)))
-            } else {
-                note = ""
+    ///
+    /// Stored, not computed: `statusText` is read on every cursor move and must
+    /// stay O(1), and the volume probe can block (network mounts), so it runs off
+    /// the main actor in `refreshDiskSpace()`.
+    private(set) var diskNote: String = ""
+
+    /// Called when `diskNote` actually changed, so the panel can refresh just the
+    /// status bar instead of going through a full `updateDisplay()`.
+    var onDiskSpaceChange: (() -> Void)?
+
+    /// Guards against piling up probes when one is slow (network volume).
+    private var diskSpaceRefreshing = false
+
+    /// Re-reads the free space of the volume backing the current path.
+    ///
+    /// Called after every directory load and on a slow timer from the panel view:
+    /// free space changes as files are copied or deleted -- by this panel, by the
+    /// other one, or by another app entirely -- and none of that necessarily
+    /// changes `currentPath`, so a path-keyed cache would stay stale forever.
+    func refreshDiskSpace() {
+        let path = currentPath
+        guard !isRemote, PanelState.archiveRoot(in: path) == nil else {
+            if !diskNote.isEmpty {
+                diskNote = ""
+                onDiskSpaceChange?()
             }
+            return
         }
-        diskNoteCache = (path: currentPath, note: note)
-        return note
+        guard !diskSpaceRefreshing else { return }
+        diskSpaceRefreshing = true
+        Task.detached(priority: .utility) { [weak self] in
+            let capacity = Self.volumeCapacity(atPath: path)
+            await self?.applyDiskSpace(capacity, readAt: path)
+        }
+    }
+
+    /// Applies a reading taken off the main actor (internal so tests can feed one in).
+    func applyDiskSpace(_ capacity: (free: Int64, total: Int64)?, readAt path: String) {
+        diskSpaceRefreshing = false
+        // Drop a reading that lost its race with a navigation.
+        guard path == currentPath else { return }
+        let note = Self.diskNote(for: capacity)
+        guard note != diskNote else { return }
+        diskNote = note
+        onDiskSpaceChange?()
+    }
+
+    /// Free / total capacity of the volume backing `path`, or nil when it can't be
+    /// read. `nonisolated` so the probe -- which hits the volume and can block for
+    /// seconds on a network mount -- never runs on the main actor.
+    private nonisolated static func volumeCapacity(atPath path: String) -> (free: Int64, total: Int64)? {
+        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
+        guard let vals = try? URL(fileURLWithPath: path).resourceValues(forKeys: keys),
+              let total = vals.volumeTotalCapacity, total > 0 else { return nil }
+        return (free: Int64(vals.volumeAvailableCapacityForImportantUsage ?? 0), total: Int64(total))
+    }
+
+    /// Formats a capacity reading as the status-bar suffix ("  ·  x free of y").
+    static func diskNote(for capacity: (free: Int64, total: Int64)?) -> String {
+        guard let capacity = capacity else { return "" }
+        let fmt = ByteCountFormatter()
+        fmt.allowedUnits = [.useGB, .useTB]
+        fmt.countStyle = .file
+        return "  ·  " + tr("%@ free of %@",
+                            fmt.string(fromByteCount: capacity.free),
+                            fmt.string(fromByteCount: capacity.total))
     }
 
     var currentItem: FileItem? {

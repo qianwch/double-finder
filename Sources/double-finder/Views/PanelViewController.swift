@@ -47,6 +47,23 @@ class PanelViewController: NSViewController {
         fileTableView.isActivePanel = isActive
         observeVolumeChanges()
         observeRemoteSessions()
+        startDiskSpaceTimer()
+    }
+
+    /// Free space keeps changing while the panel sits in the same directory --
+    /// a copy in the other panel, a download, another app writing -- and none of
+    /// that triggers a reload here, so the status-bar figure is re-read on a slow
+    /// timer as well. The probe itself runs off the main actor (PanelState).
+    private var diskSpaceTimer: Timer?
+    private static let diskSpaceInterval: TimeInterval = 5
+
+    private func startDiskSpaceTimer() {
+        diskSpaceTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.diskSpaceInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.panelState.refreshDiskSpace() }
+        }
+        timer.tolerance = 1   // never worth waking the CPU for on its own
+        diskSpaceTimer = timer
     }
 
     /// Rebuilds the drive bar whenever the global remote-session list changes
@@ -98,10 +115,18 @@ class PanelViewController: NSViewController {
         }
     }
 
+    /// Status bar is the only thing a free-space update touches, so it has its own
+    /// setter — the disk-space timer must not drag the whole panel through
+    /// `updateDisplay()` every few seconds.
+    private func updateStatusBar() {
+        statusBar.stringValue = panelState.statusText
+    }
+
     deinit {
         let nc = NSWorkspace.shared.notificationCenter
         volumeObservers.forEach { nc.removeObserver($0) }
         NotificationCenter.default.removeObserver(self)
+        diskSpaceTimer?.invalidate()
     }
 
     private func setupUI() {
@@ -418,7 +443,10 @@ class PanelViewController: NSViewController {
             self?.handleArchivePassword(archivePath)
         }
         panelState.onError = { [weak self] error in self?.presentLoadError(error) }
+        // A new free-space reading only affects the status bar.
+        panelState.onDiskSpaceChange = { [weak self] in self?.updateStatusBar() }
         updateDisplay()
+        panelState.refreshDiskSpace()
     }
 
     /// Surfaces a load error (e.g. a missing archive tool) as an alert, and backs
@@ -467,10 +495,12 @@ class PanelViewController: NSViewController {
         panelState.onChange = { [weak self] in self?.updateDisplay() }
         panelState.onNeedsPassword = { [weak self] archivePath in self?.handleArchivePassword(archivePath) }
         panelState.onError = { [weak self] error in self?.presentLoadError(error) }
+        panelState.onDiskSpaceChange = { [weak self] in self?.updateStatusBar() }
         lastDisplayedPath = nil
         lastFedItemsVersion = -1
         lastPathBarPath = nil
         updateDisplay()
+        panelState.refreshDiskSpace()
     }
 
     func updateDisplay() {
@@ -512,7 +542,7 @@ class PanelViewController: NSViewController {
         fileTableView.selectedItems = panelState.selectedItems
         fileTableView.cursorIndex = panelState.cursorIndex
         // statusText is now O(1); always set it.
-        statusBar.stringValue = panelState.statusText
+        updateStatusBar()
         // pathBar.setPath rebuilds the breadcrumb — skip when path hasn't changed.
         let currentPathRaw = panelState.currentPath
         if currentPathRaw != lastPathBarPath {
