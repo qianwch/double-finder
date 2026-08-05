@@ -15,25 +15,39 @@ final class FileListBodyView: NSView {
     var items: [FileItem] = [] {
         didSet {
             reloadLayout()
+            // O(1) row lookups for selection invalidation and drag positioning.
+            // NEVER scan `items` linearly per event — with a 100k-file directory
+            // that turned every icon callback / selection change into O(n²).
+            var index: [UUID: Int] = Dictionary(minimumCapacity: items.count)
+            for (i, item) in items.enumerated() { index[item.id] = i }
+            rowIndexByID = index
             // Keep cached icons for files still present (a same-directory refresh
             // on focus-regain / DirectoryWatcher must NOT wipe every icon and
             // flash placeholders); drop icons for files no longer listed so the
             // cache stays bounded when navigating to a different directory.
             iconProvider.retainCached(paths: Set(items.map(\.path)))
-            if !items.isEmpty {
-                let side = iconSizePoints
-                iconProvider.prefetch(items, side: side, thumbnails: false)
-            }
+            // No bulk prefetch here: draw() lazily resolves and prefetches the
+            // VISIBLE rows only. Prefetching the whole listing queued one icon
+            // task per file (100k tasks for a 100k directory) and burned the
+            // main thread for minutes on the completion callbacks.
             needsDisplay = true
         }
     }
 
+    /// Row number of each item id (rebuilt whenever `items` is assigned).
+    private var rowIndexByID: [UUID: Int] = [:]
+
     var selectedItems: Set<UUID> = [] {
         didSet {
-            // Invalidate only rows whose selection membership flipped.
+            // Invalidate only rows whose selection membership flipped, via the
+            // id→row index (O(changed), not an O(n) scan of the whole listing).
             let changed = oldValue.symmetricDifference(selectedItems)
-            for (i, item) in items.enumerated() where changed.contains(item.id) {
-                invalidateRow(i)
+            if changed.count > 256 {
+                needsDisplay = true   // bulk flip (e.g. ⌘A): one full repaint is cheaper
+                return
+            }
+            for id in changed {
+                if let row = rowIndexByID[id] { invalidateRow(row) }
             }
         }
     }
@@ -87,8 +101,12 @@ final class FileListBodyView: NSView {
     override init(frame frameRect: NSRect) {
         geometry = FileRowGeometry(mode: .full, iconSize: CGFloat(AppSettings.iconSize))
         super.init(frame: frameRect)
-        iconProvider.onReady = { [weak self] path in
-            self?.invalidateRows(forPath: path)
+        iconProvider.onReady = { [weak self] _ in
+            // Repaint the visible area — O(1) per callback. A ready icon usually
+            // serves several visible rows (extension-shared keys), and looking up
+            // rows by path was an O(n) scan that went quadratic on 100k files.
+            guard let self = self else { return }
+            self.setNeedsDisplay(self.visibleRect)
         }
         // Accept file drops from Finder / other apps / the other panel.
         registerForDraggedTypes([.fileURL])
@@ -127,12 +145,6 @@ final class FileListBodyView: NSView {
     private func invalidateRow(_ row: Int) {
         guard row >= 0, row < items.count else { return }
         setNeedsDisplay(geometry.rowRect(row, width: bounds.width))
-    }
-
-    private func invalidateRows(forPath path: String) {
-        for (i, item) in items.enumerated() where item.path == path {
-            invalidateRow(i)
-        }
     }
 
     // MARK: - Drawing
@@ -815,7 +827,7 @@ extension FileListBodyView: NSDraggingSource {
             let icon = NSWorkspace.shared.icon(forFile: fileItem.path)
             icon.size = NSSize(width: 28, height: 28)
             // Position the drag image at the item's row rect origin.
-            if let rowIdx = items.firstIndex(where: { $0.id == fileItem.id }) {
+            if let rowIdx = rowIndexByID[fileItem.id] {
                 var frame = geometry.rowRect(rowIdx, width: bounds.width)
                 frame.size = NSSize(width: 28, height: 28)
                 di.setDraggingFrame(frame, contents: icon)

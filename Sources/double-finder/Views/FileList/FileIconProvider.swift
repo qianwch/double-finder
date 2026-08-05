@@ -24,7 +24,7 @@ final class FileIconProvider {
     /// - Never blocks on disk, LaunchServices, or QL.
     /// - Caller must handle `..` before calling here.
     func icon(for item: FileItem, side: CGFloat, wantThumbnail: Bool) -> NSImage {
-        let key = cacheKey(path: item.path, side: side)
+        let key = cacheKey(item: item, side: side, thumbnail: wantThumbnail && !item.isDirectory)
         if let cached = cache[key] { return cached }
 
         // Cache miss: return the generic placeholder immediately…
@@ -42,7 +42,7 @@ final class FileIconProvider {
     /// Items already cached or pending are silently skipped.
     func prefetch(_ items: [FileItem], side: CGFloat, thumbnails: Bool) {
         for item in items {
-            let key = cacheKey(path: item.path, side: side)
+            let key = cacheKey(item: item, side: side, thumbnail: thumbnails && !item.isDirectory)
             guard cache[key] == nil, !pending.contains(key) else { continue }
             pending.insert(key)
             enqueue(item: item, side: side, wantThumbnail: thumbnails, key: key)
@@ -53,10 +53,12 @@ final class FileIconProvider {
     /// Operations that are already executing are left to finish.
     func cancelOffscreen(keepPaths: Set<String>) {
         // Cancel queued (not-yet-started) operations whose path is not wanted.
+        // Only per-path (thumbnail) work is cancelled: an extension-keyed icon
+        // serves many rows, so its representative path being offscreen is fine.
         let ops = queue.operations.compactMap { $0 as? IconOperation }
-        for op in ops where !keepPaths.contains(op.path) {
+        for op in ops where !op.key.hasPrefix("ext:") && !keepPaths.contains(op.path) {
             op.cancel()
-            pending.remove(cacheKey(path: op.path, side: op.side))
+            pending.remove(op.key)
         }
     }
 
@@ -84,7 +86,10 @@ final class FileIconProvider {
     func retainCached(paths keepPaths: Set<String>) {
         guard !cache.isEmpty else { return }
         cache = cache.filter { key, _ in
-            // Key is "path|<side>"; the path is everything before the last "|".
+            // Extension-shared icon bitmaps ("ext:…") are tiny, directory-agnostic
+            // and never stale — always kept.
+            if key.hasPrefix("ext:") { return true }
+            // Thumbnail key is "path|<side>"; the path is everything before the last "|".
             guard let sep = key.lastIndex(of: "|") else { return false }
             return keepPaths.contains(String(key[key.startIndex..<sep]))
         }
@@ -111,8 +116,15 @@ final class FileIconProvider {
 
     // MARK: - Helpers
 
-    private func cacheKey(path: String, side: CGFloat) -> String {
-        "\(path)|\(Int(side))"
+    /// Small file icons are keyed by lowercase extension — every ".txt" shares one
+    /// bitmap. A 100k-file directory would otherwise run 100k NSWorkspace
+    /// resolutions and cache 100k bitmaps (hundreds of MB and minutes of callback
+    /// churn); by extension it's a handful of each. Directories share one folder
+    /// icon. QuickLook thumbnails stay per-path ("path|side") — they show content.
+    private func cacheKey(item: FileItem, side: CGFloat, thumbnail: Bool) -> String {
+        if thumbnail { return "\(item.path)|\(Int(side))" }
+        if item.isDirectory { return "ext:/dir|\(Int(side))" }
+        return "ext:\((item.name as NSString).pathExtension.lowercased())|\(Int(side))"
     }
 
     /// Returns (and memoises) a generic placeholder at the requested size.
@@ -126,7 +138,7 @@ final class FileIconProvider {
 
     /// Schedules a background `IconOperation` for `item`.
     private func enqueue(item: FileItem, side: CGFloat, wantThumbnail: Bool, key: String) {
-        let op = IconOperation(item: item, side: side, wantThumbnail: wantThumbnail)
+        let op = IconOperation(item: item, side: side, wantThumbnail: wantThumbnail, key: key)
         op.onComplete = { [weak self] path, image in
             // Already on main thread (IconOperation hops back).
             guard let self else { return }
@@ -173,17 +185,20 @@ private final class IconOperation: Operation, @unchecked Sendable {
 
     let path: String
     let side: CGFloat
+    /// The cache key this operation resolves ("ext:…" = extension-shared icon).
+    let key: String
     private let item: FileItem
     private let wantThumbnail: Bool
 
     /// Called on the **main thread** with (path, resized image).
     var onComplete: ((String, NSImage) -> Void)?
 
-    init(item: FileItem, side: CGFloat, wantThumbnail: Bool) {
+    init(item: FileItem, side: CGFloat, wantThumbnail: Bool, key: String) {
         self.item = item
         self.path = item.path
         self.side = side
         self.wantThumbnail = wantThumbnail
+        self.key = key
     }
 
     override func main() {
@@ -202,12 +217,14 @@ private final class IconOperation: Operation, @unchecked Sendable {
         guard !isCancelled else { return }
         let raw: NSImage
         let fm = FileManager.default
-        if fm.fileExists(atPath: path) {
+        if item.isDirectory {
+            // Directories share one extension-keyed bitmap — use the generic
+            // folder icon rather than baking one directory's custom icon into it.
+            raw = NSWorkspace.shared.icon(for: .folder)
+        } else if fm.fileExists(atPath: path) {
             // NSWorkspace.icon(forFile:) is documented to be safe off main in
             // macOS 10.6+.
             raw = NSWorkspace.shared.icon(forFile: path)
-        } else if item.isDirectory {
-            raw = NSWorkspace.shared.icon(for: .folder)
         } else {
             raw = NSWorkspace.shared.icon(for: .data)
         }

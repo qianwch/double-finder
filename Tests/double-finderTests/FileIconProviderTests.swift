@@ -116,7 +116,37 @@ final class FileIconProviderTests: XCTestCase {
         await fulfillment(of: [expectation2], timeout: 5.0)
     }
 
-    // MARK: - Test 4: cancelOffscreen drops pending requests
+    // MARK: - Test 4: same-extension files share one cached icon bitmap
+
+    func testSameExtensionSharesCachedIcon() async throws {
+        let provider = await MainActor.run { FileIconProvider() }
+        let itemA = makeItem()
+        let side: CGFloat = 16
+
+        // Resolve A's icon.
+        let ready = XCTestExpectation(description: "onReady for A")
+        await MainActor.run {
+            provider.onReady = { _ in ready.fulfill() }
+            _ = provider.icon(for: itemA, side: side, wantThumbnail: false)
+        }
+        await fulfillment(of: [ready], timeout: 5.0)
+
+        // A different .txt file that was NEVER requested must hit the same
+        // extension-keyed cache entry (identical NSImage instance) — this is
+        // what keeps a 100k-file directory at a handful of icon resolutions
+        // instead of one per file.
+        let itemB = FileItem(
+            id: UUID(), name: "other.txt", path: "/nonexistent/other.txt",
+            isDirectory: false, isArchive: false, size: 0, modified: Date(),
+            isHidden: false, isSymlink: false, permissions: "")
+        let (a, b) = await MainActor.run {
+            (provider.icon(for: itemA, side: side, wantThumbnail: false),
+             provider.icon(for: itemB, side: side, wantThumbnail: false))
+        }
+        XCTAssertTrue(a === b, "same-extension files must share one cached bitmap")
+    }
+
+    // MARK: - Test 5: cancelOffscreen drops pending requests
 
     func testCancelOffscreenDropsPendingRequests() async throws {
         let provider = await MainActor.run { FileIconProvider() }
