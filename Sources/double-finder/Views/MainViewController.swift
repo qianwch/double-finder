@@ -2374,6 +2374,17 @@ extension MainViewController: PanelViewControllerDelegate {
         if vc === leftPanelVC { appState.leftPanel = state } else { appState.rightPanel = state }
     }
 
+    func panelViewControllerOtherPanelLocalPath(_ vc: PanelViewController) -> String? {
+        let other = (vc === leftPanelVC ? rightPanelVC : leftPanelVC).panelState
+        guard !other.isRemote, other.searchResults == nil else { return nil }
+        // Inside an archive the panel path is virtual — the folder holding the
+        // archive file is the real directory a drive switch can land in.
+        if let root = PanelState.archiveRoot(in: other.currentPath) {
+            return (root as NSString).deletingLastPathComponent
+        }
+        return other.currentPath
+    }
+
     func panelViewControllerDidChangePath(_ vc: PanelViewController) {
         // Command line follows the active panel's current folder.
         guard vc === activePanelVC else { return }

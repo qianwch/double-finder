@@ -79,6 +79,18 @@ enum Volumes {
             .max { $0.url.path.count < $1.url.path.count }
     }
 
+    /// Mount point of the volume containing `path` (longest match). Unlike
+    /// `containing(_:)` this skips the per-volume capacity probes, so it is cheap
+    /// enough for per-navigation bookkeeping (drive-switch memory).
+    static func mountPoint(of path: String) -> String? {
+        let urls = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: nil,
+            options: [.skipHiddenVolumes]) ?? []
+        return urls.map(\.path)
+            .filter { path == $0 || path.hasPrefix($0 == "/" ? "/" : $0 + "/") }
+            .max { $0.count < $1.count }
+    }
+
     /// Unmounts and ejects the volume at `url` **asynchronously** (the work — a
     /// network round-trip for SMB/AFP/NFS, or spinning down a disk — can take a
     /// while and must never block the main thread). `completion` runs on the main

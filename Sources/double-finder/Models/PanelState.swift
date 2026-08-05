@@ -33,6 +33,12 @@ class PanelState: ObservableObject {
     /// restores the cursor to where it was.
     var cursorMemory: [String: String] = [:]
 
+    /// Drive-switch memory: mount point → last visited local directory on that
+    /// volume, so switching drives returns to where the panel last was (TC
+    /// behavior) instead of always landing at the volume root. Session-only;
+    /// only plain local directories are recorded (see rememberVolumePath).
+    private(set) var volumeLastPath: [String: String] = [:]
+
     /// Set when the cursor moves by user intent (keyboard/click) so the view
     /// scrolls to keep it visible. Cleared each updateDisplay. Navigation and
     /// refresh leave it false so they can restore/keep scroll instead.
@@ -458,6 +464,7 @@ class PanelState: ObservableObject {
                     }
                     self.rebuildItems(selectedNames: prevSelectedNames, cursorName: cursorName, sizes: prevSizes)
                     self.watcher.watch(path)
+                    self.rememberVolumePath(path)
                     // A load also means "something may have changed on disk"
                     // (navigation, F5 refresh, post-copy/delete refresh, watcher).
                     self.refreshDiskSpace()
@@ -1025,6 +1032,16 @@ class PanelState: ObservableObject {
 
     /// Guards against piling up probes when one is slow (network volume).
     private var diskSpaceRefreshing = false
+
+    /// Records a successfully listed directory as its volume's last visited path
+    /// (drive-switch memory). Only plain local directories count — remote,
+    /// in-archive and search-results listings aren't valid drive-switch targets.
+    private func rememberVolumePath(_ path: String) {
+        guard !isRemote, searchResults == nil,
+              PanelState.archiveRoot(in: path) == nil,
+              let mount = Volumes.mountPoint(of: path) else { return }
+        volumeLastPath[mount] = path
+    }
 
     /// Re-reads the free space of the volume backing the current path.
     ///

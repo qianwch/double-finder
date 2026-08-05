@@ -830,7 +830,24 @@ class PanelViewController: NSViewController {
     @objc private func driveSelected(_ sender: NSButton) {
         guard let path = sender.identifier?.rawValue else { return }
         activatePanel()
-        panelState.navigateLocal(to: path)
+        panelState.navigateLocal(to: driveDestination(volumePath: path))
+    }
+
+    /// TC-style drive-switch target: the panel's last directory on that volume →
+    /// the other panel's directory when it's on the same volume → home (when the
+    /// volume holds it) → the volume root.
+    private func driveDestination(volumePath: String) -> String {
+        DriveJump.destination(
+            volumePath: volumePath,
+            lastPath: panelState.volumeLastPath[volumePath],
+            otherPanelPath: panelDelegate?.panelViewControllerOtherPanelLocalPath(self),
+            homePath: NSHomeDirectory(),
+            volumeOf: { Volumes.mountPoint(of: $0) },
+            isDirectory: { path in
+                var isDir: ObjCBool = false
+                return FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+                    && isDir.boolValue
+            })
     }
 
     /// Clicking a remote drive: enter that session in this panel (restoring the
@@ -909,7 +926,7 @@ class PanelViewController: NSViewController {
     @objc private func driveMenuSelected(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
         activatePanel()
-        panelState.navigateLocal(to: path)
+        panelState.navigateLocal(to: driveDestination(volumePath: path))
     }
 
     /// Updates only the highlighted drive (called on navigation / session switch).
@@ -1071,6 +1088,10 @@ protocol PanelViewControllerDelegate: AnyObject {
     /// Rename a large remote (S3) file via a cancelable progress sheet — a server-side
     /// copy of a multi-GB object can take minutes and must not silently block the UI.
     func panelViewController(_ vc: PanelViewController, renameLargeS3File item: FileItem, to newName: String)
+    /// The *other* panel's current local directory, or nil when it is remote —
+    /// used by the drive switch to land on the same directory when both panels
+    /// share a volume. In-archive paths resolve to the folder holding the archive.
+    func panelViewControllerOtherPanelLocalPath(_ vc: PanelViewController) -> String?
 }
 
 // MARK: - PathBar
