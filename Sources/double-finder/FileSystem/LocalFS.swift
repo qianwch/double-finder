@@ -276,9 +276,20 @@ class LocalFS: VirtualFS {
 
     /// Creates an archive of `sources` at `archivePath` in the chosen format, with
     /// a compression level (0–9) and optional password (zip/7z only).
+    ///
+    /// Progress: `progress` receives source-byte deltas as data is packed —
+    /// libarchive reports written blocks directly; the external 7-Zip path maps
+    /// `-bsp1` percent lines onto `totalSourceBytes` (and tops up to the full
+    /// total on success, so the bar always closes). `shouldCancel` is polled by
+    /// the libarchive pack loop (true → `CancellationError`); `onProcess` hands
+    /// out the external 7z process so a cancel can terminate it.
     func createArchive(sources: [String], to archivePath: String,
                        format: ArchiveFormat, level: Int, password: String?,
-                       baseDir: String? = nil, volumeSize: String? = nil) async throws {
+                       baseDir: String? = nil, volumeSize: String? = nil,
+                       totalSourceBytes: Int64 = 0,
+                       progress: (@Sendable (Int64) -> Void)? = nil,
+                       shouldCancel: (@Sendable () -> Bool)? = nil,
+                       onProcess: (@Sendable (Process) -> Void)? = nil) async throws {
         try await Task.detached(priority: .userInitiated) {
             guard !sources.isEmpty else { return }
             // When baseDir is set, store each source by its path relative to it
@@ -301,7 +312,10 @@ class LocalFS: VirtualFS {
                 }
                 try LocalFS.createSevenZipExternal(tool: tool, entries: entries, baseDir: baseDir,
                                                    to: archivePath, level: level, password: pw,
-                                                   format: format, volumeSize: volumeSize)
+                                                   format: format, volumeSize: volumeSize,
+                                                   totalSourceBytes: totalSourceBytes,
+                                                   progress: progress, shouldCancel: shouldCancel,
+                                                   onProcess: onProcess)
                 return
             }
 
@@ -312,7 +326,10 @@ class LocalFS: VirtualFS {
                 if let tool = LocalFS.find7z() {
                     try LocalFS.createSevenZipExternal(tool: tool, entries: entries, baseDir: baseDir,
                                                        to: archivePath, level: level, password: pw,
-                                                       format: format, volumeSize: nil)
+                                                       format: format, volumeSize: nil,
+                                                       totalSourceBytes: totalSourceBytes,
+                                                       progress: progress, shouldCancel: shouldCancel,
+                                                       onProcess: onProcess)
                     return
                 }
                 if pw != nil {
@@ -324,8 +341,25 @@ class LocalFS: VirtualFS {
             }
 
             try LibArchive.create(sources: entries, to: archivePath,
-                                  format: format, level: level, password: pw)
+                                  format: format, level: level, password: pw,
+                                  onBytes: progress, shouldCancel: shouldCancel)
         }.value
+    }
+
+    /// Removes the output(s) of an aborted/failed pack: the archive itself, or
+    /// for a split pack every `<archivePath>.NNN` volume.
+    static func removePackOutputs(archivePath: String, split: Bool) {
+        let fm = FileManager.default
+        guard split else { try? fm.removeItem(atPath: archivePath); return }
+        let dir = (archivePath as NSString).deletingLastPathComponent
+        let base = (archivePath as NSString).lastPathComponent
+        for f in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] {
+            guard f.hasPrefix(base + ".") else { continue }
+            let suffix = f.dropFirst(base.count + 1)
+            if !suffix.isEmpty, suffix.allSatisfy(\.isNumber) {
+                try? fm.removeItem(atPath: dir + "/" + f)
+            }
+        }
     }
 
     /// Locates the external 7-Zip executable (user override or auto-detected).
@@ -338,11 +372,17 @@ class LocalFS: VirtualFS {
                                                entries: [(absPath: String, entryName: String)],
                                                baseDir: String?, to archivePath: String,
                                                level: Int, password: String?,
-                                               format: ArchiveFormat, volumeSize: String?) throws {
+                                               format: ArchiveFormat, volumeSize: String?,
+                                               totalSourceBytes: Int64 = 0,
+                                               progress: (@Sendable (Int64) -> Void)? = nil,
+                                               shouldCancel: (@Sendable () -> Bool)? = nil,
+                                               onProcess: (@Sendable (Process) -> Void)? = nil) throws {
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let parent = baseDir ?? (entries.first!.absPath as NSString).deletingLastPathComponent
         let names = entries.map { q($0.entryName) }.joined(separator: " ")
-        var s = "\(q(tool)) a -y -mx=\(max(0, min(9, level)))"
+        // -bsp1 puts "  NN% + file" progress lines on stdout (works on both the
+        // official 7zz and Homebrew's p7zip 17.x).
+        var s = "\(q(tool)) a -y -bsp1 -mx=\(max(0, min(9, level)))"
         if let v = volumeSize { s += " -v\(v)" }
         if let pw = password {
             // Header encryption (-mhe) is 7z-only; zip uses AES-256 via -mem.
@@ -356,13 +396,47 @@ class LocalFS: VirtualFS {
         proc.executableURL = URL(fileURLWithPath: "/bin/sh")
         proc.arguments = ["-c", cmd]
         proc.currentDirectoryURL = URL(fileURLWithPath: parent)
-        proc.standardOutput = Pipe(); proc.standardError = Pipe()
+        let out = Pipe()
+        proc.standardOutput = out; proc.standardError = Pipe()
         proc.standardInput = FileHandle.nullDevice
+
+        // Map percent lines onto totalSourceBytes, feeding monotonic deltas.
+        // The handler runs on a pipe queue — keep its state locked.
+        let reported = NSLock()
+        var reportedBytes: Int64 = 0
+        if progress != nil, totalSourceBytes > 0 {
+            out.fileHandleForReading.readabilityHandler = { fh in
+                let data = fh.availableData
+                guard !data.isEmpty else { return }
+                // Lossy decode: a chunk may split a multi-byte file name, but the
+                // percent tokens themselves are plain ASCII.
+                let text = String(decoding: data, as: UTF8.self)
+                guard let pct = SevenZip.lastPercent(in: text) else { return }
+                let target = totalSourceBytes * Int64(pct) / 100
+                reported.lock()
+                let delta = target - reportedBytes
+                if delta > 0 { reportedBytes = target }
+                reported.unlock()
+                if delta > 0 { progress?(delta) }
+            }
+        }
+        defer { out.fileHandleForReading.readabilityHandler = nil }
+
         try proc.run()
+        onProcess?(proc)   // lets a cancel terminate the running 7z
         proc.waitUntilExit()
+        if shouldCancel?() == true { throw CancellationError() }
         if proc.terminationStatus != 0 {
             throw NSError(domain: "LocalFS", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "Failed to create archive (status \(proc.terminationStatus))"])
+        }
+        // Close the bar: 7z may finish without printing 100%.
+        if totalSourceBytes > 0 {
+            reported.lock()
+            let remaining = totalSourceBytes - reportedBytes
+            reportedBytes = totalSourceBytes
+            reported.unlock()
+            if remaining > 0 { progress?(remaining) }
         }
     }
 

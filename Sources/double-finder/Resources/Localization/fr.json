@@ -276,6 +276,7 @@
   "Overwrite": "Écraser",
   "Overwrite them, or skip the existing items?": "Les écraser ou ignorer les éléments existants ?",
   "POSIX octal mode (e.g. 755, 644) for %@:": "Mode octal POSIX (par ex. 755, 644) pour %@ :",
+  "Packing": "Compression",
   "Pack": "Compresser",
   "Pack to Archive": "Compresser en archive",
   "Pack to Other Panel…": "Compresser vers l’autre panneau…",

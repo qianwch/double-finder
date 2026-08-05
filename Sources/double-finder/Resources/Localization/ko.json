@@ -276,6 +276,7 @@
   "Overwrite": "덮어쓰기",
   "Overwrite them, or skip the existing items?": "덮어쓸까요, 아니면 기존 항목을 건너뛸까요?",
   "POSIX octal mode (e.g. 755, 644) for %@:": "%@의 POSIX 8진수 모드(예: 755, 644):",
+  "Packing": "압축 중",
   "Pack": "압축",
   "Pack to Archive": "압축 파일로 묶기",
   "Pack to Other Panel…": "반대 패널로 압축…",

@@ -21,8 +21,9 @@ enum ConflictPolicy {
 }
 
 /// Thread-safe-enough holder so an in-flight external process (e.g. scp) can be
-/// terminated when the user cancels.
-final class ProcessBox {
+/// terminated when the user cancels. `@unchecked Sendable` so a worker thread
+/// (e.g. the pack task handing out its 7z process) can set `process`.
+final class ProcessBox: @unchecked Sendable {
     var process: Process?
 }
 
@@ -49,6 +50,12 @@ class FileOperation: ObservableObject {
     nonisolated(unsafe) private var _transferredBytes: Int64 = 0
     nonisolated var transferredBytes: Int64 { bytesLock.lock(); defer { bytesLock.unlock() }; return _transferredBytes }
     nonisolated func reportBytes(_ delta: Int64) { bytesLock.lock(); _transferredBytes += delta; bytesLock.unlock() }
+
+    // Off-actor readable cancel flag, for long-running synchronous backends
+    // (e.g. the libarchive pack loop) that can't observe the @MainActor
+    // `isCancelled` from their worker thread.
+    nonisolated(unsafe) private var _cancelRequested = false
+    nonisolated var cancelRequested: Bool { bytesLock.lock(); defer { bytesLock.unlock() }; return _cancelRequested }
 
     /// One file-level unit of a concurrent transfer (e.g. one S3 getObject/putObject).
     /// `bytes` is the file's size when known (0 if unknown) — used to size the bar and
@@ -103,8 +110,9 @@ class FileOperation: ObservableObject {
 
     var title: String { customTitle ?? type.displayName }
 
-    /// Synchronous on-disk size of a file or directory (recursive).
-    static func sizeOnDisk(_ path: String) -> Int64 {
+    /// Synchronous on-disk size of a file or directory (recursive). Nonisolated:
+    /// pure filesystem math, called from detached sizing tasks.
+    nonisolated static func sizeOnDisk(_ path: String) -> Int64 {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: path, isDirectory: &isDir) else { return 0 }
@@ -248,6 +256,7 @@ class FileOperation: ObservableObject {
 
     func cancel() {
         isCancelled = true
+        bytesLock.lock(); _cancelRequested = true; bytesLock.unlock()
         processBox.process?.terminate()
         task?.cancel()
     }

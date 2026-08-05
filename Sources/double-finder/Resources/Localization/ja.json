@@ -276,6 +276,7 @@
   "Overwrite": "上書き",
   "Overwrite them, or skip the existing items?": "上書きしますか、それとも既存の項目をスキップしますか？",
   "POSIX octal mode (e.g. 755, 644) for %@:": "%@ の POSIX 8進数モード（例: 755、644）：",
+  "Packing": "圧縮中",
   "Pack": "圧縮",
   "Pack to Archive": "アーカイブに圧縮",
   "Pack to Other Panel…": "反対パネルへ圧縮…",

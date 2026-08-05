@@ -475,8 +475,14 @@ enum LibArchive {
 
     /// Creates an archive at `archivePath` from `sources` (absolute path +
     /// the entry name to store it under). Directories are added recursively.
+    /// `onBytes` reports source bytes as they are written (per data block), so a
+    /// progress bar can track the pack. `shouldCancel` is polled between entries
+    /// and between blocks; returning true aborts with `CancellationError` (the
+    /// caller removes the half-written archive).
     static func create(sources: [(absPath: String, entryName: String)], to archivePath: String,
-                       format: ArchiveFormat, level: Int, password: String?) throws {
+                       format: ArchiveFormat, level: Int, password: String?,
+                       onBytes: ((Int64) -> Void)? = nil,
+                       shouldCancel: (() -> Bool)? = nil) throws {
         guard let a = archive_write_new() else { throw Failure(message: "archive_write_new failed") }
         defer { archive_write_free(a) }
         let pw = (password?.isEmpty == false) ? password! : nil
@@ -511,12 +517,16 @@ enum LibArchive {
             throw Failure(message: errString(a))
         }
         for src in sources {
-            try addToArchive(a, absPath: src.absPath, entryName: src.entryName)
+            try addToArchive(a, absPath: src.absPath, entryName: src.entryName,
+                             onBytes: onBytes, shouldCancel: shouldCancel)
         }
         if archive_write_close(a) != OK { throw Failure(message: errString(a)) }
     }
 
-    private static func addToArchive(_ a: OpaquePointer, absPath: String, entryName: String) throws {
+    private static func addToArchive(_ a: OpaquePointer, absPath: String, entryName: String,
+                                     onBytes: ((Int64) -> Void)? = nil,
+                                     shouldCancel: (() -> Bool)? = nil) throws {
+        if shouldCancel?() == true { throw CancellationError() }
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: absPath, isDirectory: &isDir) else { return }
@@ -544,7 +554,8 @@ enum LibArchive {
             if archive_write_header(a, entry) < WARN { throw Failure(message: errString(a)) }
             let kids = (try? fm.contentsOfDirectory(atPath: absPath))?.sorted() ?? []
             for k in kids {
-                try addToArchive(a, absPath: absPath + "/" + k, entryName: entryName + "/" + k)
+                try addToArchive(a, absPath: absPath + "/" + k, entryName: entryName + "/" + k,
+                                 onBytes: onBytes, shouldCancel: shouldCancel)
             }
         } else {
             let data = fm.contents(atPath: absPath) ?? Data()
@@ -557,10 +568,12 @@ enum LibArchive {
                     let total = raw.count
                     guard let baseAddr = raw.baseAddress else { return }
                     while written < total {
+                        if shouldCancel?() == true { throw CancellationError() }
                         let w = archive_write_data(a, baseAddr.advanced(by: written), total - written)
                         if w < 0 { throw Failure(message: errString(a)) }
                         if w == 0 { break }
                         written += w
+                        onBytes?(Int64(w))
                     }
                 }
             }

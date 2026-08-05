@@ -276,6 +276,7 @@
   "Overwrite": "覆盖",
   "Overwrite them, or skip the existing items?": "覆盖它们，还是跳过已存在的项？",
   "POSIX octal mode (e.g. 755, 644) for %@:": "%@ 的 POSIX 八进制权限（例如 755、644）：",
+  "Packing": "打包中",
   "Pack": "打包",
   "Pack to Archive": "打包为压缩包",
   "Pack to Other Panel…": "打包到对侧面板…",

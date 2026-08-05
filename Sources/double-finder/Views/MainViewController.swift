@@ -1464,17 +1464,47 @@ class MainViewController: NSViewController {
         }
     }
 
+    /// Packs via a FileOperation + ProgressSheet (byte-accurate bar + speed +
+    /// Cancel), instead of a bare fire-and-forget task with no UI at all — a big
+    /// 7z used to compress for minutes with zero feedback.
     private func runPack(archivePath: String, sources: [String],
                          opts: PackSheet.Options, baseDir: String?, window: NSWindow) {
         Task {
-            do {
-                try await LocalFS().createArchive(sources: sources, to: archivePath,
-                                                  format: opts.format, level: opts.level,
-                                                  password: opts.password, baseDir: baseDir,
-                                                  volumeSize: opts.volumeSize)
-                await MainActor.run { self.inactivePanelVC.panelState.refresh() }
-            } catch {
-                await MainActor.run { self.presentLocalizedError(error, in: window) }
+            // Size the sources off the main actor: totalBytes drives the bar and
+            // the 7z percent→bytes mapping.
+            let total = await Task.detached(priority: .userInitiated) {
+                sources.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk($1) }
+            }.value
+            let op = FileOperation(type: .copy, sources: [archivePath], destination: nil)
+            op.customTitle = tr("Packing")
+            op.totalBytes = total
+            op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+            op.suppressFailureReport = true   // pack reports its own error below
+            let split = opts.volumeSize != nil
+            op.perItemOperation = { [weak op] _ in
+                guard let op = op else { return }
+                do {
+                    try await LocalFS().createArchive(
+                        sources: sources, to: archivePath,
+                        format: opts.format, level: opts.level, password: opts.password,
+                        baseDir: baseDir, volumeSize: opts.volumeSize,
+                        totalSourceBytes: total,
+                        progress: { op.reportBytes($0) },
+                        shouldCancel: { op.cancelRequested },
+                        onProcess: { op.processBox.process = $0 })
+                } catch {
+                    // Cancelled or failed: don't leave a half-written archive around.
+                    LocalFS.removePackOutputs(archivePath: archivePath, split: split)
+                    if error is CancellationError || op.cancelRequested { return }
+                    throw error
+                }
+            }
+            runOperation(op, on: window) { [weak self] in
+                guard let self = self else { return }
+                self.inactivePanelVC.panelState.refresh()
+                if let failure = op.failures.first {
+                    self.presentLocalizedError(failure.error, in: window)
+                }
             }
         }
     }

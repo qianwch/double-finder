@@ -36,4 +36,23 @@ enum SevenZip {
     static func resolve() -> String? {
         bundledPath() ?? autoDetect()
     }
+
+    /// Last completion percentage in a chunk of `-bsp1` progress output
+    /// (`" 12% + name"` lines, \r-refreshed so one read can carry several).
+    /// Returns nil when the chunk holds no progress token.
+    static func lastPercent(in chunk: String) -> Int? {
+        var last: Int?
+        var digits = ""
+        for ch in chunk {
+            if ch.isNumber {
+                digits.append(ch)
+            } else {
+                if ch == "%", !digits.isEmpty, let v = Int(digits), v <= 100 {
+                    last = v
+                }
+                digits = ""
+            }
+        }
+        return last
+    }
 }
