@@ -100,7 +100,7 @@ class ZipFS: VirtualFS {
     }
 
     /// Entries with size/mtime for display. Mirrors `entryPaths` but keeps the
-    /// per-entry metadata. Encrypted-7z fallback (path-only) yields zero sizes.
+    /// per-entry metadata — including on the encrypted-7z fallback.
     static func entryDetails(archivePath: String, kind: Kind, password: String? = nil) throws -> [LibArchive.Entry] {
         if isSplitFirstVolume(archivePath) {
             return try sevenZipListDetailed(tool: requireSevenZipTool(), archivePath: archivePath, password: password)
@@ -114,11 +114,12 @@ class ZipFS: VirtualFS {
         do {
             return try LibArchive.listEntries(archivePath: archivePath, password: password)
         } catch is ArchiveEncryptedError {
-            let paths = try sevenZipEncryptedFallback(archivePath: archivePath, kind: kind) { tool in
-                try sevenZipList(tool: tool, archivePath: archivePath, password: password)
+            // Use the -slt listing, not the path-only one: 7z entry paths carry no
+            // trailing slash, so directories can't be told apart from files that
+            // way (and every size would read as 0). `Folder = +` / `Size = …` do.
+            return try sevenZipEncryptedFallback(archivePath: archivePath, kind: kind) { tool in
+                try sevenZipListDetailed(tool: tool, archivePath: archivePath, password: password)
             }
-            return paths.map { LibArchive.Entry(path: $0.hasSuffix("/") ? String($0.dropLast()) : $0,
-                                                size: 0, mtime: nil, isDir: $0.hasSuffix("/")) }
         } catch {
             // libarchive couldn't read it (exotic codec / edge case). For 7z/zip/rar
             // retry the listing with 7zz (the 7-Zip/MacZip engine, keeps size/date).
@@ -194,7 +195,17 @@ class ZipFS: VirtualFS {
         print("external 7z:", SevenZip.resolve() ?? "(none)")
         print("--- libarchive ---")
         print(LibArchive.diagnose(archivePath))
-        print("--- entryPaths() (what the panel uses to enter) ---")
+        print("--- entryDetails() (what the panel uses to enter) ---")
+        do {
+            let entries = try entryDetails(archivePath: archivePath, kind: kind(of: archivePath))
+            print("OK: \(entries.count) entries; first:",
+                  entries.prefix(5).map { "\($0.path)\($0.isDir ? "/" : " (\($0.size)B)")" }.joined(separator: ", "))
+        } catch let e as ArchiveEncryptedError {
+            print("THREW ArchiveEncryptedError (→ password prompt) for:", e.archivePath)
+        } catch {
+            print("THREW \(type(of: error)):", error)
+        }
+        print("--- entryPaths() (path-only listing) ---")
         do {
             let entries = try entryPaths(archivePath: archivePath, kind: kind(of: archivePath))
             print("OK: \(entries.count) entries; first:", entries.prefix(5).joined(separator: ", "))
@@ -219,11 +230,24 @@ class ZipFS: VirtualFS {
         try? FileManager.default.removeItem(atPath: tmp)
     }
 
+    /// The `-p` argument for a 7-Zip invocation — emitted *always*, even with no
+    /// password.
+    ///
+    /// Without `-p`, 7-Zip prompts for a password on stdin when it hits an
+    /// encrypted archive. We close stdin (see `runSevenZip`), so it dies with
+    /// "Break signaled" and none of the `Cannot open encrypted archive` /
+    /// `Wrong password` markers we key off — which read as a corrupt archive, so
+    /// an encrypted 7z showed "may be corrupt or incomplete" and never got its
+    /// password prompt. Passing an empty `-p` keeps 7-Zip non-interactive and
+    /// makes it report the real encryption error. It is harmless on archives that
+    /// aren't encrypted.
+    static func sevenZipPasswordArg(_ password: String?) -> String { "-p" + (password ?? "") }
+
     /// `7z l -slt -ba` → parses the `Path = …` lines. Encryption failure (wrong
     /// or missing password) becomes `ArchiveEncryptedError`.
     private static func sevenZipList(tool: String, archivePath: String, password: String?) throws -> [String] {
         var args = ["l", "-slt", "-ba"]
-        if let pw = password, !pw.isEmpty { args.append("-p" + pw) }
+        args.append(sevenZipPasswordArg(password))
         args.append(archivePath)
         let (status, out) = runSevenZip(tool, args)
         if out.contains("Cannot open encrypted archive") || out.contains("Wrong password") {
@@ -242,7 +266,7 @@ class ZipFS: VirtualFS {
     /// block per entry: `Path = …`, `Size = …`, `Modified = …`, `Folder = +/-`.
     private static func sevenZipListDetailed(tool: String, archivePath: String, password: String?) throws -> [LibArchive.Entry] {
         var args = ["l", "-slt", "-ba"]
-        if let pw = password, !pw.isEmpty { args.append("-p" + pw) }
+        args.append(sevenZipPasswordArg(password))
         args.append(archivePath)
         let (status, out) = runSevenZip(tool, args)
         if out.contains("Cannot open encrypted archive") || out.contains("Wrong password") {
@@ -278,7 +302,7 @@ class ZipFS: VirtualFS {
     private static func sevenZipExtract(tool: String, archivePath: String, entry: String?,
                                         to dest: String, password: String?) throws {
         var args = ["x", "-y", "-o" + dest]
-        if let pw = password, !pw.isEmpty { args.append("-p" + pw) }
+        args.append(sevenZipPasswordArg(password))
         args.append(archivePath)
         if let entry = entry { args.append(entry) }
         let (status, out) = runSevenZip(tool, args)
