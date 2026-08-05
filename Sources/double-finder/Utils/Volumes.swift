@@ -36,7 +36,7 @@ enum Volumes {
             .volumeNameKey, .volumeAvailableCapacityForImportantUsageKey,
             .volumeTotalCapacityKey, .volumeIsBrowsableKey,
             .volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsRootFileSystemKey,
-            .volumeIsLocalKey,
+            .volumeIsLocalKey, .volumeIsInternalKey,
         ]
         let urls = FileManager.default.mountedVolumeURLs(
             includingResourceValuesForKeys: keys,
@@ -48,15 +48,28 @@ enum Volumes {
             let name = vals.volumeName ?? url.lastPathComponent
             let free = Int64(vals.volumeAvailableCapacityForImportantUsage ?? 0)
             let total = Int64(vals.volumeTotalCapacity ?? 0)
-            // Ejectable = removable/ejectable media, or a network mount (SMB/AFP/NFS —
-            // ejecting it unmounts/disconnects the share), but never the boot volume.
-            let ejectable = (vals.volumeIsEjectable == true || vals.volumeIsRemovable == true
-                             || vals.volumeIsLocal == false)
-                && vals.volumeIsRootFileSystem != true
+            let ejectable = isEjectable(ejectable: vals.volumeIsEjectable,
+                                        removable: vals.volumeIsRemovable,
+                                        internalStorage: vals.volumeIsInternal,
+                                        local: vals.volumeIsLocal,
+                                        rootFS: vals.volumeIsRootFileSystem)
             result.append(VolumeInfo(url: url, name: name, freeBytes: free,
                                      totalBytes: total, isEjectable: ejectable))
         }
         return result
+    }
+
+    /// Whether a volume with these resource values gets an ⏏ Eject affordance.
+    /// Ejectable = removable/ejectable media, external storage, or a network mount
+    /// (SMB/AFP/NFS — ejecting it unmounts/disconnects the share), but never the
+    /// boot volume. `internalStorage == false` is the check that actually catches
+    /// USB/Thunderbolt hard drives and many USB sticks: those report
+    /// ejectable=false AND removable=false (nil stays excluded).
+    static func isEjectable(ejectable: Bool?, removable: Bool?,
+                            internalStorage: Bool?, local: Bool?, rootFS: Bool?) -> Bool {
+        (ejectable == true || removable == true
+         || internalStorage == false || local == false)
+            && rootFS != true
     }
 
     /// The mounted volume that contains `path` (longest matching mount point).
