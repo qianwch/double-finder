@@ -1204,24 +1204,30 @@ class MainViewController: NSViewController {
         // Remote delete is irreversible regardless of which key was pressed.
         guard confirm || isSFTP || isS3 else { run(); return }
 
+        // List what's about to go (up to 10 names, the rest folded), so the user
+        // confirms actual content, not just a count.
+        let listing = DeleteProvider.confirmListing(names: items.map { $0.name })
         let alert = NSAlert()
         alert.alertStyle = .warning
         if isSFTP {
             alert.messageText = tr("Delete %@ from the server?", countText)
-            alert.informativeText = tr("This permanently removes them on the remote host and cannot be undone.")
+            alert.informativeText = listing + "\n\n"
+                + tr("This permanently removes them on the remote host and cannot be undone.")
             alert.addButton(withTitle: tr("Delete"))
         } else if isS3 {
             alert.messageText = tr("Delete %@ from S3?", countText)
-            alert.informativeText = tr("This permanently removes them from the bucket and cannot be undone.")
+            alert.informativeText = listing + "\n\n"
+                + tr("This permanently removes them from the bucket and cannot be undone.")
             alert.addButton(withTitle: tr("Delete"))
         } else if permanent {
             alert.messageText = tr("Permanently delete %@?", countText)
-            alert.informativeText = (n == 1 ? "“\(items[0].name)” " + tr("cannot be recovered — this does not use the Trash.")
-                                            : tr("These items cannot be recovered — this does not use the Trash."))
+            alert.informativeText = listing + "\n\n"
+                + (n == 1 ? tr("It cannot be recovered — this does not use the Trash.")
+                          : tr("These items cannot be recovered — this does not use the Trash."))
             alert.addButton(withTitle: tr("Delete"))
         } else {
             alert.messageText = tr("Move %@ to Trash?", countText)
-            alert.informativeText = n == 1 ? items[0].name : countText
+            alert.informativeText = listing
             alert.addButton(withTitle: tr("Move to Trash"))
         }
         alert.addButton(withTitle: tr("Cancel"))

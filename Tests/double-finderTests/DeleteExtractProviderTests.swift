@@ -1,6 +1,41 @@
 import XCTest
 @testable import double_finder
 
+/// The delete-confirm sheet's item listing: up to `limit` names, the rest folded
+/// into one "… and N more" line.
+@MainActor
+final class DeleteConfirmListingTests: XCTestCase {
+    override func setUp() { super.setUp(); Localizer.shared.setLanguage(.en) }
+
+    func testFewNamesAllListed() {
+        let text = DeleteProvider.confirmListing(names: ["a.txt", "b.txt"], limit: 10)
+        XCTAssertEqual(text, "a.txt\nb.txt")
+    }
+
+    func testExactlyLimitNoFold() {
+        let names = (1...10).map { "f\($0)" }
+        let text = DeleteProvider.confirmListing(names: names, limit: 10)
+        XCTAssertEqual(text.components(separatedBy: "\n").count, 10)
+        XCTAssertFalse(text.contains("more"))
+    }
+
+    func testOverLimitFoldsRemainder() {
+        let names = (1...25).map { "f\($0)" }
+        let text = DeleteProvider.confirmListing(names: names, limit: 10)
+        let lines = text.components(separatedBy: "\n")
+        XCTAssertEqual(lines.count, 11)               // 10 names + fold line
+        XCTAssertEqual(lines[0], "f1")
+        XCTAssertEqual(lines[9], "f10")
+        XCTAssertEqual(lines[10], "… and 15 more")
+    }
+
+    func testOneOverLimit() {
+        let names = (1...11).map { "f\($0)" }
+        let text = DeleteProvider.confirmListing(names: names, limit: 10)
+        XCTAssertTrue(text.hasSuffix("… and 1 more"))
+    }
+}
+
 @MainActor
 final class DeleteExtractProviderTests: XCTestCase {
     override func setUp() { super.setUp(); Localizer.shared.setLanguage(.en) }

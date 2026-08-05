@@ -14,6 +14,17 @@ struct DeleteProvider {
         self.permanent = permanent
     }
 
+    /// Listing for the delete-confirm sheet: the first `limit` names one per
+    /// line, any remainder folded into a single "… and N more" line.
+    @MainActor
+    static func confirmListing(names: [String], limit: Int = 10) -> String {
+        var lines = Array(names.prefix(limit))
+        if names.count > limit {
+            lines.append(tr("… and %d more", names.count - limit))
+        }
+        return lines.joined(separator: "\n")
+    }
+
     @MainActor
     func makeOperation(items: [FileItem]) -> FileOperation {
         let op = FileOperation(type: .delete, sources: items.map { $0.path })
