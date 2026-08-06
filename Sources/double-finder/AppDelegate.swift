@@ -57,6 +57,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         windowController.saveFrame()
         appState.save()
+        mainVC()?.saveTabs()
     }
 
     @MainActor private func setupMenus() {

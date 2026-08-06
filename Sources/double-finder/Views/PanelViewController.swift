@@ -361,6 +361,7 @@ class PanelViewController: NSViewController {
         guard index >= 0, index < tabs.count else { return }
         tabs[index].isLocked.toggle()
         refreshTabBar()
+        panelDelegate?.panelViewControllerTabsDidChange(self)
     }
 
     func selectTab(_ index: Int) {
@@ -391,6 +392,7 @@ class PanelViewController: NSViewController {
         if load || state.items.isEmpty { state.loadDirectory() }
         refreshTabBar()
         panelDelegate?.panelViewController(self, didActivateTab: state)
+        panelDelegate?.panelViewControllerTabsDidChange(self)
     }
 
     private func refreshTabBar() {
@@ -1083,6 +1085,9 @@ protocol PanelViewControllerDelegate: AnyObject {
     /// Called whenever the panel re-renders (directory change, refresh, etc.),
     /// so the command line prompt can follow the active panel's folder.
     func panelViewControllerDidChangePath(_ vc: PanelViewController)
+    /// The tab set changed (new/close/select/lock) — persist it so tabs
+    /// survive a crash, not just a clean quit.
+    func panelViewControllerTabsDidChange(_ vc: PanelViewController)
     /// Files were dropped onto this panel (from Finder / other apps / the other panel).
     func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool)
     /// Rename a large remote (S3) file via a cancelable progress sheet — a server-side

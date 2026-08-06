@@ -37,6 +37,7 @@ class MainViewController: NSViewController {
         setupUI()
         setupFunctionKeyActions()
         appState.load()
+        restoreTabs()
         updateActivePanelHighlight()
 
         NotificationCenter.default.addObserver(
@@ -2408,6 +2409,76 @@ extension MainViewController: PanelViewControllerDelegate {
     func panelViewController(_ vc: PanelViewController, didActivateTab state: PanelState) {
         // Keep AppState's active panel pointing at the active tab's state.
         if vc === leftPanelVC { appState.leftPanel = state } else { appState.rightPanel = state }
+    }
+
+    func panelViewControllerTabsDidChange(_ vc: PanelViewController) {
+        saveTabs()
+    }
+
+    // MARK: - Tab persistence
+
+    /// Persists both panels' tab sets. Called on every tab-structure change and
+    /// again at quit (which also captures in-tab navigation since the last change).
+    func saveTabs() {
+        persistTabs(of: leftPanelVC, tabsKey: "LeftPanelTabs", activeKey: "LeftPanelActiveTab")
+        persistTabs(of: rightPanelVC, tabsKey: "RightPanelTabs", activeKey: "RightPanelActiveTab")
+    }
+
+    private func persistTabs(of vc: PanelViewController, tabsKey: String, activeKey: String) {
+        let (states, active) = vc.exportTabs()
+        let tabs = states.map { TabSession.Tab(path: persistablePath(of: $0), locked: $0.isLocked) }
+        let d = UserDefaults.standard
+        d.set(TabSession.encode(tabs), forKey: tabsKey)
+        d.set(active, forKey: activeKey)
+    }
+
+    /// The real local directory a tab can be restored into. Remote and
+    /// search-result tabs fall back to home (same rule as LeftPanelPath);
+    /// in-archive tabs resolve to the folder holding the archive.
+    private func persistablePath(of state: PanelState) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if state.isRemote || state.searchResults != nil { return home }
+        if let root = PanelState.archiveRoot(in: state.currentPath) {
+            return (root as NSString).deletingLastPathComponent
+        }
+        return state.currentPath
+    }
+
+    private func restoreTabs() {
+        restoreTabs(into: leftPanelVC, panel: appState.leftPanel,
+                    tabsKey: "LeftPanelTabs", activeKey: "LeftPanelActiveTab")
+        restoreTabs(into: rightPanelVC, panel: appState.rightPanel,
+                    tabsKey: "RightPanelTabs", activeKey: "RightPanelActiveTab")
+    }
+
+    private func restoreTabs(into vc: PanelViewController, panel: PanelState,
+                             tabsKey: String, activeKey: String) {
+        let d = UserDefaults.standard
+        let isDir: (String) -> Bool = {
+            var dir: ObjCBool = false
+            return FileManager.default.fileExists(atPath: $0, isDirectory: &dir) && dir.boolValue
+        }
+        let tabs = TabSession.decode(d.array(forKey: tabsKey), isDirectory: isDir,
+                                     fallback: FileManager.default.homeDirectoryForCurrentUser.path)
+        guard !tabs.isEmpty else { return }
+        let active = TabSession.clampActive(d.integer(forKey: activeKey), count: tabs.count)
+        // A single unlocked tab is exactly the state the panel already starts in.
+        if tabs.count == 1 && !tabs[0].locked { return }
+        var states: [PanelState] = []
+        for (i, tab) in tabs.enumerated() {
+            if i == active {
+                // Reuse the panel's state (already restored to LeftPanelPath and
+                // loaded) so AppState keeps pointing at the live instance.
+                panel.isLocked = tab.locked
+                states.append(panel)
+            } else {
+                let s = PanelState(path: tab.path)
+                s.showHidden = panel.showHidden
+                s.isLocked = tab.locked
+                states.append(s)   // loads lazily on first activation
+            }
+        }
+        vc.importTabs(states, active: active)
     }
 
     func panelViewControllerOtherPanelLocalPath(_ vc: PanelViewController) -> String? {
