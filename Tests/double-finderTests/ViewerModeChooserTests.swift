@@ -49,4 +49,17 @@ final class ViewerModeChooserTests: XCTestCase {
     func testEmptyMarkdownStaysText() {
         XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "md", sample: Data()).mode, .text)
     }
+
+    func testDiagramSourceFilesRouteToPreviewWithEncoding() {
+        for ext in ["mmd", "puml", "plantuml", "MMD"] {
+            let r = ViewerModeChooser.choose(fileExtension: ext, sample: Data("graph TD".utf8))
+            XCTAssertEqual(r.mode, .preview, ext)
+            XCTAssertNotNil(r.encoding, ext)    // 按 1 看源码要有编码
+        }
+    }
+
+    func testBinaryDotPumlStillGoesHex() {
+        let r = ViewerModeChooser.choose(fileExtension: "puml", sample: Data([0x00, 0x01]))
+        XCTAssertEqual(r.mode, .hex)            // NUL 嗅探优先于扩展名路由
+    }
 }

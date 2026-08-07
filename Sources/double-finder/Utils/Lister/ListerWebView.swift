@@ -8,6 +8,11 @@ import WebKit
 final class ListerWebView: NSView, WKNavigationDelegate {
     var onGiveUp: (() -> Void)?          // second crash → controller falls to text mode
 
+    /// Mermaid themes are BAKED into the rendered SVG (unlike the page CSS,
+    /// which adapts via prefers-color-scheme) — the controller re-renders
+    /// diagrams on a live light/dark switch.
+    var onAppearanceChanged: (() -> Void)?
+
     private let webView: WKWebView
     private var lastHTML = ""
     private var crashedOnce = false
@@ -40,6 +45,12 @@ final class ListerWebView: NSView, WKNavigationDelegate {
         webView.navigationDelegate = nil
         webView.loadHTMLString("", baseURL: nil)
         onGiveUp = nil
+        onAppearanceChanged = nil
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearanceChanged?()
     }
 
     /// ⌘=/⌘-/⌘0 zoom of the rendered page (persists across loadHTML calls —

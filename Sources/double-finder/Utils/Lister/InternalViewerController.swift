@@ -77,6 +77,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var mdRenderFellBack = false
     /// Max markdown size we read fully into memory to render (design §4.1).
     private let mdRenderMaxBytes: UInt64 = 2 << 20
+    /// Bumped on every setMode/close — a late diagram-SVG substitution must not
+    /// reload a page the user already left (design §5, generation token).
+    private var diagramGeneration = 0
+    /// Theme baked into the currently displayed diagram SVGs; nil = current doc
+    /// has no rendered diagrams (page CSS adapts by itself, no reload needed).
+    private var lastDiagramDark: Bool?
 
     // Zoom (⌘= / ⌘- / ⌘0). Deliberately NOT reset in windowWillClose — the
     // singleton keeps the user's chosen size for the next viewer session.
@@ -219,7 +225,18 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// True when preview mode should show rendered markdown (ListerWebView)
     /// rather than QLPreviewView. False after a WKWebView crash-give-up.
     private func shouldShowWeb() -> Bool {
-        currentMode == .preview && isMarkdownURL(currentURL) && !mdRenderFellBack
+        currentMode == .preview && !mdRenderFellBack
+            && (isMarkdownURL(currentURL) || diagramKind(of: currentURL) != nil)
+    }
+
+    /// Standalone diagram-source files, routed to rendered preview like markdown
+    /// (design §5 — this is the SECOND gate; ViewerModeChooser is the first).
+    private func diagramKind(of url: URL?) -> DiagramKind? {
+        switch url?.pathExtension.lowercased() {
+        case "mmd": return .mermaid
+        case "puml", "plantuml": return .plantuml
+        default: return nil
+        }
     }
 
     /// A markdown file by extension (md/markdown), routed to rendered preview.
@@ -273,6 +290,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                         self.setMode(.text, auto: true)
                         self.showStatusNote(tr("Preview failed — showing source"))
                     }
+                    wv.onAppearanceChanged = { [weak self] in self?.appearanceChangedInPreview() }
                     container.addSubview(wv)
                     mdWebView = wv
                 }
@@ -440,6 +458,9 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         let entry = entries[index]; let total = entries.count
         cancelSearch(clearQuery: true)               // new file = new search context
         mdRenderFellBack = false                     // per-file: give the next md a fresh render attempt
+        lastDiagramDark = nil                        // per-file: no rendered diagrams shown yet
+        diagramGeneration += 1                       // void the previous file's in-flight phase 2 (design §5.3):
+                                                     // it must not land during entry.resolve() and repollute lastDiagramDark
         Task { [weak self] in
             let url = await entry.resolve()
             guard let self, self.navGeneration == gen else { return }
@@ -467,6 +488,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// is only used by the deep-match auto-switch to hex.
     private func setMode(_ mode: ViewerMode, auto: Bool, preserveSearch: Bool = false) {
         if !preserveSearch, !auto { cancelSearch(clearQuery: true) }   // manual switch clears the search (design §6)
+        diagramGeneration += 1                       // leaving/reloading a page voids in-flight diagram results
         // Manual same-file switches keep the reading position by byte offset
         // (same anchoring as encoding changes; TC behavior).
         let anchor: UInt64 = (!auto && mode != .preview) ? currentTopByteOffset() : 0
@@ -508,8 +530,18 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 }
                 var decoder = TextChunkDecoder(encoding: currentEncoding)
                 let text = decoder.decode(data, isFinal: true)
-                let html = MarkdownToHTML.render(text, baseDir: currentURL?.deletingLastPathComponent())
-                mdWebView?.loadHTML(html)
+                if let kind = diagramKind(of: currentURL) {
+                    // Standalone .mmd/.puml = a synthesized one-fence document, so
+                    // phase 1 (source visible) and phase 2 (SVG) reuse the md path.
+                    let fence = kind == .mermaid ? "mermaid" : "plantuml"
+                    let doc = MarkdownToHTML.renderDocument("```\(fence)\n\(text)\n```", baseDir: nil)
+                    mdWebView?.loadHTML(doc.html)
+                    resolveDiagrams(doc, standalone: true)
+                } else {
+                    let doc = MarkdownToHTML.renderDocument(text, baseDir: currentURL?.deletingLastPathComponent())
+                    mdWebView?.loadHTML(doc.html)
+                    if !doc.diagrams.isEmpty { resolveDiagrams(doc, standalone: false) }
+                }
                 mdWebView?.focus()
             } else {
                 previewView?.previewItem = currentURL as NSURL?
@@ -689,6 +721,61 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         updatePositionLabel()
     }
 
+    // MARK: Diagram rendering (phase 2 of the markdown preview)
+
+    /// Phase 2 of the markdown preview (design §5): render every diagram block
+    /// to SVG (cache-hits are instant), then reload the final page ONCE. The
+    /// scroll position resets — accepted (§5.6): the file was just opened.
+    /// A standalone diagram file whose single block fails falls back to text
+    /// mode instead (search/encoding beat a code-block-in-web-view).
+    private func resolveDiagrams(_ doc: (html: String, diagrams: [DiagramBlock]), standalone: Bool) {
+        diagramGeneration += 1
+        let gen = diagramGeneration
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        Task { [weak self] in
+            var results: [Int: MarkdownToHTML.DiagramSubstitute] = [:]
+            var failureNote: String?
+            for (idx, block) in doc.diagrams.enumerated() {
+                let r = await DiagramRenderer.shared.render(
+                    DiagramRequest(kind: block.kind, source: block.source, dark: dark))
+                switch r {
+                case .svg(let svg): results[idx] = .svg(svg)
+                case .failure(let note):
+                    results[idx] = .failureNote(tr(note))
+                    failureNote = note
+                }
+            }
+            guard let self, self.diagramGeneration == gen else { return }
+            if standalone, let note = failureNote {
+                // mdRenderFellBack stays false — that flag is crash-only (§5).
+                self.setMode(.text, auto: true)
+                self.showStatusNote(tr(note))
+                return
+            }
+            guard !results.isEmpty else { return }
+            // Only count the theme as "baked in" when at least one SVG landed —
+            // an all-failure page has nothing theme-dependent to re-render.
+            let anySVG = results.values.contains { if case .svg = $0 { return true } else { return false } }
+            if anySVG { self.lastDiagramDark = dark }
+            self.mdWebView?.loadHTML(
+                MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams, results: results))
+            // Appearance may have flipped while phase 2 was in flight — the page
+            // we just loaded would keep stale-theme SVGs with no callback to fix
+            // it until the NEXT flip. Re-check once; the guards make it cheap.
+            self.appearanceChangedInPreview()
+        }
+    }
+
+    /// Live light/dark switch while the viewer is open (spec §7): re-render the
+    /// current preview when the shown SVGs were baked with the OTHER theme.
+    /// Cache keyed by theme makes flipping back instant.
+    private func appearanceChangedInPreview() {
+        guard shouldShowWeb(), let last = lastDiagramDark else { return }
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        guard dark != last else { return }
+        setMode(.preview, auto: true)
+    }
+
     // MARK: Encoding
 
     @objc private func encodingChanged(_ sender: NSPopUpButton) {
@@ -767,6 +854,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         lastMatch = nil
         searchBarVisible = false
         noteGeneration += 1                      // invalidate any pending note-clear
+        diagramGeneration += 1                   // invalidate any in-flight diagram substitution
         NotificationCenter.default.removeObserver(self)
         previewView?.close()
         mdWebView?.teardown()
@@ -777,6 +865,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         previewView = nil
         mdWebView = nil
         mdRenderFellBack = false
+        lastDiagramDark = nil
         textContent = nil
         hexScroll = nil
         hexView = nil

@@ -6,18 +6,30 @@ import Foundation
 /// paragraphs. Local images inline as base64 data URIs (§4.2, Task 4).
 enum MarkdownToHTML {
 
+    /// Back-compat single-value entry (existing tests and callers that don't
+    /// care about diagrams).
     static func render(_ markdown: String, baseDir: URL?) -> String {
+        renderDocument(markdown, baseDir: baseDir).html
+    }
+
+    /// Primary entry (design §4): the html contains a placeholder
+    /// `<div class="diagram" data-idx="N">` (escaped source code inside) per
+    /// diagram fence; `diagrams` lists them in data-idx order for async
+    /// rendering + substituteDiagrams.
+    static func renderDocument(_ markdown: String, baseDir: URL?) -> (html: String, diagrams: [DiagramBlock]) {
         // Normalize CRLF and lone CR to LF first: lines are split on "\n" only,
         // and a trailing \r would break hr detection ("---\r"), fence language
         // lookup ("swift\r") and table-separator detection.
         let normalized = markdown
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-        let bodyHTML = blocks(normalized.components(separatedBy: "\n"), baseDir: baseDir)
-        return """
+        var diagrams: [DiagramBlock] = []
+        let bodyHTML = blocks(normalized.components(separatedBy: "\n"), baseDir: baseDir, diagrams: &diagrams)
+        let html = """
         <!DOCTYPE html><html><head><meta charset="utf-8">
         <style>\(css)</style></head><body>\(bodyHTML)</body></html>
         """
+        return (html, diagrams)
     }
 
     // MARK: block-level state machine
@@ -28,7 +40,8 @@ enum MarkdownToHTML {
     /// degrade to escaped paragraph text — ugly but safe ("Never fails").
     private static let maxQuoteDepth = 64
 
-    private static func blocks(_ lines: [String], baseDir: URL?, depth: Int = 0) -> String {
+    private static func blocks(_ lines: [String], baseDir: URL?, depth: Int = 0,
+                               diagrams: inout [DiagramBlock]) -> String {
         var out = ""
         var i = 0
         var paragraph: [String] = []
@@ -50,7 +63,15 @@ enum MarkdownToHTML {
                     code.append(lines[i]); i += 1
                 }
                 i += 1   // skip closing fence (or EOF — unterminated runs to end)
-                out += codeBlock(code.joined(separator: "\n"), language: lang)
+                let joined = code.joined(separator: "\n")
+                if let kind = DiagramKind(fenceLanguage: lang) {
+                    // Diagram fence → placeholder (still a readable code block until
+                    // the async SVG lands via substituteDiagrams, design §5).
+                    out += "<div class=\"diagram\" data-idx=\"\(diagrams.count)\"><pre><code>\(escapeHTML(joined))</code></pre></div>\n"
+                    diagrams.append(DiagramBlock(kind: kind, source: joined))
+                } else {
+                    out += codeBlock(joined, language: lang)
+                }
                 continue
             }
             // heading
@@ -72,7 +93,7 @@ enum MarkdownToHTML {
                     quoted.append(String(t.dropFirst(t.hasPrefix("> ") ? 2 : 1)))
                     i += 1
                 }
-                out += "<blockquote>\(blocks(quoted, baseDir: baseDir, depth: depth + 1))</blockquote>\n"
+                out += "<blockquote>\(blocks(quoted, baseDir: baseDir, depth: depth + 1, diagrams: &diagrams))</blockquote>\n"
                 continue
             }
             // list (ordered/unordered/task, indent-nested) — collect the whole
@@ -294,6 +315,47 @@ enum MarkdownToHTML {
             out += "</tr>\n"
         }
         out += "</tbody>\n</table>\n"
+        return out
+    }
+
+    /// Post-pass result per diagram index (design §4). `failureNote` text must
+    /// arrive ALREADY tr()-translated — this stays a pure function.
+    enum DiagramSubstitute { case svg(String); case failureNote(String) }
+
+    /// Replaces each `<div class="diagram" data-idx="N">…</div>` placeholder:
+    /// `.svg` swaps the whole block for the rendered SVG (plantuml gets a white
+    /// card class — its SVGs assume a light background); `.failureNote` keeps
+    /// the code block and prepends an italic note. Missing indices stay as-is.
+    /// Placeholder innards are escaped HTML (can never contain a nested
+    /// `</div>`), so scanning to the next `</div>` is exact. Placeholders come
+    /// in document order, so the search resumes from the end of the previous
+    /// substitution — single sweep, and a pathological SVG containing a literal
+    /// later placeholder tag can never be matched (it sits behind the cursor).
+    static func substituteDiagrams(_ html: String, diagrams: [DiagramBlock],
+                                   results: [Int: DiagramSubstitute]) -> String {
+        var out = html
+        var cursor = out.startIndex
+        for (idx, block) in diagrams.enumerated() {
+            guard let result = results[idx] else { continue }
+            let open = "<div class=\"diagram\" data-idx=\"\(idx)\">"
+            guard let openRange = out.range(of: open, range: cursor..<out.endIndex),
+                  let closeRange = out.range(of: "</div>", range: openRange.upperBound..<out.endIndex)
+            else { continue }
+            switch result {
+            case .svg(let svg):
+                let kindClass = block.kind == .plantuml ? " diagram-plantuml" : ""
+                let replacement = "<div class=\"diagram rendered\(kindClass)\">\(svg)</div>"
+                // Mutation invalidates indices — carry the cursor over as an offset.
+                let start = out.distance(from: out.startIndex, to: openRange.lowerBound)
+                out.replaceSubrange(openRange.lowerBound..<closeRange.upperBound, with: replacement)
+                cursor = out.index(out.startIndex, offsetBy: start + replacement.count)
+            case .failureNote(let note):
+                let insertion = "<div class=\"diagram-note\">\(escapeHTML(note))</div>"
+                let start = out.distance(from: out.startIndex, to: openRange.upperBound)
+                out.insert(contentsOf: insertion, at: openRange.upperBound)
+                cursor = out.index(out.startIndex, offsetBy: start + insertion.count)
+            }
+        }
         return out
     }
 
@@ -574,5 +636,10 @@ enum MarkdownToHTML {
       body { background: #1e1e1e; color: #e4e4e4; }
       pre { background: #2a2a2a; }
     }
+    .diagram { margin: 1em 0; }
+    .diagram.rendered { text-align: center; }
+    .diagram.rendered svg { max-width: 100%; height: auto; }
+    .diagram-plantuml.rendered { background: #ffffff; border-radius: 6px; padding: 8px; display: inline-block; }
+    .diagram-note { font-style: italic; color: #6b7280; font-size: 0.85em; margin-bottom: 0.3em; }
     """
 }

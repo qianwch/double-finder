@@ -60,6 +60,46 @@ else
     echo "    !! vendor/sevenzip/7zz missing — encrypted 7z will fall back to a system 7z (brew install sevenzip)"
 fi
 
+echo "==> Bundle mermaid.min.js (Lister mermaid rendering; MIT)"
+MERMAID="vendor/mermaid/mermaid.min.js"
+MERMAID_VER="11.16.1"
+if [ ! -f "$MERMAID" ]; then
+    echo "    fetching mermaid $MERMAID_VER (not in repo)…"
+    mkdir -p vendor/mermaid
+    if curl -fsSL --max-time 120 -o "$MERMAID.tmp" \
+        "https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VER}/dist/mermaid.min.js"; then
+        mv "$MERMAID.tmp" "$MERMAID"
+    else
+        rm -f "$MERMAID.tmp"
+        echo "    !! download failed — mermaid blocks will show as source (see vendor/mermaid/README.md)"
+    fi
+fi
+if [ -f "$MERMAID" ]; then
+    cp "$MERMAID" "$APPDIR/Contents/Resources/mermaid.min.js"
+    cp vendor/mermaid/LICENSE "$APPDIR/Contents/Resources/mermaid-License.txt"
+    echo "    bundled mermaid.min.js ($(du -h "$MERMAID" | cut -f1))"
+fi
+
+echo "==> Bundle plantuml.jar (Lister plantuml rendering; MIT edition; needs a system Java)"
+PLANTUML="vendor/plantuml/plantuml.jar"
+PLANTUML_VER="1.2026.6"
+if [ ! -f "$PLANTUML" ]; then
+    echo "    fetching PlantUML $PLANTUML_VER MIT edition (not in repo)…"
+    mkdir -p vendor/plantuml
+    if curl -fsSL --max-time 180 -o "$PLANTUML.tmp" \
+        "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VER}/plantuml-mit-${PLANTUML_VER}.jar"; then
+        mv "$PLANTUML.tmp" "$PLANTUML"
+    else
+        rm -f "$PLANTUML.tmp"
+        echo "    !! download failed — plantuml blocks fall back to a brew-installed plantuml (see vendor/plantuml/README.md)"
+    fi
+fi
+if [ -f "$PLANTUML" ]; then
+    cp "$PLANTUML" "$APPDIR/Contents/Resources/plantuml.jar"
+    cp vendor/plantuml/LICENSE "$APPDIR/Contents/Resources/plantuml-License.txt"
+    echo "    bundled plantuml.jar ($(du -h "$PLANTUML" | cut -f1))"
+fi
+
 echo "==> Info.plist"
 cp Info.plist "$APPDIR/Contents/Info.plist"
 plutil -replace CFBundleIconFile -string "AppIcon" "$APPDIR/Contents/Info.plist"

@@ -12,6 +12,10 @@ enum ViewerModeChooser {
         "key", "pages", "numbers", "epub",
     ]
 
+    /// Text-decodable sources rendered by ListerWebView instead of raw text:
+    /// markdown plus standalone diagram files (mermaid/plantuml).
+    static let renderedTextExtensions: Set<String> = ["md", "markdown", "mmd", "puml", "plantuml"]
+
     static func choose(fileExtension ext: String, sample: Data?)
         -> (mode: ViewerMode, encoding: String.Encoding?) {
         if previewExtensions.contains(ext.lowercased()) { return (.preview, nil) }
@@ -23,9 +27,10 @@ enum ViewerModeChooser {
         // No NULs (or has a BOM) → treat as text; detection picks the encoding
         // and its ISO-8859-1 fallback guarantees decodability.
         let enc = EncodingDetector.detect(sample: sample)
-        // Markdown routes to preview (rendered by ListerWebView, §4.1) but MUST
-        // keep the detected encoding — pressing 1 shows correctly-decoded source.
-        if ["md", "markdown"].contains(ext.lowercased()) { return (.preview, enc) }
+        // Markdown AND standalone diagram sources (mermaid/plantuml) route to
+        // preview (rendered by ListerWebView §4.1) but MUST keep the detected
+        // encoding — pressing 1 shows correctly-decoded source.
+        if renderedTextExtensions.contains(ext.lowercased()) { return (.preview, enc) }
         return (.text, enc)
     }
 }

@@ -20,3 +20,9 @@ Package.resolved
 # Bundled third-party binary — fetched at package time, not committed.
 # (its README.md and License.txt ARE tracked, see vendor/sevenzip/)
 /vendor/sevenzip/7zz
+
+# Bundled diagram renderers — fetched at package time, not committed.
+# (*.tmp are half-finished downloads left by an interrupted package_app.sh)
+/vendor/mermaid/mermaid.min.js
+/vendor/plantuml/plantuml.jar
+/vendor/*/*.tmp

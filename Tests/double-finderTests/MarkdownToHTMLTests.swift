@@ -202,5 +202,81 @@ final class MarkdownToHTMLTests: XCTestCase {
         XCTAssertTrue(h.contains("[image: pic.png]"))
         XCTAssertFalse(h.contains("<img"))
     }
+
+    // MARK: Diagram placeholders (design §4)
+
+    func testMermaidFenceBecomesPlaceholder() {
+        let (html, diagrams) = MarkdownToHTML.renderDocument("```mermaid\ngraph TD; A-->B\n```", baseDir: nil)
+        XCTAssertEqual(diagrams, [DiagramBlock(kind: .mermaid, source: "graph TD; A-->B")])
+        XCTAssertTrue(html.contains(
+            "<div class=\"diagram\" data-idx=\"0\"><pre><code>graph TD; A--&gt;B</code></pre></div>"))
+    }
+
+    func testPlantUMLFenceAliasesAndOrdering() {
+        let md = "```plantuml\nA -> B\n```\ntext\n```puml\nC -> D\n```"
+        let (html, diagrams) = MarkdownToHTML.renderDocument(md, baseDir: nil)
+        XCTAssertEqual(diagrams, [DiagramBlock(kind: .plantuml, source: "A -> B"),
+                                  DiagramBlock(kind: .plantuml, source: "C -> D")])
+        XCTAssertTrue(html.contains("data-idx=\"0\""))
+        XCTAssertTrue(html.contains("data-idx=\"1\""))
+    }
+
+    func testDiagramInsideBlockquoteCollected() {
+        let (_, diagrams) = MarkdownToHTML.renderDocument("> ```mermaid\n> pie\n> ```", baseDir: nil)
+        XCTAssertEqual(diagrams, [DiagramBlock(kind: .mermaid, source: "pie")])
+    }
+
+    func testNormalFenceUnaffectedAndRenderWrapperCompatible() {
+        let (html, diagrams) = MarkdownToHTML.renderDocument("```swift\nlet x = 1\n```", baseDir: nil)
+        XCTAssertTrue(diagrams.isEmpty)
+        XCTAssertFalse(html.contains("class=\"diagram\""))
+        XCTAssertEqual(html, MarkdownToHTML.render("```swift\nlet x = 1\n```", baseDir: nil))
+    }
+
+    // MARK: substituteDiagrams (design §4)
+
+    func testSubstituteSVGReplacesWholePlaceholder() {
+        let doc = MarkdownToHTML.renderDocument("```mermaid\ng\n```", baseDir: nil)
+        let out = MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams,
+                                                    results: [0: .svg("<svg>ok</svg>")])
+        XCTAssertTrue(out.contains("<div class=\"diagram rendered\"><svg>ok</svg></div>"))
+        XCTAssertFalse(out.contains("data-idx"))
+        XCTAssertFalse(out.contains("<pre><code>g</code></pre>"))
+    }
+
+    func testSubstitutePlantUMLGetsWhiteCardClass() {
+        let doc = MarkdownToHTML.renderDocument("```plantuml\n@startuml\nA->B\n@enduml\n```", baseDir: nil)
+        let out = MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams,
+                                                    results: [0: .svg("<svg/>")])
+        XCTAssertTrue(out.contains("<div class=\"diagram rendered diagram-plantuml\"><svg/></div>"))
+    }
+
+    func testSubstituteFailureKeepsCodeAndAddsEscapedNote() {
+        let doc = MarkdownToHTML.renderDocument("```mermaid\ngraph\n```", baseDir: nil)
+        let out = MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams,
+                                                    results: [0: .failureNote("needs <java>")])
+        XCTAssertTrue(out.contains("<div class=\"diagram-note\">needs &lt;java&gt;</div>"))
+        XCTAssertTrue(out.contains("<pre><code>graph</code></pre>"))   // 代码块保留
+    }
+
+    func testSubstituteMissingResultLeavesPlaceholderUntouched() {
+        let doc = MarkdownToHTML.renderDocument("```mermaid\ng\n```", baseDir: nil)
+        XCTAssertEqual(MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams, results: [:]),
+                       doc.html)
+    }
+
+    func testLiteralPlaceholderTextInProseNotSubstituted() {
+        // Adversarial: prose contains the literal placeholder tag as inline code,
+        // BEFORE the real mermaid fence. Escaping keeps the prose copy from ever
+        // matching, and the moving cursor keeps the sweep in document order —
+        // only the REAL placeholder is replaced, the prose stays untouched.
+        let md = "Text with `<div class=\"diagram\" data-idx=\"0\">` inline.\n\n```mermaid\ng\n```"
+        let doc = MarkdownToHTML.renderDocument(md, baseDir: nil)
+        let out = MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams,
+                                                    results: [0: .svg("<svg>ok</svg>")])
+        XCTAssertTrue(out.contains("&lt;div class=&quot;diagram&quot; data-idx=&quot;0&quot;&gt;"))
+        XCTAssertTrue(out.contains("<div class=\"diagram rendered\"><svg>ok</svg></div>"))
+        XCTAssertFalse(out.contains("<div class=\"diagram\" data-idx=\"0\">"))
+    }
 }
 
