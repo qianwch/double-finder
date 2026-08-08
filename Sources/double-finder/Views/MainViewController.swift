@@ -26,6 +26,7 @@ class MainViewController: NSViewController {
     private var activeChecksumSheet: ChecksumSheet?
     private var activeChecksumResults: ChecksumResultsSheet?
     private var activeSplitSheet: SplitSheet?
+    private var activeEncodeSheet: EncodeSheet?
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
 
@@ -1874,6 +1875,114 @@ class MainViewController: NSViewController {
                 self.presentLocalizedError(failure.error, in: window)
             }
         }
+    }
+
+    // MARK: - Encode / Decode (TC: Files ▸ Encode / Decode)
+
+    /// Whole-file in-memory transform; refuse silly sizes.
+    private static let codecSizeLimit: Int64 = 256 << 20
+
+    @objc func actionEncodeFile_menu() { actionEncodeFile() }
+
+    func actionEncodeFile() {
+        guard let window = view.window else { return }
+        let src = activePanelVC.panelState
+        let dst = inactivePanelVC.panelState
+        guard !src.isRemote, !dst.isRemote,
+              PanelState.archiveRoot(in: src.currentPath) == nil,
+              PanelState.archiveRoot(in: dst.currentPath) == nil,
+              let item = activePanelVC.selectedOrCurrent.first,
+              activePanelVC.selectedOrCurrent.count == 1, !item.isDirectory else {
+            NSSound.beep(); return
+        }
+        guard item.size <= Self.codecSizeLimit else {
+            presentCodecTooLarge(in: window); return
+        }
+        let destDir = dst.currentPath
+        let sheet = EncodeSheet(sourceName: item.name, destDir: destDir)
+        activeEncodeSheet = sheet
+        sheet.onEncode = { [weak self] opts in
+            self?.runCodec(title: tr("Encoding"), window: window) {
+                let data = try Data(contentsOf: URL(fileURLWithPath: item.path))
+                let text = opts.encoding == .base64
+                    ? FileCodec.encodeBase64(data)
+                    : FileCodec.uuencode(data, fileName: item.name)
+                try text.write(toFile: destDir + "/" + opts.fileName, atomically: true, encoding: .utf8)
+            }
+        }
+        sheet.beginSheet(on: window) { [weak self] in self?.activeEncodeSheet = nil }
+    }
+
+    @objc func actionDecodeFile_menu() { actionDecodeFile() }
+
+    func actionDecodeFile() {
+        guard let window = view.window else { return }
+        let src = activePanelVC.panelState
+        let dst = inactivePanelVC.panelState
+        guard !src.isRemote, !dst.isRemote,
+              PanelState.archiveRoot(in: src.currentPath) == nil,
+              PanelState.archiveRoot(in: dst.currentPath) == nil,
+              let item = activePanelVC.selectedOrCurrent.first,
+              activePanelVC.selectedOrCurrent.count == 1, !item.isDirectory else {
+            NSSound.beep(); return
+        }
+        guard item.size <= Self.codecSizeLimit else {
+            presentCodecTooLarge(in: window); return
+        }
+        let destDir = dst.currentPath
+        let itemName = item.name
+        runCodec(title: tr("Decoding"), window: window) {
+            let text = try String(contentsOfFile: item.path, encoding: .utf8)
+            let outName: String
+            let payload: Data
+            switch FileCodec.detect(text) {
+            case .uuencode:
+                guard let decoded = FileCodec.uudecode(text) else {
+                    throw FileCodec.DecodeError()
+                }
+                outName = (decoded.fileName as NSString).lastPathComponent
+                payload = decoded.data
+            case .base64:
+                guard let data = FileCodec.decodeBase64(text) else {
+                    throw FileCodec.DecodeError()
+                }
+                let ext = (itemName as NSString).pathExtension.lowercased()
+                outName = ["b64", "uue", "mime"].contains(ext)
+                    ? (itemName as NSString).deletingPathExtension
+                    : itemName + ".decoded"
+                payload = data
+            }
+            try payload.write(to: URL(fileURLWithPath: destDir + "/" + outName))
+        }
+    }
+
+    /// Runs a short whole-file codec job behind an indeterminate ProgressSheet,
+    /// reporting the first failure (e.g. not-valid-encoded-data) afterwards.
+    private func runCodec(title: String, window: NSWindow, body: @escaping () throws -> Void) {
+        let op = FileOperation(type: .copy, sources: [""])
+        op.customTitle = title
+        op.indeterminate = true
+        op.suppressFailureReport = true
+        op.perItemOperation = { _ in
+            try await Task.detached(priority: .userInitiated) { try body() }.value
+        }
+        runOperation(op, on: window) { [weak self] in
+            guard let self = self else { return }
+            self.inactivePanelVC.panelState.refresh()
+            if let failure = op.failures.first {
+                self.presentLocalizedError(failure.error, in: window)
+            }
+        }
+    }
+
+    private func presentCodecTooLarge(in window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = tr("Encode File")
+        alert.informativeText = tr("The file is too large for text encoding (limit %@).",
+                                   ByteCountFormatter.string(fromByteCount: Self.codecSizeLimit,
+                                                             countStyle: .file))
+        alert.addButton(withTitle: tr("OK"))
+        alert.beginSheetModal(for: window)
     }
 
     @objc func actionVerifyChecksums_menu() { actionVerifyChecksums() }

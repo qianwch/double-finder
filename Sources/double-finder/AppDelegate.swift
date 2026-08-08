@@ -99,6 +99,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                     action: #selector(menuSplitFile), keyEquivalent: ""))
         fileMenu.addItem(NSMenuItem(title: tr("Combine Files…"),
                                     action: #selector(menuCombineFiles), keyEquivalent: ""))
+        fileMenu.addItem(NSMenuItem(title: tr("Encode File…"),
+                                    action: #selector(menuEncodeFile), keyEquivalent: ""))
+        fileMenu.addItem(NSMenuItem(title: tr("Decode File"),
+                                    action: #selector(menuDecodeFile), keyEquivalent: ""))
         fileMenu.addItem(.separator())
         fileMenu.addItem(NSMenuItem(title: tr("Connect…"),
                                     action: #selector(menuConnectServer), keyEquivalent: "k"))
@@ -395,6 +399,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuVerifyChecksums() { mainVC()?.actionVerifyChecksums() }
     @objc private func menuSplitFile() { mainVC()?.actionSplitFile() }
     @objc private func menuCombineFiles() { mainVC()?.actionCombineFiles() }
+    @objc private func menuEncodeFile() { mainVC()?.actionEncodeFile() }
+    @objc private func menuDecodeFile() { mainVC()?.actionDecodeFile() }
     @objc private func menuFindFiles() { mainVC()?.actionFindFiles() }
     @objc private func menuMultiRename() { mainVC()?.actionMultiRename() }
     @objc private func menuCleanupUploads() { mainVC()?.actionCleanupIncompleteUploads() }
