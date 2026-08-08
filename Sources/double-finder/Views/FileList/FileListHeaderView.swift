@@ -267,7 +267,71 @@ final class FileListHeaderView: NSView {
             item.target = self
             menu.addItem(item)
         }
+
+        // Column sets (TC style): saved named layouts switch in one click.
+        menu.addItem(.separator())
+        let sets = ColumnSets.all()
+        for set in sets {
+            let item = NSMenuItem(title: set.name, action: #selector(applyColumnSet(_:)),
+                                  keyEquivalent: "")
+            item.representedObject = set.name
+            item.state = set.columns == AppSettings.visibleColumns ? .on : .off
+            item.target = self
+            menu.addItem(item)
+        }
+        let saveItem = NSMenuItem(title: tr("Save Columns as Set…"),
+                                  action: #selector(saveColumnSet), keyEquivalent: "")
+        saveItem.target = self
+        menu.addItem(saveItem)
+        if !sets.isEmpty {
+            let deleteSub = NSMenu()
+            for set in sets {
+                let item = NSMenuItem(title: set.name, action: #selector(deleteColumnSet(_:)),
+                                      keyEquivalent: "")
+                item.representedObject = set.name
+                item.target = self
+                deleteSub.addItem(item)
+            }
+            let deleteItem = NSMenuItem(title: tr("Delete Column Set"), action: nil, keyEquivalent: "")
+            deleteItem.submenu = deleteSub
+            menu.addItem(deleteItem)
+        }
         return menu
+    }
+
+    @objc private func applyColumnSet(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let set = ColumnSets.all().first(where: { $0.name == name }) else { return }
+        // Only known ids, in canonical order — a set saved by a newer build
+        // must not inject columns this build can't draw.
+        let canonical = FileColumnLayout.optionalColumns.map { $0.id }
+        AppSettings.visibleColumns = canonical.filter { set.columns.contains($0) }
+        needsDisplay = true
+        onLayoutChanged?()
+    }
+
+    @objc private func saveColumnSet() {
+        guard let window = window else { return }
+        let alert = NSAlert()
+        alert.messageText = tr("Save Columns as Set")
+        alert.informativeText = tr("Name for the current column layout:")
+        alert.addButton(withTitle: tr("Save"))
+        alert.addButton(withTitle: tr("Cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.bezelStyle = .roundedBezel
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { return }
+            ColumnSets.save(name: name, columns: AppSettings.visibleColumns)
+        }
+    }
+
+    @objc private func deleteColumnSet(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        ColumnSets.remove(name: name)
     }
 
     @objc private func toggleColumn(_ sender: NSMenuItem) {
