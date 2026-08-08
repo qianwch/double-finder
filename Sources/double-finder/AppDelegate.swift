@@ -208,6 +208,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let viewMenu = NSMenu(title: tr("View"))
         viewMenuItem.submenu = viewMenu
         viewMenu.addItem(NSMenuItem(title: tr("Quick Look"), action: #selector(menuQuickLook), keyEquivalent: ""))
+        let quickViewItem = NSMenuItem(title: tr("Quick View Panel"), action: #selector(menuQuickViewPanel), keyEquivalent: "q")
+        quickViewItem.keyEquivalentModifierMask = [.control]
+        viewMenu.addItem(quickViewItem)
         let fullItem = NSMenuItem(title: tr("Full View"), action: #selector(menuViewFull), keyEquivalent: "1")
         let briefItem = NSMenuItem(title: tr("Brief View"), action: #selector(menuViewBrief), keyEquivalent: "2")
         let thumbItem = NSMenuItem(title: tr("Thumbnails"), action: #selector(menuViewThumbnails), keyEquivalent: "3")
@@ -403,6 +406,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuEncodeFile() { mainVC()?.actionEncodeFile() }
     @objc private func menuDecodeFile() { mainVC()?.actionDecodeFile() }
     @objc private func menuCompareContent() { mainVC()?.actionCompareContent() }
+    @objc private func menuQuickViewPanel() { mainVC()?.actionToggleQuickView() }
     @objc private func menuFindFiles() { mainVC()?.actionFindFiles() }
     @objc private func menuMultiRename() { mainVC()?.actionMultiRename() }
     @objc private func menuCleanupUploads() { mainVC()?.actionCleanupIncompleteUploads() }

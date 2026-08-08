@@ -28,6 +28,9 @@ class MainViewController: NSViewController {
     private var activeSplitSheet: SplitSheet?
     private var activeEncodeSheet: EncodeSheet?
     private var compareWindows: [CompareFilesWindow] = []
+    private var quickViewPane: QuickViewPane?
+    private var quickViewTimer: Timer?
+    private var quickViewLastPath: String?
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
 
@@ -403,6 +406,12 @@ class MainViewController: NSViewController {
         // Tab: switch panels
         if keyCode == 48 && flags.isEmpty {
             switchPanel()
+            return true
+        }
+
+        // Ctrl+Q: toggle the Quick View panel (TC style).
+        if keyCode == 12 && flags.contains(.control) && !flags.contains(.command) {
+            actionToggleQuickView()
             return true
         }
 
@@ -1906,6 +1915,70 @@ class MainViewController: NSViewController {
                 self.presentLocalizedError(failure.error, in: window)
             }
         }
+    }
+
+    // MARK: - Quick View panel (TC Ctrl+Q)
+
+    @objc func actionToggleQuickView_menu() { actionToggleQuickView() }
+
+    /// Toggles TC's Quick View: the inactive panel is overlaid with a preview
+    /// that follows the active panel's cursor. A 0.15s timer keeps the preview
+    /// in sync (cursor moves, panel switches, tab changes) — same polling
+    /// pattern as the queue toolbar indicator.
+    func actionToggleQuickView() {
+        if quickViewPane != nil { dismissQuickView(); return }
+        let pane = QuickViewPane()
+        attachQuickView(pane, to: inactivePanelVC)
+        quickViewPane = pane
+        quickViewLastPath = nil
+        updateQuickView()
+        quickViewTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateQuickView() }
+        }
+    }
+
+    private func attachQuickView(_ pane: QuickViewPane, to host: PanelViewController) {
+        pane.removeFromSuperview()
+        pane.translatesAutoresizingMaskIntoConstraints = false
+        host.view.addSubview(pane)
+        NSLayoutConstraint.activate([
+            pane.topAnchor.constraint(equalTo: host.view.topAnchor),
+            pane.leadingAnchor.constraint(equalTo: host.view.leadingAnchor),
+            pane.trailingAnchor.constraint(equalTo: host.view.trailingAnchor),
+            pane.bottomAnchor.constraint(equalTo: host.view.bottomAnchor),
+        ])
+    }
+
+    private func updateQuickView() {
+        guard let pane = quickViewPane else { return }
+        // Follow the active panel: the overlay always sits on the other side.
+        if pane.superview !== inactivePanelVC.view {
+            attachQuickView(pane, to: inactivePanelVC)
+            quickViewLastPath = nil
+        }
+        let item = activePanelVC.panelState.currentItem
+        let path = item?.path ?? ""
+        guard path != quickViewLastPath else { return }
+        quickViewLastPath = path
+        guard let item = item, item.name != ".." else {
+            pane.show(url: nil, title: "")
+            return
+        }
+        // Local files (and folders) preview directly; remote/virtual items
+        // would need a download — show the placeholder instead.
+        let isLocal = !activePanelVC.panelState.isRemote
+            && PanelState.archiveRoot(in: item.path) == nil
+            && FileManager.default.fileExists(atPath: item.path)
+        pane.show(url: isLocal ? URL(fileURLWithPath: item.path) : nil, title: item.name)
+    }
+
+    private func dismissQuickView() {
+        quickViewTimer?.invalidate()
+        quickViewTimer = nil
+        quickViewPane?.shutDown()
+        quickViewPane?.removeFromSuperview()
+        quickViewPane = nil
+        quickViewLastPath = nil
     }
 
     // MARK: - Compare by Content (TC file comparison)
