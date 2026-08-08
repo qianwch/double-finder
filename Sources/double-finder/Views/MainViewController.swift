@@ -194,8 +194,47 @@ class MainViewController: NSViewController {
     }
 
     private func configureToolbar() {
-        let byID = Dictionary(uniqueKeysWithValues: allToolbarCommands.map { ($0.id, $0) })
+        var byID = Dictionary(uniqueKeysWithValues: allToolbarCommands.map { ($0.id, $0) })
+        // User-defined command buttons (TC-style) join the pool under their
+        // "custom.*" ids; ToolbarConfig.ids decides visibility and order.
+        for button in CustomToolbarButtons.all() {
+            byID[button.id] = ToolbarBar.Item(
+                id: button.id,
+                symbol: button.symbol.isEmpty ? "terminal" : button.symbol,
+                tooltip: button.title
+            ) { [weak self] in self?.runCustomToolbarCommand(button) }
+        }
         toolbarBar.configure(ToolbarConfig.ids.compactMap { byID[$0] })
+    }
+
+    /// Expands the TC placeholders against the current panels and fires the
+    /// command via zsh (fire-and-forget, like TC's button bar).
+    private func runCustomToolbarCommand(_ button: CustomToolbarButton) {
+        let active = activePanelVC.panelState
+        let other = inactivePanelVC.panelState
+        let selected = activePanelVC.selectedOrCurrent
+            .filter { $0.name != ".." }
+            .map(\.path)
+        let command = ToolbarCommand.expand(
+            button.command,
+            activeDir: active.currentPath,
+            otherDir: other.currentPath,
+            cursorName: active.currentItem.map { ($0.name as NSString).lastPathComponent } ?? "",
+            selectedPaths: selected)
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-lc", command]
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: active.currentPath, isDirectory: &isDir),
+           isDir.boolValue {
+            proc.currentDirectoryURL = URL(fileURLWithPath: active.currentPath)
+        }
+        do {
+            try proc.run()
+        } catch {
+            if let window = view.window { presentLocalizedError(error, in: window) }
+        }
     }
 
     @objc func customizeShortcuts_menu() {
