@@ -27,6 +27,7 @@ class MainViewController: NSViewController {
     private var activeChecksumResults: ChecksumResultsSheet?
     private var activeSplitSheet: SplitSheet?
     private var activeEncodeSheet: EncodeSheet?
+    private var compareWindows: [CompareFilesWindow] = []
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
 
@@ -1879,6 +1880,116 @@ class MainViewController: NSViewController {
             self.inactivePanelVC.panelState.refresh()
             if let failure = op.failures.first {
                 self.presentLocalizedError(failure.error, in: window)
+            }
+        }
+    }
+
+    // MARK: - Compare by Content (TC file comparison)
+
+    private static let compareSizeLimit: Int64 = 32 << 20
+
+    @objc func actionCompareContent_menu() { actionCompareContent() }
+
+    func actionCompareContent() {
+        guard let window = view.window else { return }
+        let active = activePanelVC
+        let other = inactivePanelVC
+        guard !active.panelState.isRemote,
+              PanelState.archiveRoot(in: active.panelState.currentPath) == nil else {
+            NSSound.beep(); return
+        }
+        let otherIsLocal = !other.panelState.isRemote
+            && PanelState.archiveRoot(in: other.panelState.currentPath) == nil
+
+        // TC pairing: two selected in the active panel; otherwise the cursor
+        // file against the other panel's same-named file, falling back to the
+        // other panel's cursor file.
+        var pair: (String, String)?
+        let selected = active.selectedOrCurrent.filter { !$0.isDirectory }
+        if selected.count >= 2 {
+            pair = (selected[0].path, selected[1].path)
+        } else if let first = selected.first {
+            let sameName = other.panelState.currentPath + "/" + first.name
+            if otherIsLocal, FileManager.default.fileExists(atPath: sameName), sameName != first.path {
+                pair = (first.path, sameName)
+            } else if otherIsLocal, let o = other.selectedOrCurrent.first, !o.isDirectory,
+                      o.path != first.path {
+                pair = (first.path, o.path)
+            }
+        }
+        guard let (leftPath, rightPath) = pair else {
+            let alert = NSAlert()
+            alert.messageText = tr("Compare by Content")
+            alert.informativeText = tr("Select two files (both in the active panel, or one in each panel).")
+            alert.addButton(withTitle: tr("OK"))
+            alert.beginSheetModal(for: window)
+            return
+        }
+
+        let fm = FileManager.default
+        func size(_ p: String) -> Int64 { (try? fm.attributesOfItem(atPath: p)[.size] as? Int64) ?? 0 }
+        guard size(leftPath) <= Self.compareSizeLimit, size(rightPath) <= Self.compareSizeLimit else {
+            let alert = NSAlert()
+            alert.messageText = tr("Compare by Content")
+            alert.informativeText = tr("The files are too large to compare (limit %@).",
+                                       ByteCountFormatter.string(fromByteCount: Self.compareSizeLimit,
+                                                                 countStyle: .file))
+            alert.addButton(withTitle: tr("OK"))
+            alert.beginSheetModal(for: window)
+            return
+        }
+
+        Task {
+            enum Outcome {
+                case text(CompareFilesWindow.Side, CompareFilesWindow.Side, [DiffEngine.Row])
+                case binary(identical: Bool)
+                case failed(Error)
+            }
+            let outcome: Outcome = await Task.detached(priority: .userInitiated) {
+                do {
+                    let leftData = try Data(contentsOf: URL(fileURLWithPath: leftPath))
+                    let rightData = try Data(contentsOf: URL(fileURLWithPath: rightPath))
+                    func isBinary(_ d: Data) -> Bool { d.prefix(8192).contains(0) }
+                    if isBinary(leftData) || isBinary(rightData) {
+                        return .binary(identical: leftData == rightData)
+                    }
+                    func lines(_ data: Data) -> [String] {
+                        let encoding = EncodingDetector.detect(sample: data.prefix(64 << 10))
+                        let text = String(data: data, encoding: encoding)
+                            ?? String(decoding: data, as: UTF8.self)
+                        var lines = text.components(separatedBy: "\n")
+                            .map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+                        if lines.last == "" { lines.removeLast() }   // trailing newline
+                        return lines
+                    }
+                    let leftLines = lines(leftData)
+                    let rightLines = lines(rightData)
+                    let rows = DiffEngine.diff(left: leftLines, right: rightLines)
+                    return .text(.init(path: leftPath, lines: leftLines),
+                                 .init(path: rightPath, lines: rightLines), rows)
+                } catch {
+                    return .failed(error)
+                }
+            }.value
+
+            switch outcome {
+            case .failed(let error):
+                self.presentLocalizedError(error, in: window)
+            case .binary(let identical):
+                let alert = NSAlert()
+                alert.messageText = tr("Compare by Content")
+                alert.informativeText = identical
+                    ? tr("The files are identical.")
+                    : tr("The files are binary and their content differs.")
+                alert.addButton(withTitle: tr("OK"))
+                alert.beginSheetModal(for: window, completionHandler: nil)
+            case .text(let leftSide, let rightSide, let rows):
+                let compare = CompareFilesWindow(left: leftSide, right: rightSide, rows: rows)
+                self.compareWindows.append(compare)
+                compare.onClose = { [weak self, weak compare] in
+                    self?.compareWindows.removeAll { $0 === compare }
+                }
+                compare.show()
             }
         }
     }

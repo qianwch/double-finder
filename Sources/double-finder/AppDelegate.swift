@@ -163,6 +163,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cmdMenu.addItem(closeTabItem)
         cmdMenu.addItem(.separator())
         cmdMenu.addItem(NSMenuItem(title: tr("Compare Directories"), action: #selector(menuCompareDirs), keyEquivalent: ""))
+        cmdMenu.addItem(NSMenuItem(title: tr("Compare by Content"), action: #selector(menuCompareContent), keyEquivalent: ""))
         cmdMenu.addItem(NSMenuItem(title: tr("Synchronize Directories…"), action: #selector(menuSyncDirs), keyEquivalent: ""))
         cmdMenu.addItem(.separator())
         let swapItem = NSMenuItem(title: tr("Swap Panels"), action: #selector(menuSwapPanels), keyEquivalent: "u")
@@ -401,6 +402,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuCombineFiles() { mainVC()?.actionCombineFiles() }
     @objc private func menuEncodeFile() { mainVC()?.actionEncodeFile() }
     @objc private func menuDecodeFile() { mainVC()?.actionDecodeFile() }
+    @objc private func menuCompareContent() { mainVC()?.actionCompareContent() }
     @objc private func menuFindFiles() { mainVC()?.actionFindFiles() }
     @objc private func menuMultiRename() { mainVC()?.actionMultiRename() }
     @objc private func menuCleanupUploads() { mainVC()?.actionCleanupIncompleteUploads() }
