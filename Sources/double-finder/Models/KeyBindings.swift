@@ -96,29 +96,44 @@ enum AppCommand: String, CaseIterable {
         case .pack: return "⌥F5"
         case .extract: return "⌥F6"
         case .find: return "⌘⇧F"
-        case .multiRename: return "⌃M"
+        case .multiRename: return "⌘M"
         case .sftp: return "⌘N"
-        case .swap: return "⌃U"
-        case .branch: return "⌃B"
+        case .swap: return "⌘U"
+        case .branch: return "⌘⇧B"
         case .tree: return "⌘⇧D"
         case .commandLine: return "⌘L"
-        case .rename: return "F2"
+        case .rename: return "—"
         case .quickLook: return "F3"
         case .viewFull: return "⌘1"
         case .viewBrief: return "⌘2"
         case .viewThumbnails: return "⌘3"
         case .filter: return "⌘F"
         case .selectAll: return "⌘A"
-        case .newTab: return "⌃T"
-        case .closeTab: return "⌃W"
+        case .newTab: return "⌘T"
+        case .closeTab: return "⌘W"
         }
     }
 }
 
-/// User-customized shortcuts, stored in UserDefaults. These are *additional*
-/// bindings layered on top of the built-in defaults (which still work).
+/// User-customized shortcuts, stored in UserDefaults. Custom bindings layer on
+/// top of the built-in defaults; a default can additionally be *disabled* per
+/// command ("kb.off.<cmd>"), which silences the built-in key both in
+/// handleKeyDown and in the menu accelerators (menus are rebuilt on change).
 enum KeyBindings {
     private static func key(_ c: AppCommand) -> String { "kb.\(c.rawValue)" }
+    private static func offKey(_ c: AppCommand) -> String { "kb.off.\(c.rawValue)" }
+
+    static func isDefaultDisabled(_ c: AppCommand) -> Bool {
+        UserDefaults.standard.bool(forKey: offKey(c))
+    }
+
+    static func setDefaultDisabled(_ disabled: Bool, for c: AppCommand) {
+        if disabled { UserDefaults.standard.set(true, forKey: offKey(c)) }
+        else { UserDefaults.standard.removeObject(forKey: offKey(c)) }
+    }
+
+    /// Guard for the built-in hard-coded key branches.
+    static func defaultActive(_ c: AppCommand) -> Bool { !isDefaultDisabled(c) }
 
     static func combo(for command: AppCommand) -> KeyCombo? {
         guard let s = UserDefaults.standard.string(forKey: key(command)) else { return nil }

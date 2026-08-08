@@ -36,7 +36,7 @@ final class ShortcutsSettingsView: NSView {
     private func setupUI() {
         // Instruction label
         let label = NSTextField(wrappingLabelWithString:
-            tr("Select a command, then Record to assign a shortcut. Custom shortcuts work in addition to the built-in defaults."))
+            tr("Select a command, then Record to assign a shortcut. Custom shortcuts work in addition to the built-in defaults; uncheck Enabled to turn a built-in key off."))
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -53,9 +53,12 @@ final class ShortcutsSettingsView: NSView {
         dflCol.title = tr("Default"); dflCol.width = 80
         let curCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("custom"))
         curCol.title = tr("Custom"); curCol.width = 120
+        let onCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("dflOn"))
+        onCol.title = tr("Enabled"); onCol.width = 60
 
         tableView.addTableColumn(cmdCol)
         tableView.addTableColumn(dflCol)
+        tableView.addTableColumn(onCol)
         tableView.addTableColumn(curCol)
         tableView.rowHeight = 22
         tableView.usesAlternatingRowBackgroundColors = true
@@ -159,10 +162,12 @@ final class ShortcutsSettingsView: NSView {
     @objc private func resetAllBindings() {
         // Cancel any in-progress recording
         cancelRecording()
-        // Clear all custom bindings
+        // Clear all custom bindings and re-enable every built-in default
         for cmd in AppCommand.allCases {
             KeyBindings.set(nil, for: cmd)
+            KeyBindings.setDefaultDisabled(false, for: cmd)
         }
+        tableView.reloadData()
         // cancelRecording() above already reset recordingRow → didSet reloadData()
         onChanged()
     }
@@ -173,9 +178,31 @@ final class ShortcutsSettingsView: NSView {
 extension ShortcutsSettingsView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { commands.count }
 
+    /// Checkbox column: whether the built-in default key still fires.
+    @objc private func toggleDefaultEnabled(_ sender: NSButton) {
+        let row = sender.tag
+        guard row >= 0, row < commands.count else { return }
+        KeyBindings.setDefaultDisabled(sender.state == .off, for: commands[row])
+        onChanged()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let command = commands[row]
         let id = tableColumn?.identifier.rawValue ?? "cmd"
+        if id == "dflOn" {
+            let cellId = NSUserInterfaceItemIdentifier("sc_dflOn")
+            let box = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSButton ?? {
+                let b = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleDefaultEnabled(_:)))
+                b.identifier = cellId
+                return b
+            }()
+            box.target = self
+            box.action = #selector(toggleDefaultEnabled(_:))
+            box.tag = row
+            box.state = KeyBindings.isDefaultDisabled(command) ? .off : .on
+            box.isEnabled = command.defaultHint != "—"
+            return box
+        }
         let text: String
         switch id {
         case "default":

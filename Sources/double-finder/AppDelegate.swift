@@ -60,6 +60,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainVC()?.saveTabs()
     }
 
+    /// Re-runs setupMenus — called after the Shortcuts editor toggles a
+    /// disabled default so menu accelerators reflect it immediately.
+    @MainActor func rebuildMenus() { setupMenus() }
+
+    /// Clears a menu item's key equivalent when its command's built-in default
+    /// is disabled in the Shortcuts editor.
+    @MainActor private func applyDefaultKeyState(_ item: NSMenuItem, _ cmd: AppCommand) {
+        if KeyBindings.isDefaultDisabled(cmd) {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+        }
+    }
+
     @MainActor private func setupMenus() {
         let mainMenu = NSMenu()
 
@@ -86,9 +99,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileMenu.addItem(NSMenuItem(title: tr("Change Permissions…"), action: #selector(menuChangeAttributes), keyEquivalent: ""))
         let packItem = NSMenuItem(title: tr("Pack to Other Panel…"), action: #selector(menuPack), keyEquivalent: String(UnicodeScalar(NSF5FunctionKey)!))
         packItem.keyEquivalentModifierMask = [.option]
+        applyDefaultKeyState(packItem, .pack)
         fileMenu.addItem(packItem)
         let extractItem = NSMenuItem(title: tr("Extract to Other Panel"), action: #selector(menuExtract), keyEquivalent: String(UnicodeScalar(NSF6FunctionKey)!))
         extractItem.keyEquivalentModifierMask = [.option]
+        applyDefaultKeyState(extractItem, .extract)
         fileMenu.addItem(extractItem)
         fileMenu.addItem(.separator())
         fileMenu.addItem(NSMenuItem(title: tr("Create Checksum File…"),
@@ -123,7 +138,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         copyPathItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(copyPathItem)
         editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: tr("Select All"), action: #selector(menuSelectAll), keyEquivalent: "a"))
+        let selectAllItem = NSMenuItem(title: tr("Select All"), action: #selector(menuSelectAll), keyEquivalent: "a")
+        applyDefaultKeyState(selectAllItem, .selectAll)
+        editMenu.addItem(selectAllItem)
         let deselectItem = NSMenuItem(title: tr("Deselect All"), action: #selector(menuDeselectAll), keyEquivalent: "a")
         deselectItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(deselectItem)
@@ -157,9 +174,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cmdMenuItem.submenu = cmdMenu
         let newTabItem = NSMenuItem(title: tr("New Tab"), action: #selector(menuNewTab), keyEquivalent: "t")
         newTabItem.keyEquivalentModifierMask = [.command]
+        applyDefaultKeyState(newTabItem, .newTab)
         cmdMenu.addItem(newTabItem)
         let closeTabItem = NSMenuItem(title: tr("Close Tab"), action: #selector(menuCloseTab), keyEquivalent: "w")
         closeTabItem.keyEquivalentModifierMask = [.command]
+        applyDefaultKeyState(closeTabItem, .closeTab)
         cmdMenu.addItem(closeTabItem)
         cmdMenu.addItem(.separator())
         cmdMenu.addItem(NSMenuItem(title: tr("Compare Directories"), action: #selector(menuCompareDirs), keyEquivalent: ""))
@@ -168,12 +187,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cmdMenu.addItem(.separator())
         let swapItem = NSMenuItem(title: tr("Swap Panels"), action: #selector(menuSwapPanels), keyEquivalent: "u")
         swapItem.keyEquivalentModifierMask = [.command]
+        applyDefaultKeyState(swapItem, .swap)
         cmdMenu.addItem(swapItem)
         let findItem = NSMenuItem(title: tr("Find Files…"), action: #selector(menuFindFiles), keyEquivalent: "f")
         findItem.keyEquivalentModifierMask = [.command, .shift]
+        applyDefaultKeyState(findItem, .find)
         cmdMenu.addItem(findItem)
         let renameItem = NSMenuItem(title: tr("Multi-Rename Tool…"), action: #selector(menuMultiRename), keyEquivalent: "m")
         renameItem.keyEquivalentModifierMask = [.command]
+        applyDefaultKeyState(renameItem, .multiRename)
         cmdMenu.addItem(renameItem)
         cmdMenu.addItem(NSMenuItem(title: tr("Open Folder in Other Panel"), action: #selector(menuOpenInOther), keyEquivalent: ""))
         cmdMenu.addItem(NSMenuItem(title: tr("Same Folder as Active in Other Panel"), action: #selector(menuMatchOther), keyEquivalent: ""))
@@ -188,7 +210,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         terminalAppMenu = termAppMenu
         cmdMenu.addItem(termAppItem)
         cmdMenu.addItem(.separator())
-        cmdMenu.addItem(NSMenuItem(title: tr("Focus Command Line"), action: #selector(menuFocusCommandLine), keyEquivalent: "l"))
+        let cmdLineItem = NSMenuItem(title: tr("Focus Command Line"), action: #selector(menuFocusCommandLine), keyEquivalent: "l")
+        applyDefaultKeyState(cmdLineItem, .commandLine)
+        cmdMenu.addItem(cmdLineItem)
         cmdMenu.addItem(NSMenuItem(title: tr("Customize Shortcuts…"), action: #selector(menuCustomizeShortcuts), keyEquivalent: ""))
         cmdMenu.addItem(.separator())
         cmdMenu.addItem(NSMenuItem(title: tr("Clean Up Incomplete Uploads…"),
@@ -214,14 +238,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let fullItem = NSMenuItem(title: tr("Full View"), action: #selector(menuViewFull), keyEquivalent: "1")
         let briefItem = NSMenuItem(title: tr("Brief View"), action: #selector(menuViewBrief), keyEquivalent: "2")
         let thumbItem = NSMenuItem(title: tr("Thumbnails"), action: #selector(menuViewThumbnails), keyEquivalent: "3")
+        applyDefaultKeyState(fullItem, .viewFull)
+        applyDefaultKeyState(briefItem, .viewBrief)
+        applyDefaultKeyState(thumbItem, .viewThumbnails)
         viewMenu.addItem(fullItem); viewMenu.addItem(briefItem); viewMenu.addItem(thumbItem)
         viewMenu.addItem(.separator())
         let treeItem = NSMenuItem(title: tr("Directory Tree"), action: #selector(menuToggleTree), keyEquivalent: "d")
         treeItem.keyEquivalentModifierMask = [.command, .shift]
+        applyDefaultKeyState(treeItem, .tree)
         viewMenu.addItem(treeItem)
-        viewMenu.addItem(NSMenuItem(title: tr("Quick Filter…"), action: #selector(menuFilter), keyEquivalent: "f"))
+        let filterItem = NSMenuItem(title: tr("Quick Filter…"), action: #selector(menuFilter), keyEquivalent: "f")
+        applyDefaultKeyState(filterItem, .filter)
+        viewMenu.addItem(filterItem)
         let branchItem = NSMenuItem(title: tr("Branch View (flatten subtree)"), action: #selector(menuBranchView), keyEquivalent: "b")
         branchItem.keyEquivalentModifierMask = [.command, .shift]
+        applyDefaultKeyState(branchItem, .branch)
         viewMenu.addItem(branchItem)
         let colorItem = NSMenuItem(title: tr("Color by File Type"), action: #selector(menuToggleColor), keyEquivalent: "")
         colorItem.state = AppSettings.colorByType ? .on : .off
@@ -240,7 +271,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         driveBarItem.state = AppSettings.showDriveBar ? .on : .off
         viewMenu.addItem(driveBarItem)
         viewMenu.addItem(.separator())
-        viewMenu.addItem(NSMenuItem(title: tr("Refresh"), action: #selector(menuRefresh), keyEquivalent: "r"))
+        let refreshItem = NSMenuItem(title: tr("Refresh"), action: #selector(menuRefresh), keyEquivalent: "r")
+        applyDefaultKeyState(refreshItem, .refresh)
+        viewMenu.addItem(refreshItem)
 
         // Help menu
         let helpMenuItem = NSMenuItem(title: tr("Help"), action: nil, keyEquivalent: "")

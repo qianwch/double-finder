@@ -487,7 +487,7 @@ class MainViewController: NSViewController {
         }
 
         // F3: Quick Look
-        if keyCode == 99 {
+        if keyCode == 99 && KeyBindings.defaultActive(.quickLook) {
             actionQuickLook()
             return true
         }
@@ -497,7 +497,7 @@ class MainViewController: NSViewController {
         // Queue (TC-style), handled by that sheet's button key equivalent.
 
         // Cmd+L: focus the command line
-        if chars == "l" && flags.contains(.command) {
+        if chars == "l" && flags.contains(.command) && KeyBindings.defaultActive(.commandLine) {
             focusCommandLine()
             return true
         }
@@ -516,24 +516,30 @@ class MainViewController: NSViewController {
 
         // F5: Copy · Alt+F5: pack selection into an archive in the other panel
         if keyCode == 96 {
-            if flags.contains(.option) { actionPackZip() } else { actionCopy() }
-            return true
+            if flags.contains(.option) {
+                if KeyBindings.defaultActive(.pack) { actionPackZip(); return true }
+            } else if KeyBindings.defaultActive(.copy) {
+                actionCopy(); return true
+            }
         }
 
         // F6: Move · Alt+F6: extract selected archive(s) into the other panel
         if keyCode == 97 {
-            if flags.contains(.option) { actionExtractArchive() } else { actionMove() }
-            return true
+            if flags.contains(.option) {
+                if KeyBindings.defaultActive(.extract) { actionExtractArchive(); return true }
+            } else if KeyBindings.defaultActive(.move) {
+                actionMove(); return true
+            }
         }
 
         // F7: New Directory
-        if keyCode == 98 {
+        if keyCode == 98 && KeyBindings.defaultActive(.newDir) {
             actionNewDirectory()
             return true
         }
 
         // F8 or Delete: Delete
-        if keyCode == 100 || keyCode == 117 {
+        if (keyCode == 100 || keyCode == 117) && KeyBindings.defaultActive(.delete) {
             actionDelete()
             return true
         }
@@ -548,10 +554,12 @@ class MainViewController: NSViewController {
         if (chars == "a" || chars == "A") && flags.contains(.command) {
             if flags.contains(.shift) {
                 activePanelVC.clearSelection()
-            } else {
-                activePanelVC.selectAll()
+                return true
             }
-            return true
+            if KeyBindings.defaultActive(.selectAll) {
+                activePanelVC.selectAll()
+                return true
+            }
         }
 
         // Escape: quickly clear the selection
@@ -565,7 +573,7 @@ class MainViewController: NSViewController {
         // to/from Finder and route to the text field when one is focused.
 
         // Cmd+N: connect to server
-        if chars == "n" && flags.contains(.command) {
+        if chars == "n" && flags.contains(.command) && KeyBindings.defaultActive(.sftp) {
             actionConnectServer_menu()
             return true
         }
@@ -577,36 +585,37 @@ class MainViewController: NSViewController {
         }
 
         // Cmd+F: quick filter the active panel
-        if chars == "f" && flags.contains(.command) {
+        if chars == "f" && flags.contains(.command) && KeyBindings.defaultActive(.filter) {
             activePanelVC.beginFilter()
             return true
         }
 
         // Cmd+U: swap the two panels
-        if chars == "u" && flags.contains(.command) {
+        if chars == "u" && flags.contains(.command) && KeyBindings.defaultActive(.swap) {
             swapPanels()
             return true
         }
 
         // Cmd+M: multi-rename tool
-        if chars == "m" && flags.contains(.command) {
+        if chars == "m" && flags.contains(.command) && KeyBindings.defaultActive(.multiRename) {
             actionMultiRename()
             return true
         }
 
         // Cmd+Shift+B: toggle branch view (⌘B is "add to Favorites"). Use keyCode
         // since charactersIgnoringModifiers is unreliable for Cmd+Shift+letter.
-        if keyCode == 11 && flags.contains(.command) && flags.contains(.shift) {
+        if keyCode == 11 && flags.contains(.command) && flags.contains(.shift)
+            && KeyBindings.defaultActive(.branch) {
             activePanelVC.panelState.toggleBranchView()
             return true
         }
 
         // Cmd+T / Cmd+W: new / close folder tab
-        if chars == "t" && flags.contains(.command) {
+        if chars == "t" && flags.contains(.command) && KeyBindings.defaultActive(.newTab) {
             activePanelVC.newTab()
             return true
         }
-        if chars == "w" && flags.contains(.command) {
+        if chars == "w" && flags.contains(.command) && KeyBindings.defaultActive(.closeTab) {
             activePanelVC.closeCurrentTab()
             return true
         }
@@ -617,7 +626,8 @@ class MainViewController: NSViewController {
         }
 
         // Cmd+Shift+F: find files
-        if (chars == "f" || chars == "F") && flags.contains(.command) && flags.contains(.shift) {
+        if (chars == "f" || chars == "F") && flags.contains(.command) && flags.contains(.shift)
+            && KeyBindings.defaultActive(.find) {
             actionFindFiles()
             return true
         }
@@ -2689,8 +2699,9 @@ class MainViewController: NSViewController {
                                            installedEditors: installedEditors())
         win.onChange = { [weak self] in self?.reapplyAllSettings() }
         win.onToolbarChanged = { [weak self] in self?.configureToolbar() }
-        // onShortcutsChanged / onFavoritesChanged: no refresh needed
-        // (key bindings read live; favorites menu rebuilt on demand)
+        // Menu accelerators must reflect disabled built-in defaults immediately.
+        win.onShortcutsChanged = { (NSApp.delegate as? AppDelegate)?.rebuildMenus() }
+        // onFavoritesChanged: no refresh needed (favorites menu rebuilt on demand)
         settingsWindow = win
         return win
     }
