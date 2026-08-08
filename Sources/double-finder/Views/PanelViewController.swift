@@ -640,18 +640,34 @@ class PanelViewController: NSViewController {
         organize.target = self
         menu.addItem(organize)
 
-        let favorites = Favorites.all()
-        if !favorites.isEmpty {
+        let (top, groups) = Favorites.grouped()
+        if !top.isEmpty || !groups.isEmpty {
             menu.addItem(.separator())
-            for path in favorites {
-                let name = (path as NSString).lastPathComponent
-                let item = NSMenuItem(title: name.isEmpty ? path : name,
+            func favItem(_ fav: FavoriteItem) -> NSMenuItem {
+                let item = NSMenuItem(title: fav.displayName,
                                       action: #selector(favGoTo(_:)), keyEquivalent: "")
-                item.toolTip = path
-                item.representedObject = path
+                item.toolTip = fav.path
+                item.representedObject = fav.path
                 item.target = self
-                if path == panelState.currentPath { item.state = .on }
+                if fav.path == panelState.currentPath { item.state = .on }
                 menu.addItem(item)
+                return item
+            }
+            for fav in top { _ = favItem(fav) }
+            for (groupName, members) in groups {
+                let groupItem = NSMenuItem(title: groupName, action: nil, keyEquivalent: "")
+                let sub = NSMenu(title: groupName)
+                for fav in members {
+                    let item = NSMenuItem(title: fav.displayName,
+                                          action: #selector(favGoTo(_:)), keyEquivalent: "")
+                    item.toolTip = fav.path
+                    item.representedObject = fav.path
+                    item.target = self
+                    if fav.path == panelState.currentPath { item.state = .on }
+                    sub.addItem(item)
+                }
+                groupItem.submenu = sub
+                menu.addItem(groupItem)
             }
         }
         if Favorites.contains(panelState.currentPath) {

@@ -321,17 +321,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         organizeItem.target = self
         menu.addItem(organizeItem)
 
-        let favorites = Favorites.all()
-        guard !favorites.isEmpty else { return }
+        let (top, groups) = Favorites.grouped()
+        guard !top.isEmpty || !groups.isEmpty else { return }
         menu.addItem(.separator())
-        for path in favorites {
-            let name = (path as NSString).lastPathComponent
-            let item = NSMenuItem(title: name.isEmpty ? path : name,
+        func favItem(_ fav: FavoriteItem) -> NSMenuItem {
+            let item = NSMenuItem(title: fav.displayName,
                                   action: #selector(menuGoFavorite(_:)), keyEquivalent: "")
-            item.toolTip = path
-            item.representedObject = path
+            item.toolTip = fav.path
+            item.representedObject = fav.path
             item.target = self
-            menu.addItem(item)
+            return item
+        }
+        for fav in top { menu.addItem(favItem(fav)) }
+        for (groupName, members) in groups {
+            let groupItem = NSMenuItem(title: groupName, action: nil, keyEquivalent: "")
+            let sub = NSMenu(title: groupName)
+            for fav in members { sub.addItem(favItem(fav)) }
+            groupItem.submenu = sub
+            menu.addItem(groupItem)
         }
         menu.addItem(.separator())
         let removeItem = NSMenuItem(title: tr("Remove Current Folder"), action: #selector(menuRemoveFavorite), keyEquivalent: "")
