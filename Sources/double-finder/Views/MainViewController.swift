@@ -1050,7 +1050,9 @@ class MainViewController: NSViewController {
 
     /// One transfer pipeline for every backend: prune → confirm → unified conflict
     /// detection → Overwrite/Skip/Cancel → drop skipped → provider builds the op → dispatch.
-    private func runTransfer(items rawItems: [FileItem], destPanel: PanelState, provider: TransferProvider) {
+    private func runTransfer(items rawItems: [FileItem], destPanel: PanelState,
+                             provider: TransferProvider,
+                             moveDeletingWith deleteProvider: DeleteProvider? = nil) {
         // Virtual listings (search results, branch view) carry a display *path*
         // in `name` (e.g. "sub/dir/file.docx") so files from different folders
         // don't collide in the listing. But the transfer pipeline — dest prefill,
@@ -1116,8 +1118,20 @@ class MainViewController: NSViewController {
                     guard !toTransfer.isEmpty else { return }
                     let op = provider.makeOperation(items: toTransfer, destPath: dest, renameTo: renameTo)
                     self.dispatchOperation(op, queued: queued) { [weak self] in
-                        self?.activePanelVC.panelState.refresh()
-                        self?.inactivePanelVC.panelState.refresh()
+                        guard let self = self else { return }
+                        // Cross-backend move: sources go away only after every
+                        // copy unit succeeded (a failed/cancelled copy must not
+                        // destroy the originals).
+                        if let deleteProvider = deleteProvider, !op.isCancelled, op.failures.isEmpty {
+                            let delOp = deleteProvider.makeOperation(items: toTransfer)
+                            self.runOperation(delOp) { [weak self] in
+                                self?.activePanelVC.panelState.refresh()
+                                self?.inactivePanelVC.panelState.refresh()
+                            }
+                            return
+                        }
+                        self.activePanelVC.panelState.refresh()
+                        self.inactivePanelVC.panelState.refresh()
                     }
                 }
             }
@@ -1158,6 +1172,12 @@ class MainViewController: NSViewController {
         // → server-side copy (no download/upload round-trip).
         if let s = src.s3, let d = dst.s3, s.sameStore(as: d), let client = src.s3Client {
             return S3SameStoreProvider(client: client, move: false)
+        }
+        // Different S3 services on the two panels → bounce each object through
+        // a local temp file (download from one service, upload to the other).
+        if src.s3 != nil, dst.s3 != nil,
+           let srcClient = src.s3Client, let dstClient = dst.s3Client {
+            return S3CrossStoreProvider(srcClient: srcClient, dstClient: dstClient)
         }
         if src.s3 != nil, let client = src.s3Client {
             return S3TransferProvider(client: client, downloading: true)
@@ -1234,6 +1254,19 @@ class MainViewController: NSViewController {
         } else if let s = src.sftp, let d = dst.sftp, s.sameHost(as: d) {
             // Same SFTP host → server-side mv (no download+upload round-trip).
             provider = SFTPSameHostProvider(connection: s, move: true)
+        } else if src.s3 != nil || dst.s3 != nil || src.sftp != nil || dst.sftp != nil {
+            // Cross-backend move (local↔S3, local↔SFTP, S3↔S3 cross-store…):
+            // run the matching copy pipeline, then delete the sources once every
+            // unit succeeded (TC's F6 to/from a remote panel). Archive sources
+            // can't be removed in place, so refuse those.
+            guard PanelState.archiveRoot(in: src.currentPath) == nil else { NSSound.beep(); return }
+            let del = DeleteProvider(sftp: src.sftp,
+                                     s3FS: src.s3 != nil ? src.fs : nil,
+                                     permanent: true)
+            runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst,
+                        provider: transferProvider(forCopyFrom: src, to: dst),
+                        moveDeletingWith: del)
+            return
         } else {
             provider = LocalMoveProvider()
         }
@@ -2620,8 +2653,6 @@ class MainViewController: NSViewController {
         guard let le = makeSyncEndpoint(l), let re = makeSyncEndpoint(r) else {
             NSSound.beep(); return    // archive / S3 bucket root not supported
         }
-        // v1: local↔remote only — reject two remote sides.
-        guard !(le.isRemote && re.isRemote) else { NSSound.beep(); return }
         guard let window = view.window else { return }
         let sheet = SyncDirsSheet(left: le, right: re,
                                   leftLabel: l.currentPath, rightLabel: r.currentPath)

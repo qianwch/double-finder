@@ -264,8 +264,11 @@ final class SyncDirsSheet: NSWindowController {
 
     // MARK: - Synchronize
 
-    /// One file `rel` from `src` to `dst`. v1: one side is always local.
-    /// S3 sides stream byte progress via `report`; local/SFTP report once on completion.
+    /// One file `rel` from `src` to `dst`. All endpoint pairs are supported:
+    /// local↔local/SFTP/S3 directly; remote↔remote uses a server-side cp when
+    /// both sides are the same SFTP host, otherwise bounces through a local
+    /// temp file (download then upload). S3 sides stream byte progress via
+    /// `report`; the rest report once on completion.
     private func runFileTransfer(rel: String, from src: SyncEndpoint, to dst: SyncEndpoint,
                                  report: @escaping @Sendable (Int64) -> Void) async throws {
         let fm = FileManager.default
@@ -304,8 +307,48 @@ final class SyncDirsSheet: NSWindowController {
             try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             try await client.getObject(bucket: bucket, key: prefix + rel, toLocalPath: t, progress: report)
 
+        case (.sftp(let sc, let sb), .sftp(let dc, let db)) where sc.sameHost(as: dc):
+            // Both panels on one SFTP host: server-side cp, no round-trip.
+            let srcPath = (sb as NSString).appendingPathComponent(rel)
+            let dstDir = ((db as NSString).appendingPathComponent(rel) as NSString).deletingLastPathComponent
+            let fs = SFTPFS(connection: sc)
+            _ = try await fs.runCommand("mkdir -p \"\(dstDir)\"")
+            try await fs.serverTransfer(from: srcPath, toDir: dstDir, move: false, renameTo: nil)
+            report(0)   // size unknown client-side; the unit's `bytes` still count the file
+
         default:
-            throw FSUnsupportedError(message: "Unsupported sync direction")
+            // Remote↔remote across hosts/services: bounce through a temp file.
+            let tempDir = NSTemporaryDirectory() + "/df-sync-bounce-" + UUID().uuidString
+            try fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(atPath: tempDir) }
+            let name = (rel as NSString).lastPathComponent
+            let temp = (tempDir as NSString).appendingPathComponent(name)
+
+            switch src {
+            case .sftp(let conn, let base):
+                try await SFTPFS(connection: conn)
+                    .copy(from: (base as NSString).appendingPathComponent(rel), to: tempDir)
+            case .s3(let client, let bucket, let prefix):
+                try await client.getObject(bucket: bucket, key: prefix + rel,
+                                           toLocalPath: temp, progress: { _ in })
+            case .local:
+                break   // unreachable: local sources are handled above
+            }
+
+            switch dst {
+            case .sftp(let conn, let base):
+                let remote = (base as NSString).appendingPathComponent(rel)
+                let remoteDir = (remote as NSString).deletingLastPathComponent
+                let fs = SFTPFS(connection: conn)
+                _ = try await fs.runCommand("mkdir -p \"\(remoteDir)\"")
+                try await fs.upload(localPath: temp, to: remoteDir)
+                report(localSize(temp))
+            case .s3(let client, let bucket, let prefix):
+                try await client.putObject(bucket: bucket, key: prefix + rel,
+                                           fromLocalPath: temp, progress: report)
+            case .local:
+                break   // unreachable
+            }
         }
     }
 

@@ -400,6 +400,89 @@ struct S3TransferProvider: TransferProvider {
     }
 }
 
+// MARK: - S3CrossStoreProvider
+
+/// Copy between two *different* S3 services (distinct endpoint or credentials):
+/// no server-side copy exists across services, so each object bounces through a
+/// local temp file — `getObject` from the source client, `putObject` to the
+/// destination client, temp removed either way. Folder expansion and key
+/// mapping mirror `S3SameStoreProvider`; progress reports the upload half so
+/// the byte total matches the unit sizes.
+struct S3CrossStoreProvider: TransferProvider {
+    let srcClient: S3Client
+    let dstClient: S3Client
+
+    init(srcClient: S3Client, dstClient: S3Client) {
+        self.srcClient = srcClient
+        self.dstClient = dstClient
+    }
+
+    @MainActor var verb: String { tr("Copy") }
+
+    @MainActor
+    func makeOperation(items: [FileItem], destPath: String, renameTo: String?) -> FileOperation {
+        let op = FileOperation(type: .copy, sources: items.map { $0.path }, destination: destPath)
+        op.customTitle = tr("Copying")
+        op.currentFile = tr("Preparing…")
+        op.indeterminate = true
+        op.concurrency = 4
+
+        let src = srcClient
+        let dst = dstClient
+        let newName = items.count == 1 ? renameTo : nil
+        let (destBucket, destPrefix) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
+
+        func bounceUnit(srcBucket: String, srcKey: String, dstKey: String, size: Int64,
+                        label: String) -> FileOperation.Unit {
+            FileOperation.Unit(label: label, bytes: size) { report in
+                let temp = NSTemporaryDirectory() + "/df-s3-bounce-" + UUID().uuidString
+                defer { try? FileManager.default.removeItem(atPath: temp) }
+                try await src.getObject(bucket: srcBucket, key: srcKey, toLocalPath: temp,
+                                        progress: { _ in })
+                guard let db = destBucket else { return }
+                try await dst.putObject(bucket: db, key: dstKey, fromLocalPath: temp,
+                                        progress: report)
+            }
+        }
+
+        op.transferUnitsProvider = {
+            var units: [FileOperation.Unit] = []
+            guard destBucket != nil else { return units }
+            for item in items {
+                let (sb, sk) = parseS3Path(item.path)
+                guard let sb = sb, !sk.isEmpty else { continue }
+                if item.isDirectory || sk.hasSuffix("/") {
+                    let folderKey = sk.hasSuffix("/") ? sk : sk + "/"
+                    let folderName = newName ?? (String(folderKey.dropLast()) as NSString).lastPathComponent
+                    let objs: [S3ObjectInfo]
+                    do {
+                        objs = try await src.listAllObjects(bucket: sb, prefix: folderKey)
+                    } catch {
+                        let captured = error
+                        units.append(FileOperation.Unit(label: item.name) { _ in throw captured })
+                        continue
+                    }
+                    for o in objs where !o.key.hasSuffix("/") {
+                        let rel = String(o.key.dropFirst(folderKey.count))
+                        units.append(bounceUnit(srcBucket: sb, srcKey: o.key,
+                                                dstKey: destPrefix + folderName + "/" + rel,
+                                                size: o.size,
+                                                label: (o.key as NSString).lastPathComponent))
+                    }
+                } else {
+                    let name = newName ?? (sk as NSString).lastPathComponent
+                    units.append(bounceUnit(srcBucket: sb, srcKey: sk,
+                                            dstKey: destPrefix + name,
+                                            size: item.size, label: name))
+                }
+            }
+            return units
+        }
+
+        return op
+    }
+}
+
 // MARK: - S3SameStoreProvider
 
 /// Builds a `FileOperation` for a server-side **copy or move within one S3 store**
