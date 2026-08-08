@@ -95,6 +95,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                     action: #selector(menuCreateChecksum), keyEquivalent: ""))
         fileMenu.addItem(NSMenuItem(title: tr("Verify Checksums"),
                                     action: #selector(menuVerifyChecksums), keyEquivalent: ""))
+        fileMenu.addItem(NSMenuItem(title: tr("Split File…"),
+                                    action: #selector(menuSplitFile), keyEquivalent: ""))
+        fileMenu.addItem(NSMenuItem(title: tr("Combine Files…"),
+                                    action: #selector(menuCombineFiles), keyEquivalent: ""))
         fileMenu.addItem(.separator())
         fileMenu.addItem(NSMenuItem(title: tr("Connect…"),
                                     action: #selector(menuConnectServer), keyEquivalent: "k"))
@@ -389,6 +393,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuExtract() { mainVC()?.actionExtractArchive() }
     @objc private func menuCreateChecksum() { mainVC()?.actionCreateChecksum() }
     @objc private func menuVerifyChecksums() { mainVC()?.actionVerifyChecksums() }
+    @objc private func menuSplitFile() { mainVC()?.actionSplitFile() }
+    @objc private func menuCombineFiles() { mainVC()?.actionCombineFiles() }
     @objc private func menuFindFiles() { mainVC()?.actionFindFiles() }
     @objc private func menuMultiRename() { mainVC()?.actionMultiRename() }
     @objc private func menuCleanupUploads() { mainVC()?.actionCleanupIncompleteUploads() }

@@ -25,6 +25,7 @@ class MainViewController: NSViewController {
     private var activePackSheet: PackSheet?
     private var activeChecksumSheet: ChecksumSheet?
     private var activeChecksumResults: ChecksumResultsSheet?
+    private var activeSplitSheet: SplitSheet?
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
 
@@ -1732,6 +1733,147 @@ class MainViewController: NSViewController {
             }
         }
         return out
+    }
+
+    // MARK: - Split / Combine (TC: Files ▸ Split File / Combine Files)
+
+    @objc func actionSplitFile_menu() { actionSplitFile() }
+
+    func actionSplitFile() {
+        guard let window = view.window else { return }
+        let src = activePanelVC.panelState
+        let dst = inactivePanelVC.panelState
+        guard !src.isRemote, !dst.isRemote,
+              PanelState.archiveRoot(in: src.currentPath) == nil,
+              PanelState.archiveRoot(in: dst.currentPath) == nil,
+              let item = activePanelVC.selectedOrCurrent.first,
+              activePanelVC.selectedOrCurrent.count == 1, !item.isDirectory else {
+            NSSound.beep(); return
+        }
+        let destDir = dst.currentPath
+        let sheet = SplitSheet(fileName: item.name, fileSize: item.size, destDir: destDir)
+        activeSplitSheet = sheet
+        sheet.onSplit = { [weak self] partSize in
+            self?.runSplit(item: item, destDir: destDir, partSize: partSize, window: window)
+        }
+        sheet.beginSheet(on: window) { [weak self] in self?.activeSplitSheet = nil }
+    }
+
+    private func runSplit(item: FileItem, destDir: String, partSize: Int64, window: NSWindow) {
+        let op = FileOperation(type: .copy, sources: [item.path])
+        op.customTitle = tr("Splitting")
+        op.totalBytes = item.size
+        op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+        let path = item.path
+        var outputs: [String] = []
+        op.perItemOperation = { [weak op] _ in
+            guard let op = op else { return }
+            do {
+                outputs = try await Task.detached(priority: .userInitiated) {
+                    try FileSplit.split(path: path, destDir: destDir, partSize: partSize,
+                                        onBytes: { op.reportBytes($0) },
+                                        shouldCancel: { op.cancelRequested })
+                }.value
+            } catch is CancellationError {
+                // Remove the half-written parts; whatever made it into `outputs`
+                // stayed empty because split throws before returning.
+                Self.removeSplitOutputs(of: path, in: destDir)
+            }
+        }
+        runOperation(op, on: window) { [weak self] in
+            guard let self = self else { return }
+            if op.isCancelled { Self.removeSplitOutputs(of: path, in: destDir) }
+            _ = outputs
+            self.inactivePanelVC.panelState.refresh()
+        }
+    }
+
+    /// Deletes `<name>.NNN` parts and the `.crc` summary a cancelled split
+    /// left behind.
+    private nonisolated static func removeSplitOutputs(of sourcePath: String, in destDir: String) {
+        let name = (sourcePath as NSString).lastPathComponent
+        let fm = FileManager.default
+        var index = 1
+        while true {
+            let part = destDir + "/" + FileSplit.partName(base: name, index: index)
+            guard fm.fileExists(atPath: part) else { break }
+            try? fm.removeItem(atPath: part)
+            index += 1
+        }
+        try? fm.removeItem(atPath: destDir + "/" + name + ".crc")
+    }
+
+    @objc func actionCombineFiles_menu() { actionCombineFiles() }
+
+    func actionCombineFiles() {
+        guard let window = view.window else { return }
+        let src = activePanelVC.panelState
+        let dst = inactivePanelVC.panelState
+        guard !src.isRemote, !dst.isRemote,
+              PanelState.archiveRoot(in: src.currentPath) == nil,
+              PanelState.archiveRoot(in: dst.currentPath) == nil else {
+            NSSound.beep(); return
+        }
+        guard let item = activePanelVC.selectedOrCurrent.first, item.name.hasSuffix(".001") else {
+            let alert = NSAlert()
+            alert.messageText = tr("Combine Files")
+            alert.informativeText = tr("Select the first part (.001) of a split file.")
+            alert.addButton(withTitle: tr("OK"))
+            alert.beginSheetModal(for: window)
+            return
+        }
+        let parts = FileSplit.partsList(firstPart: item.path)
+        guard !parts.isEmpty else { NSSound.beep(); return }
+        let baseName = String(item.name.dropLast(4))
+        let crcInfo: FileSplit.CrcInfo? = (try? String(
+            contentsOfFile: (item.path as NSString).deletingLastPathComponent + "/" + baseName + ".crc",
+            encoding: .utf8)).map { FileSplit.parseCrcFile($0) }
+        let destPath = dst.currentPath + "/" + (crcInfo?.fileName ?? baseName)
+
+        let alert = NSAlert()
+        alert.messageText = tr("Combine Files")
+        alert.informativeText = tr("Combine %1$d parts into \u{201C}%2$@\u{201D}?", parts.count, destPath)
+        alert.addButton(withTitle: tr("Combine"))
+        alert.addButton(withTitle: tr("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            self?.runCombine(parts: parts, destPath: destPath, expected: crcInfo, window: window)
+        }
+    }
+
+    private func runCombine(parts: [String], destPath: String,
+                            expected: FileSplit.CrcInfo?, window: NSWindow) {
+        let fm = FileManager.default
+        let op = FileOperation(type: .copy, sources: [destPath])
+        op.customTitle = tr("Combining")
+        op.totalBytes = parts.reduce(Int64(0)) {
+            $0 + ((try? fm.attributesOfItem(atPath: $1)[.size] as? Int64) ?? 0)
+        }
+        op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+        op.suppressFailureReport = true   // mismatch gets its own message below
+        op.perItemOperation = { [weak op] _ in
+            guard let op = op else { return }
+            do {
+                _ = try await Task.detached(priority: .userInitiated) {
+                    try FileSplit.combine(parts: parts, destPath: destPath, expected: expected,
+                                          onBytes: { op.reportBytes($0) },
+                                          shouldCancel: { op.cancelRequested })
+                }.value
+            } catch is CancellationError {
+                try? FileManager.default.removeItem(atPath: destPath)
+            } catch let error as FileSplit.CombineMismatchError {
+                try? FileManager.default.removeItem(atPath: destPath)
+                throw error
+            }
+        }
+        runOperation(op, on: window) { [weak self] in
+            guard let self = self else { return }
+            if op.isCancelled { try? fm.removeItem(atPath: destPath) }
+            self.inactivePanelVC.panelState.refresh()
+            if let failure = op.failures.first {
+                self.presentLocalizedError(failure.error, in: window)
+            }
+        }
     }
 
     @objc func actionVerifyChecksums_menu() { actionVerifyChecksums() }
