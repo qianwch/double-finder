@@ -475,6 +475,13 @@ class MainViewController: NSViewController {
         // or step down into its children if already expanded. (Arrow keys carry
         // .function/.numericPad flags, so guard on Command rather than isEmpty.)
         if keyCode == 124 && !flags.contains(.command) && !flags.contains(.shift) {
+            // Brief grid: → jumps one column right (TC), no in-place expand.
+            if let step = activePanelVC.fileTableView.briefColumnStep {
+                let ps = activePanelVC.panelState
+                let target = min(ps.items.count - 1, ps.cursorIndex + step)
+                activePanelVC.moveCursor(by: target - ps.cursorIndex, extending: false)
+                return true
+            }
             let ps = activePanelVC.panelState
             if let item = ps.currentItem, item.isDirectory, item.name != "..", !ps.isExpanded(item) {
                 ps.toggleExpand(item)
@@ -485,6 +492,13 @@ class MainViewController: NSViewController {
         }
         // Left arrow: collapse the folder at the cursor, else step up.
         if keyCode == 123 && !flags.contains(.command) && !flags.contains(.shift) {
+            // Brief grid: ← jumps one column left (TC).
+            if let step = activePanelVC.fileTableView.briefColumnStep {
+                let ps = activePanelVC.panelState
+                let target = max(0, ps.cursorIndex - step)
+                activePanelVC.moveCursor(by: target - ps.cursorIndex, extending: false)
+                return true
+            }
             let ps = activePanelVC.panelState
             if let item = ps.currentItem, item.isDirectory, ps.isExpanded(item) {
                 ps.toggleExpand(item)

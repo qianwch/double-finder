@@ -44,10 +44,13 @@ final class FileRowGeometryTests: XCTestCase {
     }
 
     func testRowRectRow3() {
+        // brief is a column-major grid since 2026-08; with viewportHeight 0
+        // (pre-layout) each column holds one row, so row 3 sits in column 3.
         let g = FileRowGeometry(mode: .brief, iconSize: 16)
         let rh = g.rowHeight  // 18
         let rect = g.rowRect(3, width: 400)
-        XCTAssertEqual(rect.origin.y, 3 * rh, accuracy: 0.001)
+        XCTAssertEqual(rect.origin.x, 3 * FileRowGeometry.briefColumnWidth, accuracy: 0.001)
+        XCTAssertEqual(rect.origin.y, 0, accuracy: 0.001)
         XCTAssertEqual(rect.height, rh, accuracy: 0.001)
     }
 
@@ -57,35 +60,35 @@ final class FileRowGeometryTests: XCTestCase {
         let g = FileRowGeometry(mode: .full, iconSize: 24)
         // y = 1.5 * rowHeight falls in row 1
         let y = 1.5 * g.rowHeight
-        XCTAssertEqual(g.rowAt(y: y, count: 10), 1)
+        XCTAssertEqual(g.rowAt(point: NSPoint(x: 0, y: y), count: 10), 1)
     }
 
     func testRowAtNegativeY() {
         let g = FileRowGeometry(mode: .full, iconSize: 24)
-        XCTAssertNil(g.rowAt(y: -5, count: 10), "negative y → nil")
+        XCTAssertNil(g.rowAt(point: NSPoint(x: 0, y: -5), count: 10), "negative y → nil")
     }
 
     func testRowAtYBeyondCount() {
         let g = FileRowGeometry(mode: .full, iconSize: 24)
         // y lands on row 10 but count=10 means max valid row index is 9
         let y = 10.0 * g.rowHeight + 1
-        XCTAssertNil(g.rowAt(y: y, count: 10), "row index >= count → nil")
+        XCTAssertNil(g.rowAt(point: NSPoint(x: 0, y: y), count: 10), "row index >= count → nil")
     }
 
     func testRowAtExactlyZero() {
         let g = FileRowGeometry(mode: .full, iconSize: 24)
-        XCTAssertEqual(g.rowAt(y: 0, count: 5), 0)
+        XCTAssertEqual(g.rowAt(point: NSPoint(x: 0, y: 0), count: 5), 0)
     }
 
     func testRowAtLastPixelOfRow0() {
         let g = FileRowGeometry(mode: .full, iconSize: 24)
         let y = g.rowHeight - 0.001
-        XCTAssertEqual(g.rowAt(y: y, count: 5), 0)
+        XCTAssertEqual(g.rowAt(point: NSPoint(x: 0, y: y), count: 5), 0)
     }
 
     func testRowAtZeroCount() {
         let g = FileRowGeometry(mode: .full, iconSize: 24)
-        XCTAssertNil(g.rowAt(y: 0, count: 0), "count=0 → nil")
+        XCTAssertNil(g.rowAt(point: NSPoint(x: 0, y: 0), count: 0), "count=0 → nil")
     }
 
     // MARK: - visibleRows

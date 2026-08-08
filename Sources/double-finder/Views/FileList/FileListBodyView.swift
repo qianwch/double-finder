@@ -136,9 +136,8 @@ final class FileListBodyView: NSView {
     /// Called on data reload (`reloadLayout`) and on panel resize (`FileListView.layout`).
     func resizeFrame() {
         let clip = enclosingScrollView?.contentSize ?? bounds.size
-        let w = max(clip.width, 480)
-        let contentH = CGFloat(items.count) * geometry.rowHeight
-        let newSize = NSSize(width: w, height: max(contentH, clip.height))
+        geometry.viewportHeight = clip.height   // drives the brief grid's rows-per-column
+        let newSize = geometry.contentSize(count: items.count, clipSize: clip)
         if frame.size != newSize { setFrameSize(newSize) }
     }
 
@@ -329,8 +328,8 @@ final class FileListBodyView: NSView {
             // Disclosure triangle + icon (gutter reserved for all rows so they align).
             let textLeft = drawLeading(item: item, row: row, geo: geo, side: side)
 
-            // Name text — spans full remaining width.
-            let textRight = viewWidth - 4
+            // Name text — clipped to this grid cell (not the full view width).
+            let textRight = rowRect.maxX - 4
             let textWidth = max(0, textRight - textLeft)
             let textY = rowRect.minY + (geo.rowHeight - 14) / 2
             let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
@@ -534,7 +533,7 @@ final class FileListBodyView: NSView {
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)
 
-        guard let row = geometry.rowAt(y: p.y, count: items.count) else {
+        guard let row = geometry.rowAt(point: p, count: items.count) else {
             // Click below the last row: activate this panel.
             if let d = fileDelegate {
                 d.fileTableViewWantsActivation(self)
@@ -620,7 +619,7 @@ final class FileListBodyView: NSView {
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)
 
-        if let row = geometry.rowAt(y: p.y, count: items.count) {
+        if let row = geometry.rowAt(point: p, count: items.count) {
             clickedRow = row
             // Move cursor to right-clicked row and activate this panel.
             if let d = fileDelegate {
@@ -682,7 +681,9 @@ final class FileListBodyView: NSView {
             } else {
                 let leadingMargin: CGFloat = 2
                 let indentPerLevel: CGFloat = 12
-                iconLeft = leadingMargin + CGFloat(item.depth) * indentPerLevel
+                // rowRect.minX is 0 in single-column modes and the cell origin
+                // in the brief grid.
+                iconLeft = rowRect.minX + leadingMargin + CGFloat(item.depth) * indentPerLevel
             }
         } else {
             // Thumbnails: icon lives on the left with a 4-pt margin.
@@ -706,6 +707,8 @@ final class FileListBodyView: NSView {
             } else {
                 textRight = viewWidth - 4
             }
+        } else if viewMode == .brief {
+            textRight = rowRect.maxX - 4        // clip to the grid cell
         } else {
             textRight = viewWidth - 4
         }

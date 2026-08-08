@@ -98,8 +98,18 @@ final class FileListView: NSScrollView {
         } else {
             contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         }
+        // The brief grid scrolls horizontally (columns wrap rightward); the
+        // single-column modes scroll vertically.
+        hasHorizontalScroller = (body.viewMode == .brief)
+        hasVerticalScroller = (body.viewMode != .brief)
         // Force layout update.
         needsLayout = true
+    }
+
+    /// In the brief grid, the cursor jump for ←/→ (one whole column); nil in
+    /// the single-column modes.
+    var briefColumnStep: Int? {
+        body.viewMode == .brief ? body.geometry.rowsPerColumn : nil
     }
 
     // MARK: - Public interface (FileTableView parity)
