@@ -471,6 +471,106 @@ enum LibArchive {
                                                   withItemAt: URL(fileURLWithPath: tmp))
     }
 
+    /// Rewrites the archive replacing one entry's content with a local file
+    /// (F4 edit-inside-archive write-back). Same mirror-the-format strategy as
+    /// rewriteRenaming; the target entry keeps its metadata but gets the new
+    /// size, mtime and data. Throws if the entry never shows up.
+    static func rewriteReplacing(archivePath: String, password: String?,
+                                 entryPath: String, withFile localPath: String) throws {
+        let attrs = try FileManager.default.attributesOfItem(atPath: localPath)
+        let newSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        let newMtime = (attrs[.modificationDate] as? Date) ?? Date()
+
+        let enc = detectArchiveEncoding(archivePath: archivePath, password: password)
+        let a = try openReader(archivePath, password: password)
+        defer { archive_read_free(a) }
+        guard let w = archive_write_new() else { throw Failure(message: "archive_write_new failed") }
+        defer { archive_write_free(w) }
+
+        var entry: OpaquePointer?
+        var r = archive_read_next_header(a, &entry)
+        if r == EOFR { throw Failure(message: "entry not found: \(entryPath)") }
+        if r < WARN { try throwClassified(a, archivePath: archivePath) }
+
+        archive_write_set_format(w, archive_format(a))
+        for fi in 0..<archive_filter_count(a) {
+            let code = archive_filter_code(a, fi)
+            if code != 0 { archive_write_add_filter(w, code) }
+        }
+        let tmp = archivePath + ".dfedit.tmp"
+        try? FileManager.default.removeItem(atPath: tmp)
+        if archive_write_open_filename(w, tmp) != OK {
+            throw Failure(message: errString(w))
+        }
+
+        let bufSize = 256 * 1024
+        let buf = UnsafeMutableRawPointer.allocate(byteCount: bufSize, alignment: 16)
+        defer { buf.deallocate() }
+        let target = normalize(entryPath)
+        var replaced = false
+
+        while r != EOFR {
+            if r < WARN { try? FileManager.default.removeItem(atPath: tmp); try throwClassified(a, archivePath: archivePath) }
+            if let e = entry {
+                let isTarget = normalize(entryName(e, encoding: enc)) == target
+                if isTarget {
+                    replaced = true
+                    archive_entry_set_size(e, newSize)
+                    archive_entry_set_mtime(e, time_t(newMtime.timeIntervalSince1970), 0)
+                }
+                if archive_write_header(w, e) < WARN {
+                    let msg = errString(w); try? FileManager.default.removeItem(atPath: tmp)
+                    throw Failure(message: msg)
+                }
+                if isTarget {
+                    guard let handle = FileHandle(forReadingAtPath: localPath) else {
+                        try? FileManager.default.removeItem(atPath: tmp)
+                        throw Failure(message: "cannot open \(localPath)")
+                    }
+                    defer { try? handle.close() }
+                    while let chunk = try? handle.read(upToCount: bufSize), !chunk.isEmpty {
+                        var written = 0
+                        try chunk.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                            while written < raw.count {
+                                let wn = archive_write_data(w, raw.baseAddress!.advanced(by: written),
+                                                            raw.count - written)
+                                if wn < 0 {
+                                    let msg = errString(w)
+                                    try? FileManager.default.removeItem(atPath: tmp)
+                                    throw Failure(message: msg)
+                                }
+                                written += wn
+                            }
+                        }
+                    }
+                } else if archive_entry_size(e) > 0 {
+                    while true {
+                        let n = archive_read_data(a, buf, bufSize)
+                        if n == 0 { break }
+                        if n < 0 { try? FileManager.default.removeItem(atPath: tmp); try throwClassified(a, archivePath: archivePath) }
+                        var written = 0
+                        while written < n {
+                            let wn = archive_write_data(w, buf.advanced(by: written), n - written)
+                            if wn < 0 { let msg = errString(w); try? FileManager.default.removeItem(atPath: tmp); throw Failure(message: msg) }
+                            written += wn
+                        }
+                    }
+                }
+            }
+            r = archive_read_next_header(a, &entry)
+        }
+        if archive_write_close(w) != OK {
+            let msg = errString(w); try? FileManager.default.removeItem(atPath: tmp)
+            throw Failure(message: msg)
+        }
+        guard replaced else {
+            try? FileManager.default.removeItem(atPath: tmp)
+            throw Failure(message: "entry not found: \(entryPath)")
+        }
+        _ = try FileManager.default.replaceItemAt(URL(fileURLWithPath: archivePath),
+                                                  withItemAt: URL(fileURLWithPath: tmp))
+    }
+
     // MARK: - Creation
 
     /// Creates an archive at `archivePath` from `sources` (absolute path +

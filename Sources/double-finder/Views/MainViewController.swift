@@ -870,8 +870,32 @@ class MainViewController: NSViewController {
                 try await SFTPFS(connection: conn).upload(
                     localPath: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
             }
+        } else if let zip = fs as? ZipFS {
+            // Edit-inside-archive write-back: rewrite the container replacing
+            // the entry. Only for formats libarchive can write back (zip / tar
+            // family / 7z), not split sets, and not encrypted archives (a
+            // rewrite would silently drop the encryption).
+            let writable: Bool = {
+                guard zip.password == nil, !ZipFS.isSplitFirstVolume(zip.archivePath) else { return false }
+                switch zip.kind {
+                case .zip, .tar, .sevenZip: return true
+                default: return false
+                }
+            }()
+            guard writable,
+                  let root = PanelState.archiveRoot(in: remotePath),
+                  remotePath.hasPrefix(root + "/") else { return }
+            let archivePath = zip.archivePath
+            let entryRel = String(remotePath.dropFirst(root.count + 1))
+            label = (archivePath as NSString).lastPathComponent
+            upload = { temp, _ in
+                try await Task.detached(priority: .userInitiated) {
+                    try LibArchive.rewriteReplacing(archivePath: archivePath, password: nil,
+                                                    entryPath: entryRel, withFile: temp)
+                }.value
+            }
         } else {
-            return   // archive or other read-only remote → no write-back
+            return   // remote archive / other read-only source → no write-back
         }
         remoteEditWatcher.track(RemoteEditSession(
             tempPath: tempPath, remotePath: remotePath, serverLabel: label,
