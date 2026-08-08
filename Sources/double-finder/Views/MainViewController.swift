@@ -23,6 +23,8 @@ class MainViewController: NSViewController {
     private var activeFindSheet: FindFilesSheet?
     private var activeGoToSheet: GoToFolderSheet?
     private var activePackSheet: PackSheet?
+    private var activeChecksumSheet: ChecksumSheet?
+    private var activeChecksumResults: ChecksumResultsSheet?
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
 
@@ -1608,6 +1610,211 @@ class MainViewController: NSViewController {
         alert.accessoryView = field
         beginSheet(alert, focusing: field, on: window) { resp in
             completion(resp == .alertFirstButtonReturn ? field.stringValue : nil)
+        }
+    }
+
+    // MARK: - Checksums (TC: Create Checksum File / Verify Checksums)
+
+    /// Order-preserving collectors mutated serially from perItemOperation
+    /// (which runs on the main actor), so no locking is needed.
+    private final class ChecksumBox {
+        var entries: [ChecksumEntry] = []
+        var results: [ChecksumVerifyResult] = []
+        var cursor = 0
+    }
+
+    @objc func actionCreateChecksum_menu() { actionCreateChecksum() }
+
+    func actionCreateChecksum() {
+        guard let window = view.window else { return }
+        let ps = activePanelVC.panelState
+        guard !ps.isRemote, PanelState.archiveRoot(in: ps.currentPath) == nil else {
+            NSSound.beep(); return
+        }
+        let items = pruneSelectedAncestors(activePanelVC.selectedOrCurrent)
+        guard !items.isEmpty else { return }
+        let dir = ps.currentPath
+        let defaultBase = items.count == 1
+            ? ((items[0].name as NSString).lastPathComponent as NSString).deletingPathExtension
+            : (dir as NSString).lastPathComponent
+        let sheet = ChecksumSheet(defaultBaseName: defaultBase.isEmpty ? "checksums" : defaultBase,
+                                  destDir: dir, fileCount: items.count)
+        activeChecksumSheet = sheet
+        sheet.onCreate = { [weak self] opts in
+            self?.runCreateChecksum(items: items, dir: dir, opts: opts, window: window)
+        }
+        sheet.beginSheet(on: window) { [weak self] in self?.activeChecksumSheet = nil }
+    }
+
+    private func runCreateChecksum(items: [FileItem], dir: String,
+                                   opts: ChecksumSheet.Options, window: NSWindow) {
+        let outPath = dir + "/" + opts.fileName
+        if FileManager.default.fileExists(atPath: outPath) {
+            let alert = NSAlert()
+            alert.messageText = tr("File Already Exists")
+            alert.informativeText = tr("“%@” already exists. Overwrite it?", opts.fileName)
+            alert.addButton(withTitle: tr("Overwrite"))
+            alert.addButton(withTitle: tr("Cancel"))
+            alert.beginSheetModal(for: window) { [weak self] resp in
+                guard resp == .alertFirstButtonReturn else { return }
+                try? FileManager.default.removeItem(atPath: outPath)
+                self?.runCreateChecksum(items: items, dir: dir, opts: opts, window: window)
+            }
+            return
+        }
+        // (rel, path, isDir) snapshot for the detached expansion below.
+        let seeds = items.map { item -> (rel: String, path: String, isDir: Bool) in
+            let rel = item.path.hasPrefix(dir + "/")
+                ? String(item.path.dropFirst(dir.count + 1)) : item.name
+            return (rel, item.path, item.isDirectory)
+        }
+        Task {
+            // Expand folders into their files and size everything off the main actor.
+            let sources = await Task.detached(priority: .userInitiated) {
+                Self.expandChecksumSeeds(seeds)
+            }.value
+            guard !sources.isEmpty else { NSSound.beep(); return }
+
+            let box = ChecksumBox()
+            let algo = opts.algorithm
+            let relByIndex = sources.map(\.rel)
+            let op = FileOperation(type: .copy, sources: sources.map(\.path))
+            op.customTitle = tr("Computing Checksums")
+            op.totalBytes = sources.reduce(Int64(0)) { $0 + $1.size }
+            op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+            op.perItemOperation = { [weak op] path in
+                guard let op = op else { return }
+                let index = box.cursor; box.cursor += 1
+                do {
+                    let hex = try await Task.detached(priority: .userInitiated) {
+                        try algo.hashFile(at: path,
+                                          onBytes: { op.reportBytes($0) },
+                                          shouldCancel: { op.cancelRequested })
+                    }.value
+                    box.entries.append(ChecksumEntry(fileName: relByIndex[index], hexDigest: hex))
+                } catch is CancellationError {
+                    return
+                }
+            }
+            runOperation(op, on: window) { [weak self] in
+                guard let self = self, !op.isCancelled, !box.entries.isEmpty else { return }
+                let text = ChecksumFile.serialize(box.entries, algorithm: algo)
+                do { try text.write(toFile: outPath, atomically: true, encoding: .utf8) }
+                catch { self.presentLocalizedError(error, in: window); return }
+                self.activePanelVC.panelState.refresh()
+            }
+        }
+    }
+
+    /// Recursively expands folder seeds into (relativeName, absolutePath, size)
+    /// file entries. Synchronous on purpose: FileManager's enumerator cannot be
+    /// iterated from an async context; callers run this inside Task.detached.
+    private nonisolated static func expandChecksumSeeds(
+        _ seeds: [(rel: String, path: String, isDir: Bool)]
+    ) -> [(rel: String, path: String, size: Int64)] {
+        let fm = FileManager.default
+        func size(_ path: String) -> Int64 {
+            (try? fm.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+        }
+        var out: [(rel: String, path: String, size: Int64)] = []
+        for seed in seeds {
+            if seed.isDir {
+                guard let subs = fm.enumerator(atPath: seed.path) else { continue }
+                for case let sub as String in subs {
+                    let full = seed.path + "/" + sub
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: full, isDirectory: &isDir),
+                          !isDir.boolValue else { continue }
+                    out.append((seed.rel + "/" + sub, full, size(full)))
+                }
+            } else {
+                out.append((seed.rel, seed.path, size(seed.path)))
+            }
+        }
+        return out
+    }
+
+    @objc func actionVerifyChecksums_menu() { actionVerifyChecksums() }
+
+    func actionVerifyChecksums() {
+        guard let window = view.window else { return }
+        let ps = activePanelVC.panelState
+        guard !ps.isRemote, PanelState.archiveRoot(in: ps.currentPath) == nil else {
+            NSSound.beep(); return
+        }
+        let files = activePanelVC.selectedOrCurrent.filter {
+            !$0.isDirectory && ChecksumAlgorithm.forFile(named: $0.name) != nil
+        }
+        guard !files.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = tr("Verify Checksums")
+            alert.informativeText = tr("Select a checksum file (.sfv, .md5, .sha1, .sha256 or .sha512) first.")
+            alert.addButton(withTitle: tr("OK"))
+            alert.beginSheetModal(for: window)
+            return
+        }
+
+        struct Job { let name: String; let path: String; let expected: String; let algo: ChecksumAlgorithm }
+        var jobs: [Job] = []
+        for file in files {
+            guard let text = try? String(contentsOfFile: file.path, encoding: .utf8) else { continue }
+            let base = (file.path as NSString).deletingLastPathComponent
+            let fileAlgo = ChecksumAlgorithm.forFile(named: file.name)
+            for entry in ChecksumFile.parse(text) {
+                // The digest length is authoritative (a .sfv can't hold SHA-256);
+                // the extension only breaks the (impossible) tie.
+                guard let algo = ChecksumAlgorithm.forDigestHexLength(entry.hexDigest.count) ?? fileAlgo
+                else { continue }
+                jobs.append(Job(name: entry.fileName, path: base + "/" + entry.fileName,
+                                expected: entry.hexDigest, algo: algo))
+            }
+        }
+        guard !jobs.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = tr("Verify Checksums")
+            alert.informativeText = tr("No checksum entries found in the selected file.")
+            alert.addButton(withTitle: tr("OK"))
+            alert.beginSheetModal(for: window)
+            return
+        }
+
+        let box = ChecksumBox()
+        let fm = FileManager.default
+        let op = FileOperation(type: .copy, sources: jobs.map(\.path))
+        op.customTitle = tr("Verifying Checksums")
+        op.totalBytes = jobs.reduce(Int64(0)) {
+            $0 + ((try? fm.attributesOfItem(atPath: $1.path)[.size] as? Int64) ?? 0)
+        }
+        op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+        op.perItemOperation = { [weak op] _ in
+            guard let op = op else { return }
+            let job = jobs[box.cursor]; box.cursor += 1
+            guard FileManager.default.fileExists(atPath: job.path) else {
+                box.results.append(ChecksumVerifyResult(fileName: job.name, expected: job.expected,
+                                                        computed: "", status: .missing))
+                return
+            }
+            do {
+                let hex = try await Task.detached(priority: .userInitiated) {
+                    try job.algo.hashFile(at: job.path,
+                                          onBytes: { op.reportBytes($0) },
+                                          shouldCancel: { op.cancelRequested })
+                }.value
+                box.results.append(ChecksumVerifyResult(
+                    fileName: job.name, expected: job.expected, computed: hex,
+                    status: hex == job.expected ? .ok : .failed))
+            } catch is CancellationError {
+                return
+            } catch {
+                box.results.append(ChecksumVerifyResult(fileName: job.name, expected: job.expected,
+                                                        computed: "", status: .unreadable))
+            }
+        }
+        runOperation(op, on: window) { [weak self] in
+            guard let self = self, !op.isCancelled, !box.results.isEmpty else { return }
+            let sheet = ChecksumResultsSheet(results: box.results)
+            self.activeChecksumResults = sheet
+            sheet.beginSheet(on: window) { [weak self] in self?.activeChecksumResults = nil }
         }
     }
 
