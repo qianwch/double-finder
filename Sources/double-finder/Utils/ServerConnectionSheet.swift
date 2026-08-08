@@ -68,6 +68,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         sftpPort.stringValue = "22"
         sftpKey.stringValue = "~/.ssh/id_rsa"
         sftpPath.stringValue = "~"
+        prefillLastSFTP()
         s3Region.stringValue = "us-east-1"
         s3PathStyle.state = .on
         s3Remember.state = .on
@@ -375,8 +376,29 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
 
     @objc private func connectClicked() {
         guard let (conn, secret) = currentConnection() else { return }
+        if case .sftp(let c) = conn { Self.saveLastSFTP(c) }
         onConnect?(conn, secret)
         window?.close()
+    }
+
+    // MARK: - Last-used SFTP prefill ("LastSFTPConnection")
+
+    /// An empty SFTP form prefills with the last successfully launched SFTP
+    /// connection, so reconnecting to the usual box is a bare ⌘N + Return.
+    private func prefillLastSFTP() {
+        guard let d = UserDefaults.standard.dictionary(forKey: "LastSFTPConnection") as? [String: String]
+        else { return }
+        sftpHost.stringValue = d["host"] ?? ""
+        sftpUser.stringValue = d["user"] ?? ""
+        if let p = d["port"], !p.isEmpty { sftpPort.stringValue = p }
+        if let k = d["key"], !k.isEmpty { sftpKey.stringValue = k }
+        if let r = d["path"], !r.isEmpty { sftpPath.stringValue = r }
+    }
+
+    private static func saveLastSFTP(_ c: SFTPConnection) {
+        UserDefaults.standard.set(["host": c.host, "user": c.user, "port": "\(c.port)",
+                                   "key": c.keyPath, "path": c.remotePath],
+                                  forKey: "LastSFTPConnection")
     }
 
     @objc private func cancelClicked() {

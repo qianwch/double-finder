@@ -1080,7 +1080,10 @@ class MainViewController: NSViewController {
         let singleName = pruned.count == 1 ? pruned[0].name : nil
         let dest0 = (destPanel.currentPath as NSString).appendingPathComponent(singleName ?? "*.*")
         let destIsLocal = destPanel.sftp == nil && destPanel.s3 == nil
-        confirmTransfer(verb: provider.verb, items: pruned, defaultDest: dest0) { [weak self] destInput, queued in
+        // A cross-backend move runs the copy pipeline, but the user asked for a
+        // move — the confirm dialog must say so, not "Download"/"Upload".
+        let verb = deleteProvider == nil ? provider.verb : tr("Move")
+        confirmTransfer(verb: verb, items: pruned, defaultDest: dest0) { [weak self] destInput, queued in
             guard let self = self else { return }
             let parsed = TransferDestination.parse(destInput, singleSourceName: singleName,
                                                    isExistingDir: { path in
@@ -2723,6 +2726,13 @@ class MainViewController: NSViewController {
     }
 
     @objc func actionConnectServer_menu() {
+        // Reuse the live sheet: replacing it would drop the strong ref to the
+        // previous controller while its window stays on screen — a zombie
+        // window whose buttons (weak targets) are all dead.
+        if let sheet = serverSheet {
+            sheet.show(on: view.window)
+            return
+        }
         let sheet = ServerConnectionSheet()
         serverSheet = sheet
         sheet.onConnect = { [weak self] conn, secret in self?.connect(conn, s3Secret: secret) }
