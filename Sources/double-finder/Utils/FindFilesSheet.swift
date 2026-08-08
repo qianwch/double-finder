@@ -13,6 +13,10 @@ final class FindFilesSheet: NSWindowController {
     private let subfoldersCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let regexCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let spotlightCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let dupCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let dupNameCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let dupSizeCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let dupContentCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
     private let table = ResultsTableView()
     private var results: [String] = []
@@ -20,7 +24,7 @@ final class FindFilesSheet: NSWindowController {
 
     init(startDir: String) {
         self.startDir = startDir
-        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 480),
+        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 510),
                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "\(tr("Find Files")) — \(startDir)"
         super.init(window: window)
@@ -39,10 +43,17 @@ final class FindFilesSheet: NSWindowController {
         subfoldersCheck.title = tr("Search subfolders")
         regexCheck.title = tr("Regex name")
         spotlightCheck.title = tr("Use Spotlight index (fast; also searches inside PDF / Office files)")
+        dupCheck.title = tr("Find duplicates:")
+        dupNameCheck.title = tr("Same name")
+        dupSizeCheck.title = tr("Same size")
+        dupContentCheck.title = tr("Same content")
+        dupCheck.target = self; dupCheck.action = #selector(dupToggled)
+        dupNameCheck.state = .on; dupSizeCheck.state = .on   // TC's defaults
         nameField.stringValue = "*"
         [nameField, contentField].forEach { $0.bezelStyle = .roundedBezel; $0.font = .systemFont(ofSize: 12); $0.useSingleLineScrolling() }
         subfoldersCheck.state = .on
         statusLabel.font = .systemFont(ofSize: 10); statusLabel.textColor = .secondaryLabelColor
+        updateDupAvailability()
 
         table.headerView = NSTableHeaderView(); table.rowHeight = 18
         table.usesAlternatingRowBackgroundColors = true
@@ -66,7 +77,8 @@ final class FindFilesSheet: NSWindowController {
         closeBtn.bezelStyle = .rounded
 
         let views: [NSView] = [nameLbl, nameField, contentLbl, contentField, subfoldersCheck,
-                               regexCheck, spotlightCheck, scroll, statusLabel, searchBtn, feedBtn, goBtn, closeBtn]
+                               regexCheck, spotlightCheck, dupCheck, dupNameCheck, dupSizeCheck,
+                               dupContentCheck, scroll, statusLabel, searchBtn, feedBtn, goBtn, closeBtn]
         views.forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
 
         NSLayoutConstraint.activate([
@@ -90,7 +102,16 @@ final class FindFilesSheet: NSWindowController {
             spotlightCheck.topAnchor.constraint(equalTo: subfoldersCheck.bottomAnchor, constant: 8),
             spotlightCheck.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 120),
 
-            scroll.topAnchor.constraint(equalTo: spotlightCheck.bottomAnchor, constant: 12),
+            dupCheck.topAnchor.constraint(equalTo: spotlightCheck.bottomAnchor, constant: 8),
+            dupCheck.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 120),
+            dupNameCheck.centerYAnchor.constraint(equalTo: dupCheck.centerYAnchor),
+            dupNameCheck.leadingAnchor.constraint(equalTo: dupCheck.trailingAnchor, constant: 16),
+            dupSizeCheck.centerYAnchor.constraint(equalTo: dupCheck.centerYAnchor),
+            dupSizeCheck.leadingAnchor.constraint(equalTo: dupNameCheck.trailingAnchor, constant: 12),
+            dupContentCheck.centerYAnchor.constraint(equalTo: dupCheck.centerYAnchor),
+            dupContentCheck.leadingAnchor.constraint(equalTo: dupSizeCheck.trailingAnchor, constant: 12),
+
+            scroll.topAnchor.constraint(equalTo: dupCheck.bottomAnchor, constant: 12),
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             scroll.bottomAnchor.constraint(equalTo: searchBtn.topAnchor, constant: -12),
@@ -108,6 +129,16 @@ final class FindFilesSheet: NSWindowController {
         ])
     }
 
+    /// Duplicate mode replaces content/regex/Spotlight matching (they don't
+    /// compose with it); the name pattern still narrows the candidate set.
+    @objc private func dupToggled() { updateDupAvailability() }
+
+    private func updateDupAvailability() {
+        let dup = dupCheck.state == .on
+        [dupNameCheck, dupSizeCheck, dupContentCheck].forEach { $0.isEnabled = dup }
+        [contentField, regexCheck, spotlightCheck].forEach { $0.isEnabled = !dup }
+    }
+
     @objc private func searchClicked() {
         let name = nameField.stringValue.isEmpty ? "*" : nameField.stringValue
         let text = contentField.stringValue
@@ -116,6 +147,33 @@ final class FindFilesSheet: NSWindowController {
         let spotlight = spotlightCheck.state == .on
         statusLabel.stringValue = tr("Searching…")
         let start = startDir
+        if dupCheck.state == .on {
+            let options = DuplicateScan.Options(sameName: dupNameCheck.state == .on,
+                                                sameSize: dupSizeCheck.state == .on,
+                                                sameContent: dupContentCheck.state == .on)
+            guard !options.isEmpty else { statusLabel.stringValue = ""; NSSound.beep(); return }
+            searchTask?.cancel()
+            searchTask = Task.detached(priority: .userInitiated) { [weak self] in
+                let groups = Self.findDuplicates(start: start, namePattern: name,
+                                                 subfolders: sub, options: options)
+                if Task.isCancelled { return }
+                guard let self else { return }
+                await MainActor.run {
+                    // Flatten with an empty separator row between groups (the
+                    // row actions all skip non-path rows).
+                    var rows: [String] = []
+                    for group in groups {
+                        if !rows.isEmpty { rows.append("") }
+                        rows += group.map(\.path)
+                    }
+                    self.results = rows
+                    self.table.reloadData()
+                    let count = groups.reduce(0) { $0 + $1.count }
+                    self.statusLabel.stringValue = tr("%1$d duplicates in %2$d groups", count, groups.count)
+                }
+            }
+            return
+        }
         // Run the scan on a background task — the recursive file walk / mdfind can
         // take seconds and MUST NOT run on the main actor or the UI freezes. The
         // static search helpers are `nonisolated`, so inside `Task.detached` they
@@ -188,6 +246,47 @@ final class FindFilesSheet: NSWindowController {
         return (String(data: data, encoding: .utf8) ?? "").split(separator: "\n").map(String.init)
     }
 
+    /// Duplicate search: walk the tree collecting (path, name, size) for files
+    /// matching the name pattern, then group via DuplicateScan. Content
+    /// comparison hashes lazily (SHA-256, only within same-size buckets).
+    nonisolated static func findDuplicates(start: String, namePattern: String, subfolders: Bool,
+                                           options: DuplicateScan.Options) -> [[DuplicateScan.FileInfo]] {
+        let fm = FileManager.default
+        let hasWildcard = namePattern.contains(where: { "*?[".contains($0) })
+        func nameMatches(_ fileName: String) -> Bool {
+            if namePattern.isEmpty || namePattern == "*" { return true }
+            if hasWildcard { return fnmatch(namePattern, fileName, FNM_CASEFOLD) == 0 }
+            return fileName.localizedCaseInsensitiveContains(namePattern)
+        }
+
+        var files: [DuplicateScan.FileInfo] = []
+        func collect(_ url: URL) {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true, nameMatches(url.lastPathComponent) else { return }
+            files.append(DuplicateScan.FileInfo(path: url.path, name: url.lastPathComponent,
+                                                size: Int64(values.fileSize ?? 0)))
+        }
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        let startURL = URL(fileURLWithPath: start)
+        if subfolders {
+            guard let en = fm.enumerator(at: startURL, includingPropertiesForKeys: keys,
+                                         options: [], errorHandler: { _, _ in true }) else { return [] }
+            while let url = en.nextObject() as? URL {
+                if Task.isCancelled { return [] }
+                collect(url)
+                if files.count >= 200_000 { break }   // runaway-tree backstop
+            }
+        } else {
+            for url in (try? fm.contentsOfDirectory(at: startURL, includingPropertiesForKeys: keys)) ?? [] {
+                collect(url)
+            }
+        }
+
+        return DuplicateScan.group(files, options: options,
+                                   hash: { try? ChecksumAlgorithm.sha256.hashFile(at: $0) },
+                                   isCancelled: { Task.isCancelled })
+    }
+
     nonisolated static func search(start: String, namePattern: String, content: String,
                        subfolders: Bool, regexName: Bool) -> [String] {
         let fm = FileManager.default
@@ -240,7 +339,7 @@ final class FindFilesSheet: NSWindowController {
     /// "Go to File" button: closes the sheet and reveals the file in its folder.
     @objc private func goToSelected() {
         let row = table.selectedRow
-        guard row >= 0, row < results.count else { return }
+        guard row >= 0, row < results.count, !results[row].isEmpty else { return }
         let path = results[row]
         window?.sheetParent?.endSheet(window!, returnCode: .OK)
         onGoTo?(path)
@@ -249,14 +348,14 @@ final class FindFilesSheet: NSWindowController {
     /// Double-click: open the file with its default app (don't leave the search).
     @objc private func openSelected() {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
-        guard row >= 0, row < results.count else { return }
+        guard row >= 0, row < results.count, !results[row].isEmpty else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: results[row]))
     }
 
     /// Space: preview the selected result(s) in the internal viewer (Esc closes it).
     private func quickLookSelected() {
         let urls = table.selectedRowIndexes
-            .filter { $0 < results.count }
+            .filter { $0 < results.count && !results[$0].isEmpty }
             .map { URL(fileURLWithPath: results[$0]) }
         guard !urls.isEmpty else { return }
         let entries = urls.map { url in ViewerEntry(title: url.lastPathComponent, resolve: { url }) }
@@ -265,8 +364,8 @@ final class FindFilesSheet: NSWindowController {
 
     /// "Feed to Panel": close the sheet and list all results in the active panel.
     @objc private func feedClicked() {
-        guard !results.isEmpty else { return }
-        let r = results
+        let r = results.filter { !$0.isEmpty }   // drop duplicate-group separators
+        guard !r.isEmpty else { return }
         window?.sheetParent?.endSheet(window!, returnCode: .OK)
         onFeed?(r)
     }
