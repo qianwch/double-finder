@@ -405,6 +405,12 @@ class MainViewController: NSViewController {
             return true
         }
 
+        // Alt+↓: directory history dropdown (TC style).
+        if keyCode == 125 && flags.contains(.option) && !flags.contains(.command) {
+            activePanelVC.showHistoryMenu()
+            return true
+        }
+
         // Arrow keys: cursor movement (Shift extends the selection).
         // Skip when Command is held so Cmd+Up can act as "go to parent" below.
         if keyCode == 126 && !flags.contains(.command) { // Up

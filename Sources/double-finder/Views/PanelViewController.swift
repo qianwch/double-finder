@@ -829,6 +829,28 @@ class PanelViewController: NSViewController {
         panelDelegate?.panelViewControllerWantsActivation(self)
     }
 
+    /// Alt+↓ (TC): drop the directory history down from the breadcrumb — newest
+    /// first, the current entry checkmarked; picking one jumps to that index.
+    func showHistoryMenu() {
+        let ps = panelState
+        guard ps.history.count > 1 else { NSSound.beep(); return }
+        let menu = NSMenu()
+        for (index, path) in ps.history.enumerated().reversed() {
+            let item = NSMenuItem(title: (path as NSString).abbreviatingWithTildeInPath,
+                                  action: #selector(historyMenuPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = index
+            if index == ps.historyIndex { item.state = .on }
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: pathBar.bounds.maxY), in: pathBar)
+    }
+
+    @objc private func historyMenuPicked(_ sender: NSMenuItem) {
+        guard let index = sender.representedObject as? Int else { return }
+        panelState.goToHistory(index: index)
+    }
+
     @objc private func driveSelected(_ sender: NSButton) {
         guard let path = sender.identifier?.rawValue else { return }
         activatePanel()

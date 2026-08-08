@@ -923,6 +923,19 @@ class PanelState: ObservableObject {
         loadDirectory()
     }
 
+    /// Jumps straight to a history entry (the Alt+↓ dropdown) — same semantics
+    /// as goBack/goForward, just by index.
+    func goToHistory(index: Int) {
+        guard index >= 0, index < history.count, index != historyIndex else { return }
+        rememberCursor()
+        historyIndex = index
+        currentPath = history[index]
+        filter = ""
+        selectedItems.removeAll()
+        cursorIndex = 0
+        loadDirectory()
+    }
+
     func goForward() {
         guard historyIndex < history.count - 1 else { return }
         rememberCursor()
