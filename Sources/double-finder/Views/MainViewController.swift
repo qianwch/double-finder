@@ -33,6 +33,12 @@ class MainViewController: NSViewController {
     private var quickViewLastPath: String?
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
+    /// True while restoreTabs() is importing saved tabs at startup. Importing into
+    /// the left panel fires panelViewControllerTabsDidChange → saveTabs(), which
+    /// would overwrite RightPanelTabs with the right panel's initial single tab
+    /// before that panel gets restored — so saves are suppressed until both
+    /// panels are imported.
+    var isRestoringTabs = false
 
     override func loadView() {
         view = KeyView()
@@ -3197,6 +3203,7 @@ extension MainViewController: PanelViewControllerDelegate {
     /// Persists both panels' tab sets. Called on every tab-structure change and
     /// again at quit (which also captures in-tab navigation since the last change).
     func saveTabs() {
+        guard !isRestoringTabs else { return }
         persistTabs(of: leftPanelVC, tabsKey: "LeftPanelTabs", activeKey: "LeftPanelActiveTab")
         persistTabs(of: rightPanelVC, tabsKey: "RightPanelTabs", activeKey: "RightPanelActiveTab")
     }
@@ -3222,6 +3229,8 @@ extension MainViewController: PanelViewControllerDelegate {
     }
 
     private func restoreTabs() {
+        isRestoringTabs = true
+        defer { isRestoringTabs = false }
         restoreTabs(into: leftPanelVC, panel: appState.leftPanel,
                     tabsKey: "LeftPanelTabs", activeKey: "LeftPanelActiveTab")
         restoreTabs(into: rightPanelVC, panel: appState.rightPanel,
