@@ -1286,7 +1286,7 @@ class MainViewController: NSViewController {
             // can't be removed in place, so refuse those.
             guard PanelState.archiveRoot(in: src.currentPath) == nil else { NSSound.beep(); return }
             let del = DeleteProvider(sftp: src.sftp,
-                                     s3FS: src.s3 != nil ? src.fs : nil,
+                                     remoteFS: (src.s3 != nil || src.android != nil) ? src.fs : nil,
                                      permanent: true)
             runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst,
                         provider: transferProvider(forCopyFrom: src, to: dst),
@@ -1358,7 +1358,7 @@ class MainViewController: NSViewController {
         let run: () -> Void = { [weak self] in
             guard let self = self else { return }
             let op = DeleteProvider(sftp: panel.sftp,
-                                    s3FS: panel.s3 != nil ? panel.fs : nil,
+                                    remoteFS: (panel.s3 != nil || panel.android != nil) ? panel.fs : nil,
                                     permanent: permanent).makeOperation(items: items)
             self.runOperation(op) { [weak self] in
                 self?.activePanelVC.panelState.selectedItems.removeAll()

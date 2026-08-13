@@ -47,7 +47,7 @@ final class DeleteExtractProviderTests: XCTestCase {
     }
 
     func testDeleteSFTP() {
-        let p = DeleteProvider(sftp: SFTPConnection(host: "h", user: "u"), s3FS: nil, permanent: false)
+        let p = DeleteProvider(sftp: SFTPConnection(host: "h", user: "u"), remoteFS: nil, permanent: false)
         let op = p.makeOperation(items: [file("a")])
         XCTAssertEqual(op.type, .delete)
         XCTAssertTrue(op.indeterminate)
@@ -55,7 +55,7 @@ final class DeleteExtractProviderTests: XCTestCase {
     }
 
     func testDeleteS3() {
-        let p = DeleteProvider(sftp: nil, s3FS: LocalFS(), permanent: false)   // any VirtualFS stands in
+        let p = DeleteProvider(sftp: nil, remoteFS: LocalFS(), permanent: false)   // any VirtualFS stands in
         let op = p.makeOperation(items: [file("a")])
         XCTAssertEqual(op.type, .delete)
         XCTAssertTrue(op.indeterminate)
@@ -63,7 +63,7 @@ final class DeleteExtractProviderTests: XCTestCase {
     }
 
     func testDeletePermanent() {
-        let p = DeleteProvider(sftp: nil, s3FS: nil, permanent: true)
+        let p = DeleteProvider(sftp: nil, remoteFS: nil, permanent: true)
         let op = p.makeOperation(items: [file("a")])
         XCTAssertEqual(op.type, .delete)
         XCTAssertTrue(op.indeterminate)
@@ -71,7 +71,7 @@ final class DeleteExtractProviderTests: XCTestCase {
     }
 
     func testDeleteTrashUsesDefault() {
-        let p = DeleteProvider(sftp: nil, s3FS: nil, permanent: false)
+        let p = DeleteProvider(sftp: nil, remoteFS: nil, permanent: false)
         let op = p.makeOperation(items: [file("a")])
         XCTAssertEqual(op.type, .delete)
         // Local Trash uses FileOperation's built-in fs.delete (trashItem) — no perItemOperation.
