@@ -6,6 +6,10 @@ import Foundation
 enum RemoteSession: Equatable {
     case sftp(SFTPConnection)
     case s3(S3Connection, secret: String)
+    /// A phone plugged in over USB. Carries the label separately because the
+    /// device's friendly name ("卫春 的 S25 Edge") only becomes known once the
+    /// MTP session is open, while `AndroidDevice` comes from a plain USB scan.
+    case android(AndroidDevice, label: String)
 
     /// Stable identity for dedupe and per-panel path memory. SFTP mirrors
     /// `sameHost` (host + user + port; the configured initial path / address-book
@@ -15,6 +19,7 @@ enum RemoteSession: Equatable {
         switch self {
         case .sftp(let c): return "sftp://\(c.user)@\(c.host):\(c.port)"
         case .s3(let c, _): return "s3://\(c.accessKey)@\(c.endpoint)"
+        case .android(let d, _): return d.sessionID
         }
     }
 
@@ -24,6 +29,7 @@ enum RemoteSession: Equatable {
         switch self {
         case .sftp(let c): return "sftp://\(c.user)@\(c.host)"
         case .s3(let c, _): return "s3://\(c.name)"
+        case .android(_, let label): return label
         }
     }
 
@@ -32,6 +38,8 @@ enum RemoteSession: Equatable {
         switch self {
         case .sftp: return "network"
         case .s3: return "cloud"
+        // SF Symbols has no Android glyph; a phone silhouette reads correctly.
+        case .android: return "iphone"
         }
     }
 }

@@ -73,6 +73,13 @@ class PanelState: ObservableObject {
     var s3: S3Connection?
     private var s3Secret: String = ""
 
+    /// When set, the panel is browsing an Android phone over MTP. The open
+    /// libmtp session itself lives in `AndroidDeviceRegistry` — this is just the
+    /// device identity. `androidLabel` holds the friendly name read at connect
+    /// time, so the drive bar can show it without reopening the device.
+    var android: AndroidDevice?
+    private var androidLabel: String = ""
+
     /// Branch view: show all files under the current folder, flattened (TC Ctrl+B).
     var branchView = false
 
@@ -153,6 +160,7 @@ class PanelState: ObservableObject {
     /// connected, else ZipFS for archive paths, else LocalFS.
     var fs: VirtualFS {
         if let ra = remoteArchive { return ra }
+        if let device = android { return AndroidFS(device: device, currentPath: currentPath) }
         if let conn = sftp { return SFTPFS(connection: conn) }
         if let conn = s3 {
             // Tolerate an endpoint typed without a scheme (e.g. "obs.example.com"):
@@ -169,7 +177,7 @@ class PanelState: ObservableObject {
     /// True when the panel is showing a remote location (SFTP / S3 / a remote
     /// archive) rather than the local filesystem — so the UI shouldn't highlight
     /// a local volume as "current".
-    var isRemote: Bool { sftp != nil || s3 != nil || remoteArchive != nil }
+    var isRemote: Bool { sftp != nil || s3 != nil || android != nil || remoteArchive != nil }
 
     /// The remote session this panel is currently in (drive-bar identity), nil
     /// when local. Note: browsing a remote archive in place temporarily clears
@@ -177,6 +185,7 @@ class PanelState: ObservableObject {
     var activeRemoteSession: RemoteSession? {
         if let c = sftp { return .sftp(c) }
         if let c = s3 { return .s3(c, secret: s3Secret) }
+        if let d = android { return .android(d, label: androidLabel) }
         return nil
     }
     var activeRemoteSessionID: String? { activeRemoteSession?.id }
@@ -204,6 +213,8 @@ class PanelState: ObservableObject {
         switch session {
         case .sftp(let conn): connectSFTP(conn, initialPath: initial)
         case .s3(let conn, let secret): connectS3(conn, secret: secret, initialPath: initial)
+        case .android(let device, let label):
+            connectAndroid(device, label: label, initialPath: initial)
         }
     }
 
@@ -230,7 +241,9 @@ class PanelState: ObservableObject {
     private var localReturnPath: String = NSHomeDirectory()
 
     private func rememberLocalReturn() {
-        if sftp == nil && s3 == nil && remoteArchive == nil { localReturnPath = currentPath }
+        if sftp == nil && s3 == nil && android == nil && remoteArchive == nil {
+            localReturnPath = currentPath
+        }
     }
 
     /// After a remote listing throws: if this was the initial connect (no prior dir in
@@ -244,6 +257,7 @@ class PanelState: ObservableObject {
             // observer sees this panel as already-local and doesn't re-enter.
             let deadID = activeRemoteSessionID
             sftp = nil; s3 = nil; s3Secret = ""
+            android = nil; androidLabel = ""
             remoteArchive = nil; remoteArchiveReturn = nil
             if let id = deadID {
                 remoteLastPaths[id] = nil
@@ -266,6 +280,7 @@ class PanelState: ObservableObject {
         remoteArchiveReturn = nil
         searchResults = nil
         s3 = nil; s3Secret = ""
+        android = nil; androidLabel = ""
         sftp = conn
         currentPath = initialPath
         cursorMemory = [:]
@@ -287,6 +302,7 @@ class PanelState: ObservableObject {
         RemoteSessionStore.shared.register(.s3(conn, secret: secret))
         remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
         sftp = nil
+        android = nil; androidLabel = ""
         s3 = conn; s3Secret = secret
         currentPath = initialPath
         cursorMemory = [:]; history = [initialPath]; historyIndex = 0
@@ -296,6 +312,27 @@ class PanelState: ObservableObject {
 
     func disconnectS3(toLocal path: String) {
         s3 = nil; s3Secret = ""
+        navigate(to: path)
+    }
+
+    /// Enters an Android device. The libmtp session must already be open
+    /// (`AndroidDeviceRegistry.open`) — this only points the panel at it.
+    /// `initialPath` is "/" for a fresh connect, which lists the storages.
+    func connectAndroid(_ device: AndroidDevice, label: String, initialPath: String) {
+        rememberLocalReturn()
+        RemoteSessionStore.shared.register(.android(device, label: label))
+        remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
+        sftp = nil
+        s3 = nil; s3Secret = ""
+        android = device; androidLabel = label
+        currentPath = initialPath
+        cursorMemory = [:]; history = [initialPath]; historyIndex = 0
+        filter = ""; selectedItems.removeAll(); cursorIndex = 0
+        loadDirectory()
+    }
+
+    func disconnectAndroid(toLocal path: String) {
+        android = nil; androidLabel = ""
         navigate(to: path)
     }
 
@@ -1064,6 +1101,18 @@ class PanelState: ObservableObject {
     /// changes `currentPath`, so a path-keyed cache would stay stale forever.
     func refreshDiskSpace() {
         let path = currentPath
+        // Android: the storage's free/total is already in the open MTP session,
+        // so it's applied directly — no volume probe, no off-actor hop. At the
+        // device root (which lists storages) there's no single volume to report.
+        if let device = android {
+            let storages = AndroidDeviceRegistry.shared.storages(device.sessionID)
+            let match = MTPPath(path).storageName.flatMap { name in
+                storages.first { $0.name == name }
+            }
+            applyDiskSpace(match.map { (free: $0.freeBytes, total: $0.capacityBytes) },
+                           readAt: path)
+            return
+        }
         guard !isRemote, PanelState.archiveRoot(in: path) == nil else {
             if !diskNote.isEmpty {
                 diskNote = ""
