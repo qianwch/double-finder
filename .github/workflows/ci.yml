@@ -137,6 +137,9 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job never checks out the source (it only needs the artifacts),
+          # so gh can't infer the repo from a git remote — pass it explicitly.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           ls -lh dist
@@ -166,6 +169,7 @@ jobs:
             gh release delete latest --yes --cleanup-tag 2>/dev/null || true
             gh release create latest \
               --prerelease \
+              --target "$GITHUB_SHA" \
               --title "Latest build" \
               --notes "Automated build of \`${GITHUB_SHA:0:7}\`.
 
