@@ -123,7 +123,13 @@ final class FileIconProvider {
     /// icon. QuickLook thumbnails stay per-path ("path|side") — they show content.
     private func cacheKey(item: FileItem, side: CGFloat, thumbnail: Bool) -> String {
         if thumbnail { return "\(item.path)|\(Int(side))" }
-        if item.isDirectory { return "ext:/dir|\(Int(side))" }
+        if item.isDirectory {
+            // Bundles are directories with their own icon, so they can't share
+            // the one folder bitmap — key them per path like thumbnails do.
+            return FileItem.isPackageFileName(item.name)
+                ? "\(item.path)|\(Int(side))"
+                : "ext:/dir|\(Int(side))"
+        }
         return "ext:\((item.name as NSString).pathExtension.lowercased())|\(Int(side))"
     }
 
@@ -217,8 +223,8 @@ private final class IconOperation: Operation, @unchecked Sendable {
         guard !isCancelled else { return }
         let raw: NSImage
         let fm = FileManager.default
-        if item.isDirectory {
-            // Directories share one extension-keyed bitmap — use the generic
+        if item.isDirectory && !FileItem.isPackageFileName(item.name) {
+            // Plain directories share one extension-keyed bitmap — use the generic
             // folder icon rather than baking one directory's custom icon into it.
             raw = NSWorkspace.shared.icon(for: .folder)
         } else if fm.fileExists(atPath: path) {

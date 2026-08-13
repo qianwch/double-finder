@@ -65,6 +65,27 @@ struct FileItem: Identifiable, Hashable {
         ".gz", ".bz2", ".xz", ".zst", ".lz4"
     ]
 
+    /// Bundle directories that carry their **own** icon — a ".app" should look
+    /// like the application, not like a folder.
+    ///
+    /// Extension-based on purpose. `NSWorkspace.isFilePackage` is authoritative
+    /// but hits the filesystem, and this is consulted once per visible row while
+    /// drawing; in a directory with tens of thousands of entries that cost is
+    /// not affordable. A wrong guess is cheap either way: at worst one icon is
+    /// resolved per-path instead of shared, or a rare bundle keeps the folder
+    /// icon.
+    static func isPackageFileName(_ name: String) -> Bool {
+        packageExtensions.contains((name as NSString).pathExtension.lowercased())
+    }
+
+    private static let packageExtensions: Set<String> = [
+        "app", "framework", "bundle", "plugin", "kext", "appex", "xpc",
+        "prefpane", "qlgenerator", "saver", "mdimporter", "component",
+        "wdgt", "workflow", "docset", "photoslibrary", "rtfd",
+        // iWork documents are packages that show a per-document preview icon.
+        "pages", "numbers", "key",
+    ]
+
     static func isArchiveFileName(_ name: String) -> Bool {
         let lower = name.lowercased()
         if archiveSuffixes.contains(where: { lower.hasSuffix($0) }) { return true }
