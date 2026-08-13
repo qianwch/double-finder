@@ -442,6 +442,37 @@ extension AndroidDeviceRegistry {
     }
 }
 
+// MARK: - On-device copy / move
+
+/// Thrown when the device refuses a server-side copy/move. Not all MTP
+/// implementations support CopyObject/MoveObject, so callers fall back to
+/// download-then-upload instead of failing the operation.
+struct MTPOnDeviceUnsupported: LocalizedError {
+    var errorDescription: String? { "This device can't copy or move files on its own" }
+}
+
+extension AndroidDeviceRegistry {
+    /// Copies or moves an object into `destDir` **entirely on the device** — the
+    /// bytes never cross USB. Mirrors `SFTPSameHostProvider`'s role.
+    ///
+    /// Throws `MTPOnDeviceUnsupported` when the device declines, so the caller
+    /// can fall back.
+    func transferOnDevice(_ sessionID: String, path: String, toDir destDir: String,
+                          move: Bool) async throws {
+        try await perform(sessionID) { s in
+            let node = try Self.resolve(s, path: path)
+            let parent = try Self.resolve(s, path: destDir)
+            let rc = move
+                ? LIBMTP_Move_Object(s.device, node.objectID, parent.storageID, parent.objectID)
+                : LIBMTP_Copy_Object(s.device, node.objectID, parent.storageID, parent.objectID)
+            guard rc == 0 else { throw MTPOnDeviceUnsupported() }
+
+            s.cache.invalidate(destDir)
+            if move { s.cache.invalidate(path) }
+        }
+    }
+}
+
 // MARK: - Diagnostic
 
 extension AndroidDeviceRegistry {
@@ -565,6 +596,18 @@ extension AndroidDeviceRegistry {
         try await shared.download(sessionID, path: root + "/" + name, to: backPath) { got += $0 }
         let round = (try? Data(contentsOf: URL(fileURLWithPath: backPath))) ?? Data()
         print("  download: \(got) bytes, content \(round == payload ? "identical" : "MISMATCH")")
+
+        // On-device copy: supported only by some MTP stacks, hence the probe.
+        try await shared.createDirectory(sessionID, path: root + "/ondevice")
+        do {
+            let start = Date()
+            try await shared.transferOnDevice(sessionID, path: root + "/" + name,
+                                              toDir: root + "/ondevice", move: false)
+            let listed = try await shared.list(sessionID, path: root + "/ondevice")
+            print("  on-device copy: ok in \(String(format: "%.2f", -start.timeIntervalSinceNow))s -> \(listed.map { $0.name })")
+        } catch is MTPOnDeviceUnsupported {
+            print("  on-device copy: NOT SUPPORTED by this device (will fall back to temp-file relay)")
+        }
     }
 }
 
