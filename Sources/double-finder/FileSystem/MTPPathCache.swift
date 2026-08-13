@@ -83,3 +83,18 @@ final class MTPPathCache {
         return node
     }
 }
+
+/// MTP lets several objects share a name inside one folder — it's an object tree,
+/// not a filesystem. Uploading without cleaning up first leaves duplicates on the
+/// phone and makes later name-based operations ambiguous, so every upload deletes
+/// the same-named objects first.
+enum MTPConflict {
+    /// Object ids that must be deleted before writing a **file** called `name`.
+    ///
+    /// Folders are deliberately excluded: replacing a same-named folder would
+    /// delete a whole subtree as a side effect of copying one file.
+    static func objectsToReplace(named name: String,
+                                 in children: [(name: String, id: UInt32, isDir: Bool)]) -> [UInt32] {
+        children.filter { $0.name == name && !$0.isDir }.map { $0.id }
+    }
+}
