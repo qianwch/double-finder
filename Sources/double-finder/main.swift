@@ -22,7 +22,7 @@ if let arc = ProcessInfo.processInfo.environment["NC_ARCHIVE_DIAG"] {
 // always environmental (phone locked, USB mode wrong, another process holding
 // the USB interface), so this makes them reportable without a debugger.
 if ProcessInfo.processInfo.environment["NC_MTP_DIAG"] != nil {
-    AndroidDeviceScanner.runDiagnostic()
+    AndroidDeviceRegistry.runDiagnostic()
     exit(0)
 }
 

@@ -64,6 +64,11 @@ enum AndroidDeviceScanner {
     /// cheap enough for a Refresh button.
     static func detect() -> [AndroidDevice] {
         LIBMTP_Init()
+        // Silences libmtp's debug channel. It does NOT silence the
+        // "Device N (VID=… and PID=…) is a …" line that detection prints
+        // unconditionally with printf — libmtp exposes no way to turn that off.
+        // It only reaches stdout, which is invisible in a packaged .app.
+        LIBMTP_Set_Debug(0)
         var raw: UnsafeMutablePointer<LIBMTP_raw_device_t>?
         var count: Int32 = 0
         guard LIBMTP_Detect_Raw_Devices(&raw, &count) == LIBMTP_ERROR_NONE,
@@ -83,17 +88,4 @@ enum AndroidDeviceScanner {
         }
     }
 
-    /// Prints what libmtp can see (driven by `NC_MTP_DIAG`). Mirrors
-    /// `ZipFS.runDiagnostic` — MTP problems are nearly always environmental, so
-    /// users can run this and paste the output.
-    static func runDiagnostic() {
-        let devices = detect()
-        print("libmtp raw devices: \(devices.count)")
-        for d in devices {
-            print("  \(d.displayName)  [\(d.usbKey)]  session=\(d.sessionID)")
-        }
-        if devices.isEmpty {
-            print("  no device — unlock the phone and set USB mode to \"File transfer\"")
-        }
-    }
 }
