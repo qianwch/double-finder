@@ -30,16 +30,17 @@ final class AndroidFS: VirtualFS {
         throw FSUnsupportedError(message: "Not implemented yet")
     }
 
+    /// Recursive: MTP refuses to delete a non-empty folder.
     func delete(_ path: String) async throws {
-        throw FSUnsupportedError(message: "Not implemented yet")
+        try await registry.delete(sessionID, path: path)
     }
 
     func createDirectory(_ path: String) async throws {
-        throw FSUnsupportedError(message: "Not implemented yet")
+        try await registry.createDirectory(sessionID, path: path)
     }
 
     func rename(at path: String, to newName: String) async throws {
-        throw FSUnsupportedError(message: "Not implemented yet")
+        try await registry.rename(sessionID, path: path, to: newName)
     }
 
     /// MTP carries no POSIX permissions at all.

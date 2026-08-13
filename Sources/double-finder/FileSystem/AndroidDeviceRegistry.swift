@@ -261,6 +261,95 @@ extension AndroidDeviceRegistry {
     }
 }
 
+// MARK: - Mutations
+
+extension AndroidDeviceRegistry {
+    /// Resolves a path on the session's queue (caller must already be on it).
+    private static func resolve(_ s: Session, path: String) throws -> MTPNode {
+        try s.cache.resolve(path) { parent, _ in
+            children(s.device, node: parent).map { (name: $0.name, id: $0.id, isDir: $0.isDir) }
+        }
+    }
+
+    func createDirectory(_ sessionID: String, path: String) async throws {
+        try await perform(sessionID) { s in
+            let p = MTPPath(path)
+            guard let parentPath = p.parent?.raw, !p.isDeviceRoot else {
+                throw MTPError(message: "Can't create a folder here")
+            }
+            let parent = try Self.resolve(s, path: parentPath)
+            // LIBMTP_Create_Folder takes a mutable C string and returns the new
+            // object id, or 0 on failure.
+            var name = Array(p.name.utf8CString)
+            let id = name.withUnsafeMutableBufferPointer { buf in
+                LIBMTP_Create_Folder(s.device, buf.baseAddress, parent.objectID, parent.storageID)
+            }
+            guard id != 0 else {
+                throw MTPError(message: "Could not create the folder on the device")
+            }
+            s.cache.record(path: p.raw, node: MTPNode(storageID: parent.storageID, objectID: id))
+        }
+    }
+
+    func delete(_ sessionID: String, path: String) async throws {
+        try await perform(sessionID) { s in
+            let node = try Self.resolve(s, path: path)
+            try Self.deleteRecursive(s, node: node, name: MTPPath(path).name)
+            s.cache.invalidate(path)
+        }
+    }
+
+    /// MTP's DeleteObject refuses a non-empty folder, so children go first,
+    /// depth-first.
+    private static func deleteRecursive(_ s: Session, node: MTPNode, name: String) throws {
+        for child in children(s.device, node: node) {
+            if child.isDir {
+                try deleteRecursive(s, node: MTPNode(storageID: node.storageID, objectID: child.id),
+                                    name: child.name)
+            } else if LIBMTP_Delete_Object(s.device, child.id) != 0 {
+                throw MTPError(message: "Could not delete \(child.name) on the device")
+            }
+        }
+        if LIBMTP_Delete_Object(s.device, node.objectID) != 0 {
+            throw MTPError(message: "Could not delete \(name) on the device")
+        }
+    }
+
+    func rename(_ sessionID: String, path: String, to newName: String) async throws {
+        try await perform(sessionID) { s in
+            let node = try Self.resolve(s, path: path)
+            guard let meta = LIBMTP_Get_Filemetadata(s.device, node.objectID) else {
+                throw MTPError(message: "Could not read the item on the device")
+            }
+            defer { LIBMTP_destroy_file_t(meta) }
+
+            // Folders and files rename through different libmtp entry points.
+            let rc: Int32
+            if meta.pointee.filetype == LIBMTP_FILETYPE_FOLDER {
+                guard let folder = LIBMTP_new_folder_t() else {
+                    throw MTPError(message: "Could not rename the folder on the device")
+                }
+                defer { LIBMTP_destroy_folder_t(folder) }
+                folder.pointee.folder_id = node.objectID
+                folder.pointee.parent_id = meta.pointee.parent_id
+                folder.pointee.storage_id = node.storageID
+                rc = LIBMTP_Set_Folder_Name(s.device, folder, newName)
+            } else {
+                rc = LIBMTP_Set_File_Name(s.device, meta, newName)
+            }
+            guard rc == 0 else {
+                throw MTPError(message: "Could not rename \(MTPPath(path).name) on the device")
+            }
+            // The object keeps its id but changes address; drop the old subtree
+            // and record the new name.
+            s.cache.invalidate(path)
+            if let parent = MTPPath(path).parent {
+                s.cache.record(path: parent.appending(newName).raw, node: node)
+            }
+        }
+    }
+}
+
 /// A raw child entry as libmtp reports it.
 struct MTPChild {
     let name: String
@@ -313,6 +402,9 @@ extension AndroidDeviceRegistry {
                         print("  deep: \"\(dir2.path)\" -> \(sub2.count) entries")
                     }
                 }
+                if ProcessInfo.processInfo.environment["NC_MTP_DIAG"] == "write" {
+                    try await runWriteChecks(first.sessionID)
+                }
                 shared.close(first.sessionID)
                 print("session closed cleanly")
             } catch {
@@ -320,6 +412,35 @@ extension AndroidDeviceRegistry {
             }
         }
         sem.wait()
+    }
+
+    /// Exercises mkdir / rename / recursive delete on a scratch folder.
+    /// Only runs with `NC_MTP_DIAG=write`, since it writes to a real phone.
+    /// Everything it creates is removed again.
+    private static func runWriteChecks(_ sessionID: String) async throws {
+        guard let storage = shared.storages(sessionID).first else { return }
+        let root = "/\(storage.name)/DFWriteTest"
+        print("write checks in \(root)")
+
+        try await shared.createDirectory(sessionID, path: root)
+        try await shared.createDirectory(sessionID, path: root + "/sub")
+        try await shared.createDirectory(sessionID, path: root + "/sub/深层 目录")
+        print("  created nested folders (incl. Chinese + space)")
+
+        try await shared.rename(sessionID, path: root + "/sub", to: "renamed")
+        let afterRename = try await shared.list(sessionID, path: root)
+        print("  after rename: \(afterRename.map { $0.name })")
+
+        // The nested child must still be reachable under the new parent name —
+        // proves the path cache was invalidated and re-resolved correctly.
+        let deep = try await shared.list(sessionID, path: root + "/renamed")
+        print("  under renamed: \(deep.map { $0.name })")
+
+        // Recursive delete: MTP would refuse this folder as non-empty.
+        try await shared.delete(sessionID, path: root)
+        let storageRoot = try await shared.list(sessionID, path: "/\(storage.name)")
+        let leftover = storageRoot.contains { $0.name == "DFWriteTest" }
+        print("  recursive delete: \(leftover ? "FAILED — leftover" : "clean")")
     }
 }
 
