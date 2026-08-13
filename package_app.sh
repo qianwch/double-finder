@@ -1,5 +1,12 @@
 #!/bin/bash
-# Builds a universal (x86_64 + arm64) "Double Finder.app" into ./.dist.
+# Builds "Double Finder.app" into ./.dist for the ARCHITECTURE OF THIS MACHINE
+# (arm64 on Apple Silicon, x86_64 on Intel).
+#
+# It used to build universal, but the Android/MTP backend links libmtp, and
+# Homebrew now ships a single bottle (arm64 only) — every other platform builds
+# it from source. That makes both halves of a universal dylib unobtainable on
+# any one machine, so the app follows the host architecture instead: build on
+# an Apple Silicon Mac to ship Apple Silicon, on an Intel Mac to ship Intel.
 # Usage: ./package_app.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -7,10 +14,11 @@ cd "$(dirname "$0")"
 APP="Double Finder"
 DIST=".dist"
 APPDIR="$DIST/$APP.app"
+HOST_ARCH="$(uname -m)"
 
-echo "==> Universal release build (arm64 + x86_64)"
-swift build -c release --arch arm64 --arch x86_64
-BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/$APP"
+echo "==> Release build for this host ($HOST_ARCH)"
+swift build -c release --arch "$HOST_ARCH"
+BIN="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/$APP"
 
 echo "==> Assembling $APPDIR"
 rm -rf "$APPDIR"
@@ -20,7 +28,7 @@ chmod +x "$APPDIR/Contents/MacOS/$APP"
 echo "    binary archs: $(lipo -archs "$APPDIR/Contents/MacOS/$APP")"
 
 echo "==> Bundle Localization resource pack"
-RESBUNDLE="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/double-finder_double-finder.bundle"
+RESBUNDLE="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/double-finder_double-finder.bundle"
 if [ -d "$RESBUNDLE" ]; then
     cp -R "$RESBUNDLE" "$APPDIR/Contents/Resources/"
     echo "    bundled $(basename "$RESBUNDLE") ($(find "$RESBUNDLE" -name '*.json' | wc -l | tr -d ' ') json packs)"
@@ -53,6 +61,7 @@ if [ -x "$SEVENZIP" ]; then
     cp vendor/sevenzip/License.txt "$APPDIR/Contents/Resources/sevenzip-License.txt"
     echo "    7zz archs: $(lipo -archs "$APPDIR/Contents/MacOS/7zz")"
     case "$(lipo -archs "$APPDIR/Contents/MacOS/7zz")" in
+        *"$HOST_ARCH"*) : ;;   # covers this host — fine whether or not it's universal
         *x86_64*arm64*|*arm64*x86_64*) : ;;
         *) echo "    !! WARNING: bundled 7zz is NOT universal — encrypted 7z may need Rosetta" ;;
     esac
@@ -123,6 +132,44 @@ gen 1024 icon_512x512@2x.png
 iconutil -c icns "$ICONSET" -o "$APPDIR/Contents/Resources/AppIcon.icns"
 rm -rf "$ICONSET" "$PNG"
 
+# Done after the icon export above, which runs the binary: install_name_tool
+# invalidates the ad-hoc signature the linker applied, and macOS refuses to
+# exec a binary whose signature no longer matches (SIGKILL). The final
+# codesign --deep below re-signs the app and both dylibs.
+echo "==> Bundle libmtp + libusb (Android/MTP backend; LGPL-2.1, dynamically linked)"
+MTP_PREFIX="$(brew --prefix libmtp 2>/dev/null || echo /opt/homebrew/opt/libmtp)"
+USB_PREFIX="$(brew --prefix libusb 2>/dev/null || echo /opt/homebrew/opt/libusb)"
+MTP_LIB="$MTP_PREFIX/lib/libmtp.9.dylib"
+USB_LIB="$USB_PREFIX/lib/libusb-1.0.0.dylib"
+if [ -f "$MTP_LIB" ] && [ -f "$USB_LIB" ]; then
+    mkdir -p "$APPDIR/Contents/Frameworks"
+    cp "$MTP_LIB" "$APPDIR/Contents/Frameworks/libmtp.9.dylib"
+    cp "$USB_LIB" "$APPDIR/Contents/Frameworks/libusb-1.0.0.dylib"
+    chmod u+w "$APPDIR/Contents/Frameworks/libmtp.9.dylib" "$APPDIR/Contents/Frameworks/libusb-1.0.0.dylib"
+    # Resolve both libs from inside the bundle instead of the Homebrew prefix,
+    # so the shipped app needs no brew install. Must happen BEFORE codesign.
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$APPDIR/Contents/MacOS/$APP" 2>/dev/null || true
+    install_name_tool -change "$MTP_LIB" "@rpath/libmtp.9.dylib" "$APPDIR/Contents/MacOS/$APP"
+    install_name_tool -id "@rpath/libmtp.9.dylib" "$APPDIR/Contents/Frameworks/libmtp.9.dylib"
+    install_name_tool -id "@rpath/libusb-1.0.0.dylib" "$APPDIR/Contents/Frameworks/libusb-1.0.0.dylib"
+    # libmtp itself pulls in libusb — repoint that edge too.
+    install_name_tool -change "$USB_LIB" "@rpath/libusb-1.0.0.dylib" "$APPDIR/Contents/Frameworks/libmtp.9.dylib"
+    # LGPL-2.1 compliance: ship the license next to the dynamically linked libs.
+    for lic in "$MTP_PREFIX/COPYING" "$MTP_PREFIX/../../Cellar/libmtp/"*/COPYING; do
+        [ -f "$lic" ] && cp "$lic" "$APPDIR/Contents/Frameworks/libmtp-COPYING.txt" && break
+    done
+    for lic in "$USB_PREFIX/COPYING" "$USB_PREFIX/../../Cellar/libusb/"*/COPYING; do
+        [ -f "$lic" ] && cp "$lic" "$APPDIR/Contents/Frameworks/libusb-COPYING.txt" && break
+    done
+    echo "    bundled libmtp ($(lipo -archs "$APPDIR/Contents/Frameworks/libmtp.9.dylib")) + libusb"
+    if ! lipo -archs "$APPDIR/Contents/Frameworks/libmtp.9.dylib" | grep -q "$HOST_ARCH"; then
+        echo "    !! WARNING: bundled libmtp does not cover $HOST_ARCH — Android support will fail"
+    fi
+else
+    echo "    !! libmtp/libusb not found — the app will NOT launch (brew install libmtp)"
+    echo "       looked for: $MTP_LIB"
+fi
+
 echo "==> Ad-hoc code signing"
 codesign --force --deep --sign - "$APPDIR"
 
@@ -138,4 +185,5 @@ echo "    installed $INSTALL_DIR/$APP.app"
 echo "==> Done"
 echo "    $APPDIR"
 lipo -info "$APPDIR/Contents/MacOS/$APP"
+otool -L "$APPDIR/Contents/MacOS/$APP" | grep -E "mtp|usb" || true
 codesign -dv "$APPDIR" 2>&1 | grep -E "Identifier|Signature" || true
