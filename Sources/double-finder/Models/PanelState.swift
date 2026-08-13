@@ -79,6 +79,9 @@ class PanelState: ObservableObject {
     /// time, so the drive bar can show it without reopening the device.
     var android: AndroidDevice?
     private var androidLabel: String = ""
+    /// Read-only view of the connected device's friendly name, so the other
+    /// panel can join the same session without reopening the device.
+    var androidLabelForMirroring: String { androidLabel }
 
     /// Branch view: show all files under the current folder, flattened (TC Ctrl+B).
     var branchView = false
@@ -344,6 +347,8 @@ class PanelState: ObservableObject {
             disconnectSFTP(toLocal: path)
         } else if s3 != nil {
             disconnectS3(toLocal: path)
+        } else if android != nil {
+            disconnectAndroid(toLocal: path)
         } else {
             navigate(to: path)
         }
@@ -362,6 +367,10 @@ class PanelState: ObservableObject {
         } else if let conn = source.s3 {
             if s3 == conn { navigate(to: path) }
             else { connectS3(conn, secret: source.s3Secret, initialPath: path) }
+        } else if let device = source.android {
+            // Same phone → plain navigate; otherwise join that device's session.
+            if android == device { navigate(to: path) }
+            else { connectAndroid(device, label: source.androidLabelForMirroring, initialPath: path) }
         } else {
             navigateLocal(to: path)
         }
@@ -514,7 +523,7 @@ class PanelState: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isLoading = false
-                    let remote = self.sftp != nil || self.s3 != nil || self.remoteArchive != nil
+                    let remote = self.isRemote
                     if remote {
                         // A remote listing failed (connection refused, auth/key rejected,
                         // host unreachable, bad path…). Don't leave a silent empty panel:

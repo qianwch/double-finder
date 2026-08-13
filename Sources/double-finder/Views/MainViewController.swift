@@ -1393,6 +1393,7 @@ class MainViewController: NSViewController {
 
         let isSFTP = panel.sftp != nil
         let isS3 = panel.s3 != nil
+        let isAndroid = panel.android != nil
         let n = items.count
         let countText = n == 1 ? tr("1 item") : tr("%d items", n)
 
@@ -1410,7 +1411,7 @@ class MainViewController: NSViewController {
         }
 
         // Remote delete is irreversible regardless of which key was pressed.
-        guard confirm || isSFTP || isS3 else { run(); return }
+        guard confirm || isSFTP || isS3 || isAndroid else { run(); return }
 
         // List what's about to go (up to 10 names, the rest folded), so the user
         // confirms actual content, not just a count.
@@ -2507,7 +2508,9 @@ class MainViewController: NSViewController {
     /// the active panel's directory. Local destinations only.
     func pasteFilesFromClipboard() {
         let panel = appState.activePanelState
-        guard panel.sftp == nil, PanelState.archiveRoot(in: panel.currentPath) == nil else {
+        // Local destinations only: importExternalFiles works through LocalFS, so
+        // any remote backend (SFTP / S3 / Android) would write to a virtual path.
+        guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
             NSSound.beep(); return
         }
         guard let urls = NSPasteboard.general.readObjects(
@@ -2523,7 +2526,7 @@ class MainViewController: NSViewController {
     /// Files dropped onto a panel from Finder / other apps / the other panel.
     func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool) {
         let panel = vc.panelState
-        guard panel.sftp == nil, PanelState.archiveRoot(in: panel.currentPath) == nil else {
+        guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
             NSSound.beep(); return
         }
         importExternalFiles(urls, into: panel.currentPath, move: move) { [weak self] in
@@ -2704,6 +2707,9 @@ class MainViewController: NSViewController {
     /// Builds a sync endpoint from a panel. nil ⇒ unsupported (archive, or S3 without client).
     private func makeSyncEndpoint(_ p: PanelState) -> SyncEndpoint? {
         if PanelState.archiveRoot(in: p.currentPath) != nil { return nil }
+        // Android/MTP has no SyncEndpoint kind; without this it would fall
+        // through to the local branch and sync against a virtual path.
+        if p.android != nil { return nil }
         if let conn = p.sftp { return .sftp(conn, base: p.currentPath) }
         if p.s3 != nil {
             guard let client = p.s3Client else { return nil }
@@ -3025,12 +3031,10 @@ extension MainViewController {
     @objc func actionMoveToTrash_menu() { actionMoveToTrash() }
     @objc func actionGoHome_menu() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let panel = appState.activePanelState
-        if panel.sftp != nil {
-            panel.disconnectSFTP(toLocal: home)   // leave SFTP, return to local
-        } else {
-            panel.navigate(to: home)
-        }
+        // navigateLocal leaves whichever remote backend the panel is in (SFTP /
+        // S3 / Android); a bare navigate would keep the remote FS and then list a
+        // local path against it, showing an empty panel.
+        appState.activePanelState.navigateLocal(to: home)
     }
     @objc func actionGoBack_menu() {
         appState.activePanelState.goBack()

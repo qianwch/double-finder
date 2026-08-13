@@ -37,9 +37,11 @@ class AppState: ObservableObject {
     /// Persists panel paths and view options so the next launch restores them.
     func save() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        // Don't persist remote SFTP paths as local paths.
-        defaults.set(leftPanel.sftp == nil ? leftPanel.currentPath : home, forKey: "LeftPanelPath")
-        defaults.set(rightPanel.sftp == nil ? rightPanel.currentPath : home, forKey: "RightPanelPath")
+        // Never persist a remote path as a local one: SFTP/S3/Android paths are
+        // virtual and would leave the panel pointing at a non-existent directory
+        // on the next launch. `isRemote` covers every backend, including archives.
+        defaults.set(leftPanel.isRemote ? home : leftPanel.currentPath, forKey: "LeftPanelPath")
+        defaults.set(rightPanel.isRemote ? home : rightPanel.currentPath, forKey: "RightPanelPath")
         defaults.set(leftPanel.showHidden, forKey: "LeftShowHidden")
         defaults.set(rightPanel.showHidden, forKey: "RightShowHidden")
         defaults.set(activePanel == .right ? "right" : "left", forKey: "ActivePanel")
