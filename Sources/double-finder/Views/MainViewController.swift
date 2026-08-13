@@ -756,7 +756,7 @@ class MainViewController: NSViewController {
         let insideArchive = panel.remoteArchive != nil
             || PanelState.archiveRoot(in: panel.currentPath) != nil
         // A real on-disk path only exists when not remote and not inside an archive.
-        let trulyLocal = panel.sftp == nil && panel.s3 == nil && !insideArchive
+        let trulyLocal = panel.sftp == nil && panel.s3 == nil && panel.android == nil && !insideArchive
         if item.name == ".." {
             panel.goUp()
         } else if trulyLocal && item.isDirectory && Self.isLaunchablePackage(item.path) {
@@ -862,7 +862,7 @@ class MainViewController: NSViewController {
     }
 
     private func isLocalPanel(_ panel: PanelState) -> Bool {
-        panel.sftp == nil && panel.remoteArchive == nil && panel.s3 == nil
+        panel.sftp == nil && panel.remoteArchive == nil && panel.s3 == nil && panel.android == nil
             && PanelState.archiveRoot(in: panel.currentPath) == nil
     }
 
@@ -1085,7 +1085,7 @@ class MainViewController: NSViewController {
         // last component renames on transfer); several items → <dir>/*.*.
         let singleName = pruned.count == 1 ? pruned[0].name : nil
         let dest0 = (destPanel.currentPath as NSString).appendingPathComponent(singleName ?? "*.*")
-        let destIsLocal = destPanel.sftp == nil && destPanel.s3 == nil
+        let destIsLocal = destPanel.sftp == nil && destPanel.s3 == nil && destPanel.android == nil
         // A cross-backend move runs the copy pipeline, but the user asked for a
         // move — the confirm dialog must say so, not "Download"/"Upload".
         let verb = deleteProvider == nil ? provider.verb : tr("Move")
@@ -1154,7 +1154,7 @@ class MainViewController: NSViewController {
     /// new name instead of the source's own.
     private func existingDestNames(of items: [FileItem], at dest: String,
                                    destPanel: PanelState, renameTo: String? = nil) async -> Set<String> {
-        if destPanel.sftp == nil && destPanel.s3 == nil {
+        if destPanel.sftp == nil && destPanel.s3 == nil && destPanel.android == nil {
             // Local destination: precise per-name existence (includes hidden).
             return Set(items.compactMap { item -> String? in
                 let name = renameTo ?? item.name
@@ -1172,7 +1172,9 @@ class MainViewController: NSViewController {
     private func sharesNamespace(_ a: PanelState, _ b: PanelState) -> Bool {
         if let s = a.sftp, let d = b.sftp { return s.sameHost(as: d) }
         if let s = a.s3, let d = b.s3 { return s.sameStore(as: d) }
-        return a.sftp == nil && a.s3 == nil && b.sftp == nil && b.s3 == nil
+        if let s = a.android, let d = b.android { return s.sessionID == d.sessionID }
+        return a.sftp == nil && a.s3 == nil && a.android == nil
+            && b.sftp == nil && b.s3 == nil && b.android == nil
     }
 
     /// Pick the provider for a copy from `src` panel to `dst` panel.
@@ -1193,6 +1195,16 @@ class MainViewController: NSViewController {
         }
         if dst.s3 != nil, let client = dst.s3Client {
             return S3TransferProvider(client: client, downloading: false)
+        }
+        // Same phone on both panels → on-device copy (bytes never cross USB).
+        if let s = src.android, let d = dst.android, s.sessionID == d.sessionID {
+            return AndroidSameDeviceProvider(device: s, move: false)
+        }
+        if let device = src.android {
+            return AndroidTransferProvider(device: device, direction: .download)
+        }
+        if let device = dst.android {
+            return AndroidTransferProvider(device: device, direction: .upload)
         }
         // Same SFTP host on both panels → server-side cp (no download+upload).
         if let s = src.sftp, let d = dst.sftp, s.sameHost(as: d) {
@@ -1260,10 +1272,14 @@ class MainViewController: NSViewController {
         // → server-side move (copy + delete, no round-trip).
         if let s = src.s3, let d = dst.s3, s.sameStore(as: d), let client = src.s3Client {
             provider = S3SameStoreProvider(client: client, move: true)
+        } else if let s = src.android, let d = dst.android, s.sessionID == d.sessionID {
+            // Same phone → on-device move.
+            provider = AndroidSameDeviceProvider(device: s, move: true)
         } else if let s = src.sftp, let d = dst.sftp, s.sameHost(as: d) {
             // Same SFTP host → server-side mv (no download+upload round-trip).
             provider = SFTPSameHostProvider(connection: s, move: true)
-        } else if src.s3 != nil || dst.s3 != nil || src.sftp != nil || dst.sftp != nil {
+        } else if src.s3 != nil || dst.s3 != nil || src.sftp != nil || dst.sftp != nil
+                    || src.android != nil || dst.android != nil {
             // Cross-backend move (local↔S3, local↔SFTP, S3↔S3 cross-store…):
             // run the matching copy pipeline, then delete the sources once every
             // unit succeeded (TC's F6 to/from a remote panel). Archive sources

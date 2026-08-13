@@ -261,6 +261,53 @@ extension AndroidDeviceRegistry {
     }
 }
 
+// MARK: - Recursive walk
+
+extension AndroidDeviceRegistry {
+    /// Every file under `path`, with paths relative to it. Folders themselves are
+    /// not returned — callers recreate them from the relative paths.
+    /// Used to expand a selected folder into per-file transfer units.
+    func listTree(_ sessionID: String, path: String) async throws -> [(relative: String, size: Int64)] {
+        try await perform(sessionID) { s in
+            var out: [(relative: String, size: Int64)] = []
+            var stack: [(node: MTPNode, prefix: String, path: String)] = [
+                (try Self.resolve(s, path: path), "", MTPPath(path).raw)
+            ]
+            while let (node, prefix, walked) = stack.popLast() {
+                for child in Self.children(s.device, node: node) {
+                    let rel = prefix.isEmpty ? child.name : prefix + "/" + child.name
+                    let childPath = MTPPath(walked).appending(child.name).raw
+                    s.cache.record(path: childPath,
+                                   node: MTPNode(storageID: node.storageID, objectID: child.id))
+                    if child.isDir {
+                        stack.append((MTPNode(storageID: node.storageID, objectID: child.id),
+                                      rel, childPath))
+                    } else {
+                        out.append((relative: rel, size: child.size))
+                    }
+                }
+            }
+            return out
+        }
+    }
+
+    /// Creates `path` and any missing parents. MTP has no `mkdir -p`, and a
+    /// folder upload needs the whole tree in place before the files land.
+    func ensureDirectory(_ sessionID: String, path: String) async throws {
+        let target = MTPPath(path)
+        guard !target.isDeviceRoot, !target.isStorageRoot else { return }
+        var walked = "/" + (target.storageName ?? "")
+        for segment in target.segments {
+            let next = MTPPath(walked).appending(segment).raw
+            let existing = try await list(sessionID, path: walked)
+            if !existing.contains(where: { $0.name == segment && $0.isDirectory }) {
+                try await createDirectory(sessionID, path: next)
+            }
+            walked = next
+        }
+    }
+}
+
 // MARK: - Mutations
 
 extension AndroidDeviceRegistry {
