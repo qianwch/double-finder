@@ -40,15 +40,27 @@ final class EncodingDetectorTests: XCTestCase {
     }
 
     func testGarbageNeverFails() {
+        // Many samples per run rather than one: a contract violation then shows up
+        // on the first run that hits it, instead of surfacing as an occasional CI
+        // failure nobody can reproduce locally.
+        for _ in 0..<100 { assertGarbageSampleHoldsContract() }
+        XCTAssertEqual(EncodingDetector.detect(sample: Data()), .utf8)   // empty → utf8
+    }
+
+    private func assertGarbageSampleHoldsContract() {
         var garbage = Data((0..<200).map { _ in UInt8.random(in: 0...255) })
         garbage[0] = 0x41   // never start with a BOM prefix (1/65536 flake otherwise)
         let enc = EncodingDetector.detect(sample: garbage)
         // Contract: the detected encoding strict-decodes the sample after trimming ≤4
-        // trailing bytes (incomplete tails are carried over by TextChunkDecoder downstream).
-        // The full-sample assertion below still holds for random garbage because the
-        // single-byte fallback encodings accept any byte, so full-sample decoding is
-        // guaranteed for garbage input.
-        XCTAssertNotNil(String(data: garbage, encoding: enc))
-        XCTAssertEqual(EncodingDetector.detect(sample: Data()), .utf8)   // empty → utf8
+        // trailing bytes (incomplete tails are carried over by TextChunkDecoder
+        // downstream). Asserting the FULL sample decodes is stronger than that and
+        // made this test flaky: random bytes sometimes form a valid multi-byte
+        // sequence once the tail is trimmed, so detect() legitimately returns a
+        // multi-byte encoding that can't decode the untrimmed data.
+        let decodesAfterTrim = (0...min(4, garbage.count)).contains { back in
+            String(data: garbage.prefix(garbage.count - back), encoding: enc) != nil
+        }
+        XCTAssertTrue(decodesAfterTrim,
+                      "detected \(enc) cannot strict-decode the sample at any trim ≤4")
     }
 }
