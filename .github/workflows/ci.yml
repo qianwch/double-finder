@@ -59,7 +59,10 @@ jobs:
       - name: Test
         run: swift test
 
+      # PRs get a release-build sanity check here; on push the package job below
+      # does a release build anyway, so repeating it would just burn minutes.
       - name: Build (release)
+        if: github.event_name == 'pull_request'
         run: swift build -c release
 
   # Package one .dmg per architecture. package_app.sh follows `uname -m`, so
