@@ -501,5 +501,14 @@
   "“%@” is encrypted. Enter password to browse:": "„%@“ ist verschlüsselt. Passwort zum Durchsuchen eingeben:",
   "“%@” was changed. Upload it back to %@?": "„%@“ wurde geändert. Zurück zu %@ hochladen?",
   "… and %d more": "… und %d weitere",
-  "…and %d more": "…und %d weitere"
+  "…and %d more": "…und %d weitere",
+  "Device:": "Gerät:",
+  "No device found. Connect the phone by USB, unlock it, and set the USB connection to \"File transfer\". If it still doesn't appear, quit Google Chrome — it holds on to Android devices.": "Kein Gerät gefunden. Schließen Sie das Telefon per USB an, entsperren Sie es und stellen Sie die USB-Verbindung auf „Dateiübertragung“. Erscheint es weiterhin nicht, beenden Sie Google Chrome – es belegt Android-Geräte.",
+  "Another program is using the phone. Quit Google Chrome, Android File Transfer or Image Capture, then reconnect.": "Ein anderes Programm verwendet das Telefon. Beenden Sie Google Chrome, Android File Transfer oder „Digitale Bilder“ und verbinden Sie erneut.",
+  "Can't open the phone. Unlock it and set the USB connection to \"File transfer\".": "Telefon kann nicht geöffnet werden. Entsperren Sie es und stellen Sie die USB-Verbindung auf „Dateiübertragung“.",
+  "The phone exposed no storage. Unlock it and tap \"Allow\" on the phone, then reconnect.": "Das Telefon hat keinen Speicher freigegeben. Entsperren Sie es, tippen Sie auf „Zulassen“ und verbinden Sie erneut.",
+  "The phone was disconnected.": "Die Verbindung zum Telefon wurde getrennt.",
+  "This device can't copy or move files on its own": "Dieses Gerät kann Dateien nicht selbst kopieren oder verschieben",
+  "This device can't copy folders on its own": "Dieses Gerät kann Ordner nicht selbst kopieren",
+  "Changing permissions is not supported on this device": "Das Ändern von Berechtigungen wird auf diesem Gerät nicht unterstützt"
 }

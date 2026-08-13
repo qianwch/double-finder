@@ -501,5 +501,14 @@
   "“%@” is encrypted. Enter password to browse:": "「%@」は暗号化されています。閲覧するにはパスワードを入力してください：",
   "“%@” was changed. Upload it back to %@?": "「%@」が変更されました。%@ にアップロードして戻しますか？",
   "… and %d more": "…他 %d 件",
-  "…and %d more": "…他 %d 件"
+  "…and %d more": "…他 %d 件",
+  "Device:": "デバイス:",
+  "No device found. Connect the phone by USB, unlock it, and set the USB connection to \"File transfer\". If it still doesn't appear, quit Google Chrome — it holds on to Android devices.": "デバイスが見つかりません。USB でスマートフォンを接続し、ロックを解除して、USB 接続方法を「ファイル転送」に設定してください。それでも表示されない場合は Google Chrome を終了してください（Android デバイスを占有します）。",
+  "Another program is using the phone. Quit Google Chrome, Android File Transfer or Image Capture, then reconnect.": "別のプログラムがスマートフォンを使用しています。Google Chrome、Android File Transfer、または「イメージキャプチャ」を終了してから再接続してください。",
+  "Can't open the phone. Unlock it and set the USB connection to \"File transfer\".": "スマートフォンを開けません。ロックを解除し、USB 接続方法を「ファイル転送」に設定してください。",
+  "The phone exposed no storage. Unlock it and tap \"Allow\" on the phone, then reconnect.": "スマートフォンがストレージを公開していません。ロックを解除して「許可」をタップしてから再接続してください。",
+  "The phone was disconnected.": "スマートフォンの接続が解除されました。",
+  "This device can't copy or move files on its own": "このデバイスは単独でファイルをコピー・移動できません",
+  "This device can't copy folders on its own": "このデバイスは単独でフォルダをコピーできません",
+  "Changing permissions is not supported on this device": "このデバイスでは権限の変更はサポートされていません"
 }

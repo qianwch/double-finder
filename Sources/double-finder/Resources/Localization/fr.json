@@ -501,5 +501,14 @@
   "“%@” is encrypted. Enter password to browse:": "« %@ » est chiffré. Saisissez le mot de passe pour parcourir :",
   "“%@” was changed. Upload it back to %@?": "« %@ » a été modifié. Le réuploader vers %@ ?",
   "… and %d more": "… et %d de plus",
-  "…and %d more": "…et %d de plus"
+  "…and %d more": "…et %d de plus",
+  "Device:": "Appareil :",
+  "No device found. Connect the phone by USB, unlock it, and set the USB connection to \"File transfer\". If it still doesn't appear, quit Google Chrome — it holds on to Android devices.": "Aucun appareil trouvé. Connectez le téléphone en USB, déverrouillez-le et réglez la connexion USB sur « Transfert de fichiers ». S'il n'apparaît toujours pas, quittez Google Chrome — il monopolise les appareils Android.",
+  "Another program is using the phone. Quit Google Chrome, Android File Transfer or Image Capture, then reconnect.": "Un autre programme utilise le téléphone. Quittez Google Chrome, Android File Transfer ou « Transfert d'images », puis reconnectez-vous.",
+  "Can't open the phone. Unlock it and set the USB connection to \"File transfer\".": "Impossible d'ouvrir le téléphone. Déverrouillez-le et réglez la connexion USB sur « Transfert de fichiers ».",
+  "The phone exposed no storage. Unlock it and tap \"Allow\" on the phone, then reconnect.": "Le téléphone n'a exposé aucun stockage. Déverrouillez-le, touchez « Autoriser », puis reconnectez-vous.",
+  "The phone was disconnected.": "Le téléphone a été déconnecté.",
+  "This device can't copy or move files on its own": "Cet appareil ne peut pas copier ou déplacer des fichiers par lui-même",
+  "This device can't copy folders on its own": "Cet appareil ne peut pas copier de dossiers par lui-même",
+  "Changing permissions is not supported on this device": "La modification des autorisations n'est pas prise en charge sur cet appareil"
 }
