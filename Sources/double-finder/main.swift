@@ -17,6 +17,15 @@ if let arc = ProcessInfo.processInfo.environment["NC_ARCHIVE_DIAG"] {
     exit(0)
 }
 
+// Headless MTP diagnostic: `NC_MTP_DIAG=1 "Double Finder"` prints the Android
+// devices libmtp can see, and how far a session gets. MTP failures are almost
+// always environmental (phone locked, USB mode wrong, another process holding
+// the USB interface), so this makes them reportable without a debugger.
+if ProcessInfo.processInfo.environment["NC_MTP_DIAG"] != nil {
+    AndroidDeviceScanner.runDiagnostic()
+    exit(0)
+}
+
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)

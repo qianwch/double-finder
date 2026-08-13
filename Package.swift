@@ -39,6 +39,14 @@ let package = Package(
                 .copy("Resources/Localization"),
                 .copy("Resources/Help")
             ],
+            swiftSettings: [
+                // `import Clibmtp` makes Swift's clang importer parse <libmtp.h>,
+                // and Clibmtp's own cSettings only apply to compiling shim.c —
+                // they don't propagate here. Pass the header path through to
+                // clang so the module can actually be built.
+                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include",
+                              "-Xcc", "-I/usr/local/include"])
+            ],
             linkerSettings: [
                 .linkedLibrary("archive"),
                 .linkedLibrary("mtp"),
