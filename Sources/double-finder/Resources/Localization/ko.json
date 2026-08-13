@@ -510,5 +510,13 @@
   "The phone was disconnected.": "휴대전화 연결이 끊어졌습니다.",
   "This device can't copy or move files on its own": "이 장치는 자체적으로 파일을 복사하거나 이동할 수 없습니다",
   "This device can't copy folders on its own": "이 장치는 자체적으로 폴더를 복사할 수 없습니다",
-  "Changing permissions is not supported on this device": "이 장치에서는 권한 변경이 지원되지 않습니다"
+  "Changing permissions is not supported on this device": "이 장치에서는 권한 변경이 지원되지 않습니다",
+  "%@ is using the phone": "%@이(가) 휴대전화를 사용 중입니다",
+  "Quit it, then connect again.": "종료한 후 다시 연결하세요.",
+  "Google Chrome holds on to Android devices for WebUSB and chrome://inspect; it has to be quit completely, not just closed.": "Google Chrome은 WebUSB와 chrome://inspect를 위해 Android 장치를 계속 점유합니다. 창을 닫는 것만으로는 부족하며 완전히 종료해야 합니다.",
+  "ptpcamerad is a macOS process — it can't be quit. Unplug and replug the cable; if it keeps taking the device, open Image Capture, select the phone, and set \"Connecting this device opens: No application\".": "ptpcamerad는 macOS 자체 프로세스라 종료할 수 없습니다. 케이블을 뽑았다가 다시 연결하세요. 그래도 장치를 계속 점유하면 '이미지 캡처'를 열고 휴대전화를 선택한 후 '이 장치 연결 시 열기'를 '응용 프로그램 없음'으로 설정하세요.",
+  "Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button.": "다른 Double Finder 인스턴스가 이 휴대전화에 연결되어 있습니다. 해당 인스턴스를 종료하거나 ⏏ 버튼으로 장치 연결을 해제하세요.",
+  "Copy Details": "세부 정보 복사",
+  "connected": "연결됨",
+  "in use by %@": "%@이(가) 사용 중"
 }

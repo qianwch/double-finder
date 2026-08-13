@@ -5,6 +5,9 @@ import Clibmtp
 /// the presentation layer (`presentLocalizedError`), per the project's i18n rule.
 struct MTPError: LocalizedError {
     let message: String
+    /// Process names currently holding the device, when they could be read from
+    /// the IO registry. Lets the UI name the culprit instead of guessing.
+    var holders: [String] = []
     var errorDescription: String? { message }
 
     /// The USB interface is held by another process. On macOS the usual culprit
@@ -111,7 +114,12 @@ final class AndroidDeviceRegistry: @unchecked Sendable {
                     cont.resume(throwing: MTPError.disconnected); return
                 }
                 guard let dev = LIBMTP_Open_Raw_Device_Uncached(&list[index]) else {
-                    cont.resume(throwing: MTPError.deviceBusy); return
+                    // libusb only says "access denied"; the registry knows who
+                    // actually holds the interface.
+                    var err = MTPError.deviceBusy
+                    err.holders = USBOccupancy.holders(vendorID: device.vendorID,
+                                                       productID: device.productID)
+                    cont.resume(throwing: err); return
                 }
 
                 let info = AndroidDeviceInfo(
@@ -574,6 +582,10 @@ extension AndroidDeviceRegistry {
         print("libmtp raw devices: \(devices.count)")
         for d in devices {
             print("  \(d.displayName)  [\(d.usbKey)]  session=\(d.sessionID)")
+            let holders = USBOccupancy.holders(vendorID: d.vendorID, productID: d.productID)
+            if !holders.isEmpty {
+                print("    held by: \(holders.joined(separator: ", "))")
+            }
         }
         guard let first = devices.first else {
             print("  no device — unlock the phone and set USB mode to \"File transfer\"")
@@ -613,6 +625,9 @@ extension AndroidDeviceRegistry {
                 print("session closed cleanly")
             } catch {
                 print("open failed: \(error.localizedDescription)")
+                if let mtp = error as? MTPError, !mtp.holders.isEmpty {
+                    print("  holders: \(mtp.holders.joined(separator: ", "))")
+                }
             }
         }
         sem.wait()

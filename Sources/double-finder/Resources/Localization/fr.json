@@ -510,5 +510,13 @@
   "The phone was disconnected.": "Le téléphone a été déconnecté.",
   "This device can't copy or move files on its own": "Cet appareil ne peut pas copier ou déplacer des fichiers par lui-même",
   "This device can't copy folders on its own": "Cet appareil ne peut pas copier de dossiers par lui-même",
-  "Changing permissions is not supported on this device": "La modification des autorisations n'est pas prise en charge sur cet appareil"
+  "Changing permissions is not supported on this device": "La modification des autorisations n'est pas prise en charge sur cet appareil",
+  "%@ is using the phone": "%@ utilise le téléphone",
+  "Quit it, then connect again.": "Quittez-le, puis reconnectez-vous.",
+  "Google Chrome holds on to Android devices for WebUSB and chrome://inspect; it has to be quit completely, not just closed.": "Google Chrome retient les appareils Android pour WebUSB et chrome://inspect ; il doit être quitté complètement, pas seulement fermé.",
+  "ptpcamerad is a macOS process — it can't be quit. Unplug and replug the cable; if it keeps taking the device, open Image Capture, select the phone, and set \"Connecting this device opens: No application\".": "ptpcamerad est un processus propre à macOS : il ne peut pas être quitté. Débranchez puis rebranchez le câble ; s'il continue de monopoliser l'appareil, ouvrez « Transfert d'images », sélectionnez le téléphone et réglez « Connecter cet appareil ouvre : Aucune application ».",
+  "Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button.": "Une autre instance de Double Finder est connectée à ce téléphone. Quittez-la ou déconnectez l'appareil avec le bouton d'éjection.",
+  "Copy Details": "Copier les détails",
+  "connected": "connecté",
+  "in use by %@": "utilisé par %@"
 }

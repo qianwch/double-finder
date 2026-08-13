@@ -510,5 +510,13 @@
   "The phone was disconnected.": "手机已断开连接。",
   "This device can't copy or move files on its own": "此设备不支持在设备内直接复制或移动文件",
   "This device can't copy folders on its own": "此设备不支持在设备内直接复制文件夹",
-  "Changing permissions is not supported on this device": "此设备不支持修改权限"
+  "Changing permissions is not supported on this device": "此设备不支持修改权限",
+  "%@ is using the phone": "%@ 正在占用手机",
+  "Quit it, then connect again.": "退出它，然后重新连接。",
+  "Google Chrome holds on to Android devices for WebUSB and chrome://inspect; it has to be quit completely, not just closed.": "Google Chrome 会为 WebUSB 和 chrome://inspect 抓住 Android 设备不放，必须完全退出，仅关闭窗口无效。",
+  "ptpcamerad is a macOS process — it can't be quit. Unplug and replug the cable; if it keeps taking the device, open Image Capture, select the phone, and set \"Connecting this device opens: No application\".": "ptpcamerad 是 macOS 自身的进程，无法退出。请拔掉后重新插上数据线；若它仍然抢占设备，可打开「图像捕捉」，选中手机，将「连接此设备时打开」设为「无程序」。",
+  "Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button.": "另一个 Double Finder 实例正连接着这台手机。请退出它，或在那边用 ⏏ 断开该设备。",
+  "Copy Details": "拷贝详情",
+  "connected": "已连接",
+  "in use by %@": "被 %@ 占用"
 }

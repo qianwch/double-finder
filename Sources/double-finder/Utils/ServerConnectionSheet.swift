@@ -570,7 +570,20 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         }()
         if tableView.tag == 3 {
             guard row < androidDevices.count else { return cell }
-            cell.textField?.stringValue = androidDevices[row].displayName
+            let device = androidDevices[row]
+            // Say up front when a device can't be opened, instead of letting the
+            // user click Connect and hit "device busy".
+            var note = ""
+            if AndroidDeviceRegistry.shared.isOpen(device.sessionID) {
+                note = " — " + tr("connected")
+            } else {
+                let holders = USBOccupancy.holders(vendorID: device.vendorID,
+                                                   productID: device.productID)
+                if !holders.isEmpty {
+                    note = " — " + tr("in use by %@", holders.joined(separator: ", "))
+                }
+            }
+            cell.textField?.stringValue = device.displayName + note
             return cell
         }
         let s = discovered[row]

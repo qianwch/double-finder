@@ -2848,11 +2848,52 @@ class MainViewController: NSViewController {
                 }
             } catch {
                 await MainActor.run {
-                    if let window = self.view.window {
+                    guard let window = self.view.window else { return }
+                    // "Device busy" is the one MTP failure a user can actually
+                    // act on, so name the process holding it rather than listing
+                    // programs it might be.
+                    if let mtp = error as? MTPError, !mtp.holders.isEmpty {
+                        self.presentDeviceBusyAlert(holders: mtp.holders, in: window)
+                    } else {
                         self.presentLocalizedError(error, in: window)
                     }
                 }
             }
+        }
+    }
+
+    /// Reports exactly who is holding the phone, with the fix for each known
+    /// offender. `ptpcamerad` is singled out because it is macOS's own process
+    /// (MTP rides on USB class 6, which the system treats as a camera) and it
+    /// can't simply be quit — SIP restarts it.
+    private func presentDeviceBusyAlert(holders: [String], in window: NSWindow) {
+        let listed = holders.joined(separator: ", ")
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = tr("%@ is using the phone", listed)
+
+        var advice: [String] = [tr("Quit it, then connect again.")]
+        if holders.contains(where: { $0.localizedCaseInsensitiveContains("chrome") }) {
+            advice.append(tr("Google Chrome holds on to Android devices for WebUSB and chrome://inspect; it has to be quit completely, not just closed."))
+        }
+        if holders.contains(where: { $0.localizedCaseInsensitiveContains("ptpcamera") }) {
+            advice.append(tr("ptpcamerad is a macOS process — it can't be quit. Unplug and replug the cable; if it keeps taking the device, open Image Capture, select the phone, and set \"Connecting this device opens: No application\"."))
+        }
+        if holders.contains(where: { $0.hasPrefix("Double Finder") }) {
+            advice.append(tr("Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button."))
+        }
+        alert.informativeText = advice.joined(separator: "\n\n")
+        alert.addButton(withTitle: tr("OK"))
+        alert.addButton(withTitle: tr("Copy Details"))
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertSecondButtonReturn else { return }
+            // Second button copies a paste-ready report for bug threads.
+            let report = "Double Finder — MTP device busy\n"
+                + "holders: \(listed)\n"
+                + "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)\n"
+                + "hint: run `ioreg -w 0 -r -n SAMSUNG_Android | grep -i userclient` for the raw registry view"
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(report, forType: .string)
         }
     }
 
