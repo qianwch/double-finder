@@ -74,6 +74,22 @@ following third-party components, each under its own license.
   at packaging time (or uses a local copy placed at
   `vendor/plantuml/plantuml.jar`). See `vendor/plantuml/README.md`.
 
+## libmtp / libusb
+
+- **Use:** linked at build time to browse and transfer files on Android phones
+  over MTP (USB). macOS has no MTP support of its own — `ImageCaptureCore` only
+  speaks PTP (the photo subset) and cannot see a phone's storage.
+- **License:** LGPL-2.1-or-later (both libraries).
+- **Linking:** **dynamically linked**, never statically. The packaged app ships
+  the unmodified `libmtp.9.dylib` and `libusb-1.0.0.dylib` in
+  `Contents/Frameworks/` with their install names rewritten to `@rpath` — you
+  are free to replace them with your own build of the same library.
+- **Bundled license text:** `Contents/Frameworks/libmtp-COPYING.txt` and
+  `libusb-COPYING.txt` (copied from the installed packages at packaging time).
+- **Project:** https://libmtp.sourceforge.net/ · https://libusb.info/
+- The dylibs are **not** committed to this repository; they come from
+  `brew install libmtp` on the packaging machine.
+
 ---
 
 Double Finder is *inspired by* Total Commander's two-pane workflow and key

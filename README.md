@@ -14,6 +14,10 @@ SwiftUI), inspired by the Total Commander workflow.
 
 - **Dual-pane layout** with an active panel, tabs (⌘T / ⌘W), and a directory
   tree sidebar (⌘⇧T).
+- **Android phones over USB (MTP):** plug one in, pick it under ⌘K ▸ Android,
+  and it appears as a drive — browse, upload, download with byte progress,
+  rename, recursively delete, and copy/move *within* the phone without the data
+  crossing USB.
 - **View modes** (⌘1/2/3): full details, brief, and thumbnails (Quick Look).
 - **Built-in viewer (F3):** an embedded Quick Look window that previews any file
   type (images, PDF, text, video, audio, Office…) and steps through the whole
@@ -53,7 +57,9 @@ SwiftUI), inspired by the Total Commander workflow.
 ## Requirements
 
 - macOS 13 (Ventura) or later
-- Apple Silicon or Intel (the packaged app is universal)
+- Apple Silicon or Intel
+- `brew install libmtp` — required to **build** (the Android/MTP backend links
+  it). The packaged `.app` bundles the library, so end users need nothing.
 
 ## Install
 
@@ -70,8 +76,12 @@ swift build -c release
 ./package_app.sh        # → ./.dist/Double Finder.app
 ```
 
-This produces a universal (arm64 + x86_64) app, draws the icon, bundles `7zz`
-(downloaded on first run), and ad-hoc code-signs the bundle.
+This builds for **the architecture of the machine you run it on** (arm64 on
+Apple Silicon, x86_64 on Intel), draws the icon, bundles `7zz` (downloaded on
+first run) plus `libmtp`/`libusb`, and ad-hoc code-signs the bundle. It is no
+longer universal: Homebrew ships a single arm64 bottle for libmtp and builds
+every other platform from source, so both halves of a universal dylib can't be
+obtained on one machine.
 
 > **Gatekeeper note:** the app is **ad-hoc signed**, not notarized by Apple. On
 > first launch macOS may say it "cannot be opened" or is "damaged." Either
