@@ -58,6 +58,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowController.saveFrame()
         appState.save()
         mainVC()?.saveTabs()
+        // Hand the phone's USB interface back, or Chrome / Android File Transfer
+        // stay locked out until it's physically unplugged.
+        AndroidDeviceRegistry.shared.closeAll()
     }
 
     /// Re-runs setupMenus — called after the Shortcuts editor toggles a

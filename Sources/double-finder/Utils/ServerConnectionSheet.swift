@@ -24,7 +24,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     private var discovered: [NetworkBrowser.Service] = []
     private let browser = NetworkBrowser()
 
-    private let typePicker = NSSegmentedControl(labels: ["SFTP", "S3", "SMB"],
+    private let typePicker = NSSegmentedControl(labels: ["SFTP", "S3", "SMB", "Android"],
                                                 trackingMode: .selectOne, target: nil, action: nil)
     private var savedOutline: NSOutlineView!
     private var discoveredTable: NSTableView!
@@ -53,6 +53,13 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     private let smbName = NSTextField()
     private let smbHost = NSTextField()
     private var smbRows: [NSView] = []
+
+    // Android: not a form but a live list of plugged-in devices — an MTP phone
+    // has no host, port or credentials to type in.
+    private var androidDevices: [AndroidDevice] = []
+    private var androidTable: NSTableView!
+    private var androidRows: [NSView] = []
+    private let androidHint = NSTextField(labelWithString: "")
 
     private var deleteButton: NSButton!
 
@@ -201,6 +208,40 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         for v in [sbNL, smbName, sbHL, smbHost] { content.addSubview(v) }
         smbRows = [sbNL, smbName, sbHL, smbHost]
 
+        // --- Android device list ---
+        // Not a form: an MTP phone has no host, port or credentials, so this
+        // section lists what is currently plugged in and lets you pick one.
+        let andL = makeLabel(tr("Device:"), y: 340)
+        let andScroll = NSScrollView(frame: NSRect(x: 324, y: 232, width: 298, height: 132))
+        andScroll.hasVerticalScroller = true
+        andScroll.borderType = .bezelBorder
+        androidTable = NSTableView()
+        androidTable.headerView = nil
+        let andCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("android-name"))
+        andCol.width = 280
+        androidTable.addTableColumn(andCol)
+        androidTable.dataSource = self
+        androidTable.delegate = self
+        androidTable.tag = 3
+        androidTable.rowHeight = 20
+        androidTable.target = self
+        androidTable.doubleAction = #selector(connectClicked)
+        andScroll.documentView = androidTable
+
+        let andRefresh = NSButton(title: tr("Refresh"), target: self,
+                                  action: #selector(refreshAndroidClicked))
+        andRefresh.bezelStyle = .rounded
+        andRefresh.frame = NSRect(x: 324, y: 200, width: 90, height: 24)
+
+        androidHint.frame = NSRect(x: 324, y: 120, width: 298, height: 72)
+        androidHint.textColor = .secondaryLabelColor
+        androidHint.font = .systemFont(ofSize: 11)
+        androidHint.lineBreakMode = .byWordWrapping
+        androidHint.maximumNumberOfLines = 4
+
+        for v in [andL, andScroll, andRefresh, androidHint] { content.addSubview(v) }
+        androidRows = [andL, andScroll, andRefresh, androidHint]
+
         // --- Bottom buttons ---
         let newBtn = NSButton(title: tr("New"), target: self, action: #selector(newClicked))
         newBtn.bezelStyle = .rounded
@@ -245,7 +286,12 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     // MARK: - Kind selection
 
     private func kindIndex(of conn: ServerConnection) -> Int {
-        switch conn { case .sftp: return 0; case .s3: return 1; case .smb: return 2 }
+        switch conn {
+        case .sftp: return 0
+        case .s3: return 1
+        case .smb: return 2
+        case .android: return 3
+        }
     }
 
     /// Switches the editor to `index`'s field group. The Saved address book is
@@ -254,14 +300,33 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     /// false when selecting a saved row drives the tab to its own kind.
     private func selectKind(_ index: Int, clearSaved: Bool = true) {
         typePicker.selectedSegment = index
-        for v in sftpRows { v.isHidden = (index != 0) }
-        for v in s3Rows   { v.isHidden = (index != 1) }
-        for v in smbRows  { v.isHidden = (index != 2) }
+        for v in sftpRows    { v.isHidden = (index != 0) }
+        for v in s3Rows      { v.isHidden = (index != 1) }
+        for v in smbRows     { v.isHidden = (index != 2) }
+        for v in androidRows { v.isHidden = (index != 3) }
+        if index == 3 { rescanAndroid() }
         if clearSaved { savedOutline.deselectAll(nil) }
     }
 
     @objc private func typePickerChanged() {
         selectKind(typePicker.selectedSegment, clearSaved: true)
+    }
+
+    // MARK: - Android devices
+
+    @objc private func refreshAndroidClicked() { rescanAndroid() }
+
+    /// Rescans USB. Cheap — enumeration doesn't open a session.
+    private func rescanAndroid() {
+        androidDevices = AndroidDeviceScanner.detect()
+        androidTable.reloadData()
+        if !androidDevices.isEmpty {
+            androidTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            androidHint.stringValue = ""
+        } else {
+            // The three things that actually go wrong, in the order they occur.
+            androidHint.stringValue = tr("No device found. Connect the phone by USB, unlock it, and set the USB connection to \"File transfer\". If it still doesn't appear, quit Google Chrome — it holds on to Android devices.")
+        }
     }
 
     // MARK: - Current connection builder
@@ -298,6 +363,10 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             var name = smbName.stringValue.trimmingCharacters(in: .whitespaces)
             if name.isEmpty { name = host }
             return (.smb(SMBConnection(name: name, host: host)), nil)
+        case 3: // Android (MTP)
+            let row = androidTable.selectedRow
+            guard row >= 0, row < androidDevices.count else { NSSound.beep(); return nil }
+            return (.android(androidDevices[row]), nil)
         default:
             return nil
         }
@@ -326,6 +395,10 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         case .smb(let c):
             smbName.stringValue = c.name
             smbHost.stringValue = c.host
+        case .android:
+            // Never stored, so this is unreachable from the Saved list; the
+            // device list is rebuilt by rescanAndroid() instead.
+            break
         }
     }
 
@@ -475,7 +548,9 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
 
     // MARK: - NSTableViewDataSource / Delegate (Discovered list)
 
-    func numberOfRows(in tableView: NSTableView) -> Int { discovered.count }
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        tableView.tag == 3 ? androidDevices.count : discovered.count
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
@@ -493,6 +568,11 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             ])
             return c
         }()
+        if tableView.tag == 3 {
+            guard row < androidDevices.count else { return cell }
+            cell.textField?.stringValue = androidDevices[row].displayName
+            return cell
+        }
         let s = discovered[row]
         let proto = s.kind == .smb ? "SMB" : "SFTP"
         let hostNote = s.host.map { " — \($0)" } ?? ""
@@ -502,6 +582,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let tableView = notification.object as? NSTableView else { return }
+        // The Android list needs no side effects: picking a row IS the choice.
+        guard tableView.tag != 3 else { return }
         let row = tableView.selectedRow
         guard row >= 0, row < discovered.count else { return }
         let svc = discovered[row]

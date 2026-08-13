@@ -73,13 +73,21 @@ final class RemoteSessionStore {
     }
 
     func remove(id: String) {
-        guard sessions.contains(where: { $0.id == id }) else { return }
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        // Android sessions own an exclusive USB claim: until it's released,
+        // Chrome / Android File Transfer / Image Capture can't open the phone
+        // either. Every disconnect path funnels through here, so this is the
+        // one place that has to get it right.
+        if case .android = session { AndroidDeviceRegistry.shared.close(id) }
         sessions.removeAll { $0.id == id }
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }
 
     func removeAll() {
         guard !sessions.isEmpty else { return }
+        if sessions.contains(where: { if case .android = $0 { return true }; return false }) {
+            AndroidDeviceRegistry.shared.closeAll()
+        }
         sessions.removeAll()
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }

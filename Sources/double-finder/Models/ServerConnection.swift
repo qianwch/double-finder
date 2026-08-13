@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerKind: String { case sftp, s3, smb }
+enum ServerKind: String { case sftp, s3, smb, android }
 
 /// An SMB server (host only). Shares are listed after NetFS mounts them; no
 /// password is stored (NetFS native auth handles credentials).
@@ -24,21 +24,26 @@ enum ServerConnection: Equatable {
     case sftp(SFTPConnection)
     case s3(S3Connection)
     case smb(SMBConnection)
+    /// A phone plugged in over USB (MTP). Unlike the others this is never
+    /// persisted — there is nothing to save but the cable.
+    case android(AndroidDevice)
 
     var kind: ServerKind {
         switch self {
-        case .sftp: return .sftp
-        case .s3:   return .s3
-        case .smb:  return .smb
+        case .sftp:    return .sftp
+        case .s3:      return .s3
+        case .smb:     return .smb
+        case .android: return .android
         }
     }
 
     /// Short uppercase label for the address-book row (e.g. "[SFTP] host").
     var kindLabel: String {
         switch self {
-        case .sftp: return "SFTP"
-        case .s3:   return "S3"
-        case .smb:  return "SMB"
+        case .sftp:    return "SFTP"
+        case .s3:      return "S3"
+        case .smb:     return "SMB"
+        case .android: return "Android"
         }
     }
 
@@ -47,6 +52,7 @@ enum ServerConnection: Equatable {
         case .sftp(let c): return c.name.isEmpty ? "\(c.user)@\(c.host)" : c.name
         case .s3(let c):   return c.name.isEmpty ? c.endpoint : c.name
         case .smb(let c):  return c.name
+        case .android(let d): return d.displayName
         }
     }
 
@@ -60,6 +66,10 @@ enum ServerConnection: Equatable {
             var d = c.dict; d["kind"] = "s3"; return d
         case .smb(let c):
             var d = c.dict; d["kind"] = "smb"; return d
+        case .android:
+            // Never persisted (see ServerConnectionStore.add); the marker exists
+            // only so `dict` stays total.
+            return ["kind": "android"]
         }
     }
 
@@ -79,6 +89,10 @@ enum ServerConnection: Equatable {
         case "smb":
             guard let c = SMBConnection(dict: dict) else { return nil }
             self = .smb(c)
+        case "android":
+            // A phone can't be restored from disk — it has to be plugged in and
+            // rescanned. Drop any stray entry instead of resurrecting it.
+            return nil
         default:
             return nil
         }
@@ -110,7 +124,11 @@ enum ServerConnectionStore {
     }
 
     /// Add or replace by (name, kind).
+    ///
+    /// Android devices are ignored: their identity is the USB cable, so there is
+    /// nothing meaningful to store and a stale entry would only mislead.
     static func add(_ conn: ServerConnection, defaults: UserDefaults = .standard) {
+        guard conn.kind != .android else { return }
         var conns = load(defaults: defaults)
         conns.removeAll { $0.kind == conn.kind && $0.name == conn.name }
         conns.append(conn)

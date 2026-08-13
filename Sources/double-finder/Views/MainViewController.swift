@@ -2766,6 +2766,29 @@ class MainViewController: NSViewController {
         case .smb(let c):
             guard let url = URL(string: "smb://\(c.host)") else { return }
             connectSMB(url)
+        case .android(let device):
+            connectAndroid(device)
+        }
+    }
+
+    /// Opens the MTP session first (it can take a second or two and is where
+    /// "phone locked" / "another app holds the USB interface" surface), then
+    /// points the active panel at the device root, which lists its storages.
+    private func connectAndroid(_ device: AndroidDevice) {
+        Task {
+            do {
+                let info = try await AndroidDeviceRegistry.shared.open(device)
+                await MainActor.run {
+                    self.activePanelVC.panelState.connectAndroid(device, label: info.label,
+                                                                 initialPath: "/")
+                }
+            } catch {
+                await MainActor.run {
+                    if let window = self.view.window {
+                        self.presentLocalizedError(error, in: window)
+                    }
+                }
+            }
         }
     }
 
