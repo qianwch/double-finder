@@ -359,6 +359,89 @@ struct MTPChild {
     let modified: Date
 }
 
+// MARK: - Transfers
+
+/// Carries a Swift progress closure through libmtp's C callback.
+///
+/// `LIBMTP_progressfunc_t` is a bare C function pointer, so it cannot capture
+/// anything: the closure travels in the callback's `userdata` as an unmanaged
+/// pointer to this box. Also doubles as the cancel channel — returning non-zero
+/// from the callback aborts the transfer.
+private final class MTPProgressBox {
+    let report: (Int64) -> Void
+    var lastSent: UInt64 = 0
+    var cancelled = false
+    init(report: @escaping (Int64) -> Void) { self.report = report }
+}
+
+/// Reports byte *deltas*, matching what `FileOperation`'s reporter expects.
+private let mtpProgressCallback: LIBMTP_progressfunc_t = { sent, total, data in
+    guard let data = data else { return 0 }
+    let box = Unmanaged<MTPProgressBox>.fromOpaque(data).takeUnretainedValue()
+    if sent > box.lastSent {
+        box.report(Int64(sent - box.lastSent))
+        box.lastSent = sent
+    }
+    return box.cancelled ? 1 : 0   // non-zero aborts the transfer
+}
+
+extension AndroidDeviceRegistry {
+    /// Downloads one file to a local path.
+    func download(_ sessionID: String, path: String, to localPath: String,
+                  progress: @escaping (Int64) -> Void) async throws {
+        try await perform(sessionID) { s in
+            let node = try Self.resolve(s, path: path)
+            let box = MTPProgressBox(report: progress)
+            let rc = LIBMTP_Get_File_To_File(s.device, node.objectID, localPath,
+                                             mtpProgressCallback,
+                                             Unmanaged.passUnretained(box).toOpaque())
+            guard rc == 0 else {
+                throw MTPError(message: "Could not download \(MTPPath(path).name) from the device")
+            }
+        }
+    }
+
+    /// Uploads one local file into `destDir` on the device.
+    ///
+    /// Deletes same-named objects first: MTP is an object tree and happily keeps
+    /// duplicates, which would leave the phone with two identical names.
+    func upload(_ sessionID: String, localPath: String, toDir destDir: String,
+                as name: String, progress: @escaping (Int64) -> Void) async throws {
+        let size = (try? FileManager.default.attributesOfItem(atPath: localPath)[.size] as? Int64) ?? 0
+        try await perform(sessionID) { s in
+            let parent = try Self.resolve(s, path: destDir)
+
+            for id in MTPConflict.objectsToReplace(
+                named: name,
+                in: Self.children(s.device, node: parent).map {
+                    (name: $0.name, id: $0.id, isDir: $0.isDir)
+                }) {
+                _ = LIBMTP_Delete_Object(s.device, id)
+            }
+
+            guard let meta = LIBMTP_new_file_t() else {
+                throw MTPError(message: "Out of memory preparing the upload")
+            }
+            defer { LIBMTP_destroy_file_t(meta) }
+            meta.pointee.filesize = UInt64(max(0, size))
+            meta.pointee.filename = strdup(name)
+            meta.pointee.parent_id = parent.objectID
+            meta.pointee.storage_id = parent.storageID
+            meta.pointee.filetype = LIBMTP_FILETYPE_UNKNOWN
+
+            let box = MTPProgressBox(report: progress)
+            let rc = LIBMTP_Send_File_From_File(s.device, localPath, meta,
+                                                mtpProgressCallback,
+                                                Unmanaged.passUnretained(box).toOpaque())
+            guard rc == 0 else {
+                throw MTPError(message: "Could not upload \(name) to the device")
+            }
+            s.cache.record(path: MTPPath(destDir).appending(name).raw,
+                           node: MTPNode(storageID: parent.storageID, objectID: meta.pointee.item_id))
+        }
+    }
+}
+
 // MARK: - Diagnostic
 
 extension AndroidDeviceRegistry {
@@ -436,11 +519,52 @@ extension AndroidDeviceRegistry {
         let deep = try await shared.list(sessionID, path: root + "/renamed")
         print("  under renamed: \(deep.map { $0.name })")
 
+        try await runTransferChecks(sessionID, root: root)
+
         // Recursive delete: MTP would refuse this folder as non-empty.
         try await shared.delete(sessionID, path: root)
         let storageRoot = try await shared.list(sessionID, path: "/\(storage.name)")
         let leftover = storageRoot.contains { $0.name == "DFWriteTest" }
         print("  recursive delete: \(leftover ? "FAILED — leftover" : "clean")")
+    }
+
+    /// Round-trips a file: upload with progress, upload again (duplicate check),
+    /// download, compare bytes.
+    private static func runTransferChecks(_ sessionID: String, root: String) async throws {
+        let tmp = NSTemporaryDirectory()
+        let srcPath = (tmp as NSString).appendingPathComponent("df-mtp-上传测试.bin")
+        let backPath = (tmp as NSString).appendingPathComponent("df-mtp-back.bin")
+        defer {
+            try? FileManager.default.removeItem(atPath: srcPath)
+            try? FileManager.default.removeItem(atPath: backPath)
+        }
+
+        // 20 MB of non-repeating data — big enough for several progress ticks.
+        var payload = Data(count: 20 << 20)
+        payload.withUnsafeMutableBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            for i in 0..<raw.count { base[i] = UInt8(truncatingIfNeeded: i &* 31 &+ 7) }
+        }
+        try payload.write(to: URL(fileURLWithPath: srcPath))
+        let name = "上传测试.bin"
+
+        var ticks = 0
+        var sent: Int64 = 0
+        try await shared.upload(sessionID, localPath: srcPath, toDir: root, as: name) { delta in
+            ticks += 1; sent += delta
+        }
+        print("  upload: \(sent) bytes in \(ticks) progress ticks (expected \(payload.count))")
+
+        // Second upload of the same name must replace, not duplicate.
+        try await shared.upload(sessionID, localPath: srcPath, toDir: root, as: name) { _ in }
+        let listing = try await shared.list(sessionID, path: root)
+        let dupes = listing.filter { $0.name == name }.count
+        print("  duplicate check: \(dupes) object(s) named \(name) — \(dupes == 1 ? "ok" : "FAILED")")
+
+        var got: Int64 = 0
+        try await shared.download(sessionID, path: root + "/" + name, to: backPath) { got += $0 }
+        let round = (try? Data(contentsOf: URL(fileURLWithPath: backPath))) ?? Data()
+        print("  download: \(got) bytes, content \(round == payload ? "identical" : "MISMATCH")")
     }
 }
 
