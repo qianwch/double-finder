@@ -105,13 +105,39 @@ enum USBOccupancy {
         while case let child = IOIteratorNext(children), child != 0 {
             defer { IOObjectRelease(child) }
             if className(of: child).hasSuffix("UserClient") {
-                let name = registryName(of: child)
-                // Nodes that kept their class name carry no process information.
-                if !name.isEmpty, !name.hasSuffix("UserClient") { names.append(name) }
+                if let name = holderName(of: child) { names.append(name) }
             } else {
                 collectClients(under: child, into: &names, depth: depth + 1)
             }
         }
+    }
+
+    /// Owning process of a user client, or nil when it is **this** process.
+    ///
+    /// `IOUserClientCreator` reads "pid 14805, Double Finder" — the pid matters:
+    /// a second copy of this app holding the phone has the very same name, and
+    /// filtering by name alone would hide the one case most worth reporting
+    /// while still showing the handle our own probe just opened.
+    private static func holderName(of entry: io_registry_entry_t) -> String? {
+        guard let creator = stringProperty(entry, "IOUserClientCreator") else {
+            let name = registryName(of: entry)
+            return name.hasSuffix("UserClient") || name.isEmpty ? nil : name
+        }
+        let parts = creator.split(separator: ",", maxSplits: 1).map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        guard parts.count == 2 else { return nil }
+        let name = parts[1]
+        if let pid = pid_t(parts[0].replacingOccurrences(of: "pid ", with: "")),
+           pid == ProcessInfo.processInfo.processIdentifier {
+            return nil
+        }
+        return name.isEmpty ? nil : name
+    }
+
+    private static func stringProperty(_ entry: io_registry_entry_t, _ key: String) -> String? {
+        IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? String
     }
 
     private static func className(of entry: io_registry_entry_t) -> String {

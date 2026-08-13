@@ -578,6 +578,21 @@ extension AndroidDeviceRegistry {
     /// `NC_MTP_DIAG`). Mirrors `ZipFS.runDiagnostic`: MTP failures are nearly
     /// always environmental, so users can run this and paste the output.
     static func runDiagnostic() {
+        // Registry-only mode: never touches libmtp, so it still answers when a
+        // held device would make a normal scan hang for minutes — which is
+        // exactly when a user needs to know who is holding it.
+        let mode = ProcessInfo.processInfo.environment["NC_MTP_DIAG"] ?? "1"
+        if mode == "usb" {
+            let seen = USBOccupancy.mtpDevices()
+            print("MTP-capable USB devices (IOKit only): \(seen.count)")
+            for d in seen {
+                let who = d.holders.isEmpty ? "free" : "held by \(d.holders.joined(separator: ", "))"
+                print("  \(d.name) — \(who)")
+            }
+            if seen.isEmpty { print("  none attached") }
+            return
+        }
+
         let devices = AndroidDeviceScanner.detect()
         print("libmtp raw devices: \(devices.count)")
         for d in devices {

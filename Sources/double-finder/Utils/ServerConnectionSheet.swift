@@ -56,13 +56,24 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
 
     // Android: not a form but a live list of plugged-in devices — an MTP phone
     // has no host, port or credentials to type in.
-    private var androidDevices: [AndroidDevice] = []
+    /// A scanned device plus the occupancy note computed *at scan time*.
+    /// Computing it in `cellForRow` instead would tie freshness to redraw
+    /// timing, which is how the list came to show a stale "in use by" after the
+    /// holder had already quit.
+    private struct AndroidRow {
+        let device: AndroidDevice
+        /// Other processes holding the device at scan time (ours filtered out).
+        let holders: [String]
+        let isConnected: Bool
+    }
+    private var androidDevices: [AndroidRow] = []
     private var androidTable: NSTableView!
     private var androidRows: [NSView] = []
     private let androidHint = NSTextField(labelWithString: "")
     /// Bumped per scan so a slow scan that finally returns can't overwrite the
     /// results of a newer one.
     private var androidScanGeneration = 0
+    private var androidScanning = false
 
     private var deleteButton: NSButton!
 
@@ -109,6 +120,14 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     func windowWillClose(_ n: Notification) {
         browser.stop()
         onClose?()
+    }
+
+    /// Coming back to this window usually means the user just went off to quit
+    /// whatever was holding the phone — refresh so the list reflects that
+    /// without making them find the Refresh button.
+    func windowDidBecomeKey(_ n: Notification) {
+        guard typePicker.selectedSegment == 3, !androidScanning else { return }
+        rescanAndroid()
     }
 
     // MARK: - UI Construction
@@ -333,10 +352,24 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         androidTable.reloadData()
         androidHint.stringValue = tr("Scanning…")
 
+        androidScanning = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let devices = AndroidDeviceScanner.detect()
+            // Occupancy is read here, in the same pass, so a row's note always
+            // describes the moment it was scanned.
+            let devices = AndroidDeviceScanner.detect().map { device -> AndroidRow in
+                // Deliberately NOT filtered by process name: a *second copy of
+                // this app* holding the device shows up under the same name, and
+                // that's exactly the case worth reporting. Our own session is
+                // already distinguished by isConnected, which the label prefers.
+                let holders = USBOccupancy.holders(vendorID: device.vendorID,
+                                                   productID: device.productID)
+                return AndroidRow(device: device, holders: holders,
+                                  isConnected: AndroidDeviceRegistry.shared.isOpen(device.sessionID))
+            }
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, generation == self.androidScanGeneration else { return }
+                guard let self = self else { return }
+                self.androidScanning = false
+                guard generation == self.androidScanGeneration else { return }
                 self.androidDevices = devices
                 self.androidTable.reloadData()
                 if devices.isEmpty {
@@ -399,7 +432,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         case 3: // Android (MTP)
             let row = androidTable.selectedRow
             guard row >= 0, row < androidDevices.count else { NSSound.beep(); return nil }
-            return (.android(androidDevices[row]), nil)
+            return (.android(androidDevices[row].device), nil)
         default:
             return nil
         }
@@ -603,20 +636,16 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         }()
         if tableView.tag == 3 {
             guard row < androidDevices.count else { return cell }
-            let device = androidDevices[row]
-            // Say up front when a device can't be opened, instead of letting the
-            // user click Connect and hit "device busy".
+            let entry = androidDevices[row]
+            // Only formatting happens here — the state itself was captured by
+            // the scan, so a redraw can't silently show something newer or older.
             var note = ""
-            if AndroidDeviceRegistry.shared.isOpen(device.sessionID) {
+            if entry.isConnected {
                 note = " — " + tr("connected")
-            } else {
-                let holders = USBOccupancy.holders(vendorID: device.vendorID,
-                                                   productID: device.productID)
-                if !holders.isEmpty {
-                    note = " — " + tr("in use by %@", holders.joined(separator: ", "))
-                }
+            } else if !entry.holders.isEmpty {
+                note = " — " + tr("in use by %@", entry.holders.joined(separator: ", "))
             }
-            cell.textField?.stringValue = device.displayName + note
+            cell.textField?.stringValue = entry.device.displayName + note
             return cell
         }
         let s = discovered[row]
