@@ -897,6 +897,8 @@ class PanelState: ObservableObject {
     /// connection + remote directory so going up past the archive root returns
     /// to the remote folder (and cleans up the temp download).
     private var sftpArchiveReturn: (conn: SFTPConnection, remoteDir: String, tempArchive: String)?
+    private var androidArchiveReturn: (device: AndroidDevice, label: String,
+                                       deviceDir: String, tempArchive: String)?
 
     /// When browsing an SFTP archive *in place* (no full download), the remote FS
     /// instance + where to return when leaving it.
@@ -907,6 +909,17 @@ class PanelState: ObservableObject {
     func enterSFTPArchive(localArchive: String, conn: SFTPConnection, remoteDir: String) {
         sftpArchiveReturn = (conn, remoteDir, localArchive)
         sftp = nil
+        navigate(to: localArchive)
+    }
+
+    /// Enters an archive that was downloaded off an Android device. MTP has no
+    /// remote-listing equivalent of `RemoteArchiveFS` (there's no shell on the
+    /// phone), so the whole container is fetched first and browsed locally;
+    /// going up past its root returns to the folder it came from.
+    func enterAndroidArchive(localArchive: String, device: AndroidDevice, label: String,
+                             deviceDir: String) {
+        androidArchiveReturn = (device, label, deviceDir, localArchive)
+        android = nil; androidLabel = ""
         navigate(to: localArchive)
     }
 
@@ -934,6 +947,13 @@ class PanelState: ObservableObject {
             remoteArchive = nil
             remoteArchiveReturn = nil
             connectSFTP(ret.conn, initialPath: ret.remoteDir)
+            return
+        }
+        // Leaving an archive downloaded off a phone at its root → back to the phone.
+        if let ret = androidArchiveReturn, currentPath == ret.tempArchive {
+            androidArchiveReturn = nil
+            try? FileManager.default.removeItem(atPath: ret.tempArchive)
+            connectAndroid(ret.device, label: ret.label, initialPath: ret.deviceDir)
             return
         }
         // Leaving an SFTP-sourced (downloaded) archive at its root → reconnect.

@@ -22,12 +22,43 @@ final class AndroidFS: VirtualFS {
         try await registry.list(sessionID, path: path)
     }
 
+    /// Direction is inferred from `from`, mirroring `S3FS.copy`: a path that
+    /// exists on disk is a local source (upload), anything else is a device path
+    /// (download). Device paths are virtual (`/内部存储/…`) and never collide
+    /// with real local ones.
+    ///
+    /// `to` is always a *directory* — this is what `materialize` (F3/F4/QuickLook)
+    /// and the archive/temp paths rely on.
     func copy(from: String, to: String) async throws {
-        throw FSUnsupportedError(message: "Not implemented yet")
+        let fm = FileManager.default
+        if fm.fileExists(atPath: from) {
+            try await AndroidDeviceRegistry.shared.ensureDirectory(sessionID, path: to)
+            try await registry.upload(sessionID, localPath: from, toDir: to,
+                                      as: (from as NSString).lastPathComponent,
+                                      progress: { _ in })
+        } else {
+            try fm.createDirectory(atPath: to, withIntermediateDirectories: true)
+            let dest = (to as NSString).appendingPathComponent(MTPPath(from).name)
+            try await registry.download(sessionID, path: from, to: dest, progress: { _ in })
+        }
     }
 
     func move(from: String, to: String) async throws {
-        throw FSUnsupportedError(message: "Not implemented yet")
+        // Both endpoints on the device → let MTP do it without moving bytes.
+        if !FileManager.default.fileExists(atPath: from) {
+            do {
+                try await registry.transferOnDevice(sessionID, path: from, toDir: to, move: true)
+                return
+            } catch is MTPOnDeviceUnsupported {
+                // Fall through to the copy+delete relay below.
+            }
+        }
+        try await copy(from: from, to: to)
+        if !FileManager.default.fileExists(atPath: from) {
+            try await delete(from)
+        } else {
+            try FileManager.default.removeItem(atPath: from)
+        }
     }
 
     /// Recursive: MTP refuses to delete a non-empty folder.

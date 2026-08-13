@@ -764,6 +764,10 @@ class MainViewController: NSViewController {
             NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
         } else if item.isDirectory {
             panel.navigate(to: item.path)
+        } else if FileItem.isArchiveFileName(item.name), let device = panel.android {
+            // No shell on the phone, so there's no remote-listing path like
+            // RemoteArchiveFS — fetch the container, then browse it locally.
+            downloadAndEnterAndroidArchive(item, device: device, panel: panelVC)
         } else if FileItem.isArchiveFileName(item.name), let conn = panel.sftp {
             if RemoteArchiveFS.canBrowseRemotely(item.name) {
                 // tar/zip: list entries over ssh, fetch single files on demand.
@@ -795,6 +799,32 @@ class MainViewController: NSViewController {
             await MainActor.run {
                 if let url = url { NSWorkspace.shared.open(url) } else { NSSound.beep() }
             }
+        }
+    }
+
+    /// Same as `downloadAndEnterSFTPArchive` but sourced from an Android device.
+    private func downloadAndEnterAndroidArchive(_ item: FileItem, device: AndroidDevice,
+                                                panel: PanelViewController) {
+        let tmp = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-Archives")
+        try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+        let localPath = (tmp as NSString).appendingPathComponent(item.name)
+        try? FileManager.default.removeItem(atPath: localPath)
+        let deviceDir = panel.panelState.currentPath
+        let label = AndroidDeviceRegistry.shared.info(device.sessionID)?.label ?? device.displayName
+
+        let op = FileOperation(type: .copy, sources: [item.path], destination: tmp)
+        op.customTitle = tr("Downloading")
+        op.totalBytes = item.size
+        op.bytesTransferred = { FileOperation.sizeOnDisk(localPath) }
+        op.perItemOperation = { path in
+            try await AndroidDeviceRegistry.shared.download(device.sessionID, path: path,
+                                                            to: localPath, progress: { _ in })
+        }
+        runOperation(op) { [weak panel] in
+            guard let panel = panel,
+                  FileManager.default.fileExists(atPath: localPath) else { return }
+            panel.panelState.enterAndroidArchive(localArchive: localPath, device: device,
+                                                 label: label, deviceDir: deviceDir)
         }
     }
 
@@ -915,12 +945,13 @@ class MainViewController: NSViewController {
         let fs = panel.fs
         let s3 = panel.s3
         let sftpConn = panel.sftp
+        let android = panel.android
         Task {
             let urls = await self.materialize([item], using: fs)
             await MainActor.run {
                 guard let u = urls.first else { NSSound.beep(); return }
                 self.registerEditWriteBack(localURL: u, remotePath: item.path,
-                                           fs: fs, s3: s3, sftpConn: sftpConn)
+                                           fs: fs, s3: s3, sftpConn: sftpConn, android: android)
                 self.openInEditor(u)
             }
         }
@@ -929,7 +960,8 @@ class MainViewController: NSViewController {
     /// If the edited file came from S3/SFTP, track it so a later change can be
     /// uploaded back. Captures the connection now (independent of later nav).
     private func registerEditWriteBack(localURL: URL, remotePath: String,
-                                       fs: VirtualFS, s3: S3Connection?, sftpConn: SFTPConnection?) {
+                                       fs: VirtualFS, s3: S3Connection?, sftpConn: SFTPConnection?,
+                                       android: AndroidDevice? = nil) {
         let tempPath = localURL.path
         guard let a = try? FileManager.default.attributesOfItem(atPath: tempPath),
               let mod = a[.modificationDate] as? Date,
@@ -947,6 +979,16 @@ class MainViewController: NSViewController {
             upload = { temp, remote in
                 try await SFTPFS(connection: conn).upload(
                     localPath: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
+            }
+        } else if let device = android {
+            label = AndroidDeviceRegistry.shared.info(device.sessionID)?.label ?? device.displayName
+            upload = { temp, remote in
+                // Upload replaces the same-named object first (MTP would happily
+                // keep a duplicate), so the phone ends up with exactly the edit.
+                try await AndroidDeviceRegistry.shared.upload(
+                    device.sessionID, localPath: temp,
+                    toDir: RemoteEditWriteBack.remoteParentDir(of: remote),
+                    as: (remote as NSString).lastPathComponent, progress: { _ in })
             }
         } else if let zip = fs as? ZipFS {
             // Edit-inside-archive write-back: rewrite the container replacing
