@@ -197,6 +197,79 @@ final class AndroidDeviceRegistry: @unchecked Sendable {
     }
 }
 
+// MARK: - Listing
+
+extension AndroidDeviceRegistry {
+    /// One directory's immediate children.
+    ///
+    /// `LIBMTP_Get_Files_And_Folders` is the only listing call that doesn't walk
+    /// the whole tree — the reason sessions are opened *uncached*.
+    fileprivate static func children(_ device: UnsafeMutablePointer<LIBMTP_mtpdevice_t>,
+                                     node: MTPNode) -> [MTPChild] {
+        var out: [MTPChild] = []
+        var f = LIBMTP_Get_Files_And_Folders(device, node.storageID, node.objectID)
+        while let file = f {
+            let name = file.pointee.filename.map { String(cString: $0) } ?? ""
+            if !name.isEmpty {
+                out.append(MTPChild(
+                    name: name,
+                    id: file.pointee.item_id,
+                    isDir: file.pointee.filetype == LIBMTP_FILETYPE_FOLDER,
+                    size: Int64(bitPattern: file.pointee.filesize),
+                    modified: Date(timeIntervalSince1970: TimeInterval(file.pointee.modificationdate))))
+            }
+            let next = file.pointee.next
+            LIBMTP_destroy_file_t(file)
+            f = next
+        }
+        return out
+    }
+
+    /// Lists a virtual path. The device root enumerates storages as folders.
+    func list(_ sessionID: String, path: String) async throws -> [FileItem] {
+        if MTPPath(path).isDeviceRoot {
+            return storages(sessionID).map { st in
+                FileItem(id: UUID(), name: st.name, path: "/" + st.name,
+                         isDirectory: true, isArchive: false, size: 0, modified: Date(),
+                         isHidden: false, isSymlink: false, permissions: "drwxr-xr-x")
+            }
+        }
+        return try await perform(sessionID) { s in
+            let node = try s.cache.resolve(path) { parent, _ in
+                Self.children(s.device, node: parent).map {
+                    (name: $0.name, id: $0.id, isDir: $0.isDir)
+                }
+            }
+            let base = MTPPath(path)
+            return Self.children(s.device, node: node).map { child in
+                let childPath = base.appending(child.name).raw
+                s.cache.record(path: childPath,
+                               node: MTPNode(storageID: node.storageID, objectID: child.id))
+                return FileItem(
+                    id: UUID(), name: child.name, path: childPath,
+                    isDirectory: child.isDir,
+                    isArchive: FileItem.isArchiveFileName(child.name),
+                    size: child.size, modified: child.modified,
+                    // MTP has no POSIX metadata: dot-files are the only notion of
+                    // "hidden", there are no symlinks, and the permission column
+                    // is synthesized so the UI has something consistent to show.
+                    isHidden: child.name.hasPrefix("."),
+                    isSymlink: false,
+                    permissions: child.isDir ? "drwxr-xr-x" : "-rw-r--r--")
+            }
+        }
+    }
+}
+
+/// A raw child entry as libmtp reports it.
+struct MTPChild {
+    let name: String
+    let id: UInt32
+    let isDir: Bool
+    let size: Int64
+    let modified: Date
+}
+
 // MARK: - Diagnostic
 
 extension AndroidDeviceRegistry {
@@ -223,6 +296,22 @@ extension AndroidDeviceRegistry {
                 print("partial read (GetPartialObject): \(info.supportsPartialRead)")
                 for st in shared.storages(first.sessionID) {
                     print("  storage \(st.id): \"\(st.name)\" free=\(st.freeBytes) cap=\(st.capacityBytes)")
+                }
+                for st in shared.storages(first.sessionID) {
+                    let items = try await shared.list(first.sessionID, path: "/" + st.name)
+                    print("  \"/\(st.name)\" -> \(items.count) entries")
+                    for item in items.prefix(8) {
+                        print("      \(item.name)\(item.isDirectory ? "/" : "")  \(item.size) bytes")
+                    }
+                    // Descend two levels to exercise MTPPathCache's lazy
+                    // root-down resolution against a real device.
+                    guard let dir = items.first(where: { $0.isDirectory }) else { continue }
+                    let sub = try await shared.list(first.sessionID, path: dir.path)
+                    print("  deep: \"\(dir.path)\" -> \(sub.count) entries")
+                    if let dir2 = sub.first(where: { $0.isDirectory }) {
+                        let sub2 = try await shared.list(first.sessionID, path: dir2.path)
+                        print("  deep: \"\(dir2.path)\" -> \(sub2.count) entries")
+                    }
                 }
                 shared.close(first.sessionID)
                 print("session closed cleanly")

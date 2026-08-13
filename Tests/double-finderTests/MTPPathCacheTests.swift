@@ -32,7 +32,7 @@ final class MTPPathCacheTests: XCTestCase {
         XCTAssertNil(cache.cached("/Internal storage/Missing"))
     }
 
-    func testResolveWalksDownFromStorageRootOnMiss() async throws {
+    func testResolveWalksDownFromStorageRootOnMiss() throws {
         let cache = MTPPathCache()
         cache.record(path: "/Internal storage", node: storageRoot)
         let lister = FakeLister([
@@ -41,21 +41,21 @@ final class MTPPathCacheTests: XCTestCase {
             "1:20": [(name: "IMG.jpg", id: 30, isDir: false)],
         ])
 
-        let node = try await cache.resolve("/Internal storage/DCIM/Camera/IMG.jpg",
+        let node = try cache.resolve("/Internal storage/DCIM/Camera/IMG.jpg",
                                            listing: { lister.list($0, $1) })
         XCTAssertEqual(node, MTPNode(storageID: 1, objectID: 30))
         XCTAssertEqual(lister.calls, 3, "one listing per level")
 
         // Second time everything is cached — no USB traffic at all.
         lister.resetCount()
-        let again = try await cache.resolve("/Internal storage/DCIM/Camera/IMG.jpg",
+        let again = try cache.resolve("/Internal storage/DCIM/Camera/IMG.jpg",
                                             listing: { lister.list($0, $1) })
         XCTAssertEqual(again, MTPNode(storageID: 1, objectID: 30))
         XCTAssertEqual(lister.calls, 0)
     }
 
     /// Siblings seen while walking are cached too, so the next lookup is free.
-    func testSiblingsAreCachedDuringWalk() async throws {
+    func testSiblingsAreCachedDuringWalk() throws {
         let cache = MTPPathCache()
         cache.record(path: "/S", node: storageRoot)
         let lister = FakeLister([
@@ -63,11 +63,11 @@ final class MTPPathCacheTests: XCTestCase {
                                           (name: "b", id: 2, isDir: true)],
         ])
 
-        _ = try await cache.resolve("/S/a", listing: { lister.list($0, $1) })
+        _ = try cache.resolve("/S/a", listing: { lister.list($0, $1) })
         XCTAssertEqual(cache.cached("/S/b"), MTPNode(storageID: 1, objectID: 2))
     }
 
-    func testResolveThrowsOnMissingComponent() async {
+    func testResolveThrowsOnMissingComponent() {
         let cache = MTPPathCache()
         cache.record(path: "/Internal storage", node: storageRoot)
         let lister = FakeLister([
@@ -75,7 +75,7 @@ final class MTPPathCacheTests: XCTestCase {
         ])
 
         do {
-            _ = try await cache.resolve("/Internal storage/Nope", listing: { lister.list($0, $1) })
+            _ = try cache.resolve("/Internal storage/Nope", listing: { lister.list($0, $1) })
             XCTFail("expected MTPNotFoundError")
         } catch {
             XCTAssertTrue(error is MTPNotFoundError, "got \(type(of: error))")
@@ -83,11 +83,11 @@ final class MTPPathCacheTests: XCTestCase {
     }
 
     /// An unknown storage can't be walked into — there's no root to start from.
-    func testResolveThrowsWhenStorageUnknown() async {
+    func testResolveThrowsWhenStorageUnknown() {
         let cache = MTPPathCache()
         let lister = FakeLister([:])
         do {
-            _ = try await cache.resolve("/Nonexistent/x", listing: { lister.list($0, $1) })
+            _ = try cache.resolve("/Nonexistent/x", listing: { lister.list($0, $1) })
             XCTFail("expected MTPNotFoundError")
         } catch {
             XCTAssertTrue(error is MTPNotFoundError)
@@ -112,7 +112,7 @@ final class MTPPathCacheTests: XCTestCase {
     }
 
     /// Real device paths: Chinese storage name plus a leading-space folder.
-    func testResolveWithChineseAndSpacedNames() async throws {
+    func testResolveWithChineseAndSpacedNames() throws {
         let cache = MTPPathCache()
         cache.record(path: "/内部存储", node: storageRoot)
         let lister = FakeLister([
@@ -120,7 +120,7 @@ final class MTPPathCacheTests: XCTestCase {
             "1:42": [(name: "note.txt", id: 43, isDir: false)],
         ])
 
-        let node = try await cache.resolve("/内部存储/ 我的文件/note.txt",
+        let node = try cache.resolve("/内部存储/ 我的文件/note.txt",
                                            listing: { lister.list($0, $1) })
         XCTAssertEqual(node, MTPNode(storageID: 1, objectID: 43))
     }

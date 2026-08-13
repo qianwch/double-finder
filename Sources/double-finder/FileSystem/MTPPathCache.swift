@@ -49,9 +49,13 @@ final class MTPPathCache {
 
     /// Resolves a path to its MTP address, walking down from the deepest cached
     /// ancestor. `listing` returns one directory's immediate children.
+    ///
+    /// Synchronous on purpose: the only real caller already runs on the device's
+    /// serial queue, where libmtp calls are blocking anyway. Making this `async`
+    /// would force a second, duplicated implementation for that path.
     func resolve(_ path: String,
-                 listing: (MTPNode, String) async throws -> [(name: String, id: UInt32, isDir: Bool)])
-    async throws -> MTPNode {
+                 listing: (MTPNode, String) throws -> [(name: String, id: UInt32, isDir: Bool)])
+    throws -> MTPNode {
         let target = MTPPath(path)
         if let hit = cached(target.raw) { return hit }
         guard let storage = target.storageName else { throw MTPNotFoundError(path: path) }
@@ -69,7 +73,7 @@ final class MTPPathCache {
                 walked = childPath
                 continue
             }
-            let children = try await listing(node, walked)
+            let children = try listing(node, walked)
             for child in children {
                 record(path: walked + "/" + child.name,
                        node: MTPNode(storageID: node.storageID, objectID: child.id))
