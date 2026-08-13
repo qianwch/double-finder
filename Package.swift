@@ -78,7 +78,13 @@ let package = Package(
         .testTarget(
             name: "double-finderTests",
             dependencies: ["double-finder"],
-            path: "Tests/double-finderTests"
+            path: "Tests/double-finderTests",
+            swiftSettings: [
+                // `@testable import double_finder` re-resolves the Clibmtp module,
+                // so the tests need libmtp's header path too.
+                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include",
+                              "-Xcc", "-I/usr/local/include"])
+            ]
         )
     ]
 )
