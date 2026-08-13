@@ -59,6 +59,12 @@ final class AndroidDeviceRegistry: @unchecked Sendable {
     private var sessions: [String: Session] = [:]
     private let lock = NSLock()
 
+    /// Fires when any USB device is unplugged, so a session whose phone just
+    /// vanished can be dropped instead of lingering in the drive bar.
+    private lazy var usbWatcher = USBRemovalWatcher { [weak self] in
+        self?.pruneDisconnected()
+    }
+
     private func session(for id: String) -> Session? {
         lock.lock(); defer { lock.unlock() }
         return sessions[id]
@@ -121,6 +127,9 @@ final class AndroidDeviceRegistry: @unchecked Sendable {
             }
         }
 
+        // Only worth watching once something is actually open.
+        await MainActor.run { self.usbWatcher.start() }
+
         try await refreshStorages(device.sessionID)
         guard !storages(device.sessionID).isEmpty else {
             // A locked phone opens fine but exposes nothing — don't leave a
@@ -145,6 +154,40 @@ final class AndroidDeviceRegistry: @unchecked Sendable {
         sessions.removeAll()
         lock.unlock()
         for (_, s) in all { s.queue.sync { LIBMTP_Release_Device(s.device) } }
+        Task { @MainActor in self.usbWatcher.stop() }
+    }
+
+    /// Drops every session whose device is no longer on the bus.
+    ///
+    /// Removing it from `RemoteSessionStore` is what makes the drive bar entry
+    /// disappear and kicks any panel sitting in that session back to local —
+    /// the store's `remove` also releases the libmtp session.
+    func pruneDisconnected() {
+        lock.lock()
+        let openIDs = Array(sessions.keys)
+        lock.unlock()
+        guard !openIDs.isEmpty else { return }
+
+        for id in openIDs {
+            Task { [weak self] in
+                guard let self = self, await !self.isAlive(id) else { return }
+                await MainActor.run { RemoteSessionStore.shared.remove(id: id) }
+            }
+        }
+    }
+
+    /// Cheap liveness probe, run on the device's own serial queue.
+    ///
+    /// Deliberately NOT a fresh `Detect_Raw_Devices` scan: libmtp is not
+    /// thread-safe, and re-enumerating the bus while a transfer is in flight on
+    /// the device queue is exactly the kind of concurrent use it can't take.
+    /// Asking the already-open handle costs nothing and fails once the cable is
+    /// gone.
+    private func isAlive(_ sessionID: String) async -> Bool {
+        let ok = try? await perform(sessionID) { s in
+            LIBMTP_Get_Storage(s.device, Int32(LIBMTP_STORAGE_SORTBY_NOTSORTED)) == 0
+        }
+        return ok ?? false
     }
 
     /// libmtp hands out malloc'd strings that the caller owns.

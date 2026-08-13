@@ -51,6 +51,8 @@ let package = Package(
                 .linkedLibrary("archive"),
                 .linkedLibrary("mtp"),
                 .linkedFramework("NetFS"),
+                // USB unplug notifications for the Android/MTP backend.
+                .linkedFramework("IOKit"),
                 // Embed Info.plist into the Mach-O so the bare executable carries
                 // a bundle identifier (net.qian.double-finder). This makes
                 // Bundle.main.bundleIdentifier resolve and UserDefaults.standard
