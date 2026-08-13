@@ -53,6 +53,38 @@ extension Notification.Name {
     static let localizerDidChange = Notification.Name("DoubleFinder.localizerDidChange")
 }
 
+/// Locates the SwiftPM resource bundle (localization packs + Help markdown).
+///
+/// Never use `Bundle.module` here: the accessor SwiftPM generates for plain
+/// `swift build` only checks the .app ROOT (`Bundle.main.bundleURL`) and the
+/// absolute `.build` path of the machine that compiled the binary — it never
+/// looks in Contents/Resources, where package_app.sh places the bundle (the
+/// .app root can't hold it either; files outside Contents break codesigning).
+/// On the dev machine the `.build` fallback masks this; on every other machine
+/// `Bundle.module` fatalErrors during startup. Resolve the bundle ourselves and
+/// degrade to English (identity keys) when it is missing.
+enum ResourcePack {
+    private final class BundleFinder {}
+
+    static let bundle: Bundle? = {
+        let name = "double-finder_double-finder.bundle"
+        let hosting = Bundle(for: BundleFinder.self)
+        let candidates = [
+            Bundle.main.resourceURL,   // packaged .app: Contents/Resources
+            Bundle.main.bundleURL,     // bare executable: the build directory
+            // swift test: the module is linked into the .xctest bundle, and the
+            // resource bundle sits next to that in the build directory.
+            hosting.bundleURL.deletingLastPathComponent(),
+        ]
+        for dir in candidates {
+            if let dir, let found = Bundle(url: dir.appendingPathComponent(name)) {
+                return found
+            }
+        }
+        return nil
+    }()
+}
+
 /// Holds the active UI language and the loaded string table. `tr(_:)` reads it.
 @MainActor
 final class Localizer {
@@ -104,9 +136,9 @@ final class Localizer {
 
     private static func loadTable(for language: Language) -> [String: String] {
         guard let name = language.jsonName,
-              let url = Bundle.module.url(forResource: name,
-                                          withExtension: "json",
-                                          subdirectory: "Localization"),
+              let url = ResourcePack.bundle?.url(forResource: name,
+                                                 withExtension: "json",
+                                                 subdirectory: "Localization"),
               let data = try? Data(contentsOf: url),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String]
         else { return [:] }

@@ -84,8 +84,8 @@ enum HelpContent {
     /// zh markdown; every other language falls back to the English markdown.
     @MainActor static func overviewMarkdown() -> String {
         let base = (Localizer.shared.current == .zhHans) ? "overview-zh" : "overview-en"
-        if let url = Bundle.module.url(forResource: base, withExtension: "md",
-                                       subdirectory: "Help"),
+        if let url = ResourcePack.bundle?.url(forResource: base, withExtension: "md",
+                                              subdirectory: "Help"),
            let text = try? String(contentsOf: url, encoding: .utf8) {
             return text
         }
