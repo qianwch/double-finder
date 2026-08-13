@@ -518,5 +518,7 @@
   "Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button.": "Une autre instance de Double Finder est connectée à ce téléphone. Quittez-la ou déconnectez l'appareil avec le bouton d'éjection.",
   "Copy Details": "Copier les détails",
   "connected": "connecté",
-  "in use by %@": "utilisé par %@"
+  "in use by %@": "utilisé par %@",
+  "Scanning…": "Analyse en cours…",
+  "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ est connecté mais monopolisé par %@. Quittez ce programme (Chrome doit être quitté complètement), puis cliquez sur « Actualiser »."
 }

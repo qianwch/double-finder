@@ -518,5 +518,7 @@
   "Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button.": "別の Double Finder がこのスマートフォンに接続しています。そちらを終了するか、⏏ ボタンでデバイスの接続を解除してください。",
   "Copy Details": "詳細をコピー",
   "connected": "接続済み",
-  "in use by %@": "%@ が使用中"
+  "in use by %@": "%@ が使用中",
+  "Scanning…": "スキャン中…",
+  "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ は接続されていますが、%@ が使用中です。そのプログラムを終了し（Chrome は完全に終了する必要があります）、「更新」を押してください。"
 }

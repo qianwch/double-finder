@@ -518,5 +518,7 @@
   "Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button.": "另一个 Double Finder 实例正连接着这台手机。请退出它，或在那边用 ⏏ 断开该设备。",
   "Copy Details": "拷贝详情",
   "connected": "已连接",
-  "in use by %@": "被 %@ 占用"
+  "in use by %@": "被 %@ 占用",
+  "Scanning…": "正在扫描…",
+  "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ 已连接，但被 %@ 占用。请退出该程序（Chrome 必须完全退出），然后点「刷新」。"
 }

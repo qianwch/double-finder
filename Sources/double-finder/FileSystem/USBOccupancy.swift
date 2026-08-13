@@ -37,6 +37,61 @@ enum USBOccupancy {
         return Array(Set(names)).sorted()
     }
 
+    /// One MTP-capable USB device as seen by IOKit alone.
+    struct Device {
+        /// Registry name, e.g. "SAMSUNG_Android".
+        let name: String
+        /// Processes holding it right now (empty when free).
+        let holders: [String]
+    }
+
+    /// MTP-capable devices found purely through IOKit — no libmtp involved.
+    ///
+    /// This exists because `LIBMTP_Detect_Raw_Devices` **blocks for minutes**
+    /// when the device is already claimed by another process (measured: 4m17s
+    /// with a second app holding the interface). That makes it useless for
+    /// telling the user what's wrong, since the very situation worth reporting
+    /// is the one that hangs the scan. Reading the registry is instant and works
+    /// regardless of who holds the device.
+    ///
+    /// A device qualifies when it exposes an interface with USB class 6 /
+    /// subclass 1 / protocol 1 — the still-image class that MTP rides on.
+    static func mtpDevices() -> [Device] {
+        guard let matching = IOServiceMatching("IOUSBHostDevice") else { return [] }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS
+        else { return [] }
+        defer { IOObjectRelease(iterator) }
+
+        var found: [Device] = []
+        while case let device = IOIteratorNext(iterator), device != 0 {
+            defer { IOObjectRelease(device) }
+            guard hasStillImageInterface(device) else { continue }
+            var holders: [String] = []
+            collectClients(under: device, into: &holders, depth: 0)
+            found.append(Device(name: registryName(of: device),
+                                holders: Array(Set(holders)).sorted()))
+        }
+        return found
+    }
+
+    private static func hasStillImageInterface(_ device: io_registry_entry_t) -> Bool {
+        var children: io_iterator_t = 0
+        guard IORegistryEntryGetChildIterator(device, kIOServicePlane, &children) == KERN_SUCCESS
+        else { return false }
+        defer { IOObjectRelease(children) }
+
+        while case let child = IOIteratorNext(children), child != 0 {
+            defer { IOObjectRelease(child) }
+            if intProperty(child, "bInterfaceClass") == 6,
+               intProperty(child, "bInterfaceSubClass") == 1,
+               intProperty(child, "bInterfaceProtocol") == 1 {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Walks down from a device node collecting user-client names. Depth is
     /// bounded because only device → interface → client is meaningful here.
     private static func collectClients(under entry: io_registry_entry_t,

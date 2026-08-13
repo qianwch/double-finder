@@ -518,5 +518,7 @@
   "Another copy of Double Finder is connected to this phone. Quit it, or disconnect the device there with the eject button.": "다른 Double Finder 인스턴스가 이 휴대전화에 연결되어 있습니다. 해당 인스턴스를 종료하거나 ⏏ 버튼으로 장치 연결을 해제하세요.",
   "Copy Details": "세부 정보 복사",
   "connected": "연결됨",
-  "in use by %@": "%@이(가) 사용 중"
+  "in use by %@": "%@이(가) 사용 중",
+  "Scanning…": "검색 중…",
+  "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@이(가) 연결되어 있지만 %@이(가) 점유 중입니다. 해당 프로그램을 종료한 후(Chrome은 완전히 종료해야 함) '새로 고침'을 누르세요."
 }

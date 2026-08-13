@@ -60,6 +60,9 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     private var androidTable: NSTableView!
     private var androidRows: [NSView] = []
     private let androidHint = NSTextField(labelWithString: "")
+    /// Bumped per scan so a slow scan that finally returns can't overwrite the
+    /// results of a newer one.
+    private var androidScanGeneration = 0
 
     private var deleteButton: NSButton!
 
@@ -316,16 +319,46 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
 
     @objc private func refreshAndroidClicked() { rescanAndroid() }
 
-    /// Rescans USB. Cheap — enumeration doesn't open a session.
+    /// Rescans USB **off the main thread**.
+    ///
+    /// `LIBMTP_Detect_Raw_Devices` looks cheap — it opens no session — but it
+    /// blocks for *minutes* when another process already holds the device
+    /// (measured: 4m17s). Running it inline froze the whole app in exactly the
+    /// situation the user most needs the UI for, so it now runs in the
+    /// background and a timer reports what IOKit can see if it takes too long.
     private func rescanAndroid() {
-        androidDevices = AndroidDeviceScanner.detect()
+        androidScanGeneration += 1
+        let generation = androidScanGeneration
+        androidDevices = []
         androidTable.reloadData()
-        if !androidDevices.isEmpty {
-            androidTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-            androidHint.stringValue = ""
-        } else {
-            // The three things that actually go wrong, in the order they occur.
-            androidHint.stringValue = tr("No device found. Connect the phone by USB, unlock it, and set the USB connection to \"File transfer\". If it still doesn't appear, quit Google Chrome — it holds on to Android devices.")
+        androidHint.stringValue = tr("Scanning…")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let devices = AndroidDeviceScanner.detect()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, generation == self.androidScanGeneration else { return }
+                self.androidDevices = devices
+                self.androidTable.reloadData()
+                if devices.isEmpty {
+                    self.androidHint.stringValue = tr("No device found. Connect the phone by USB, unlock it, and set the USB connection to \"File transfer\". If it still doesn't appear, quit Google Chrome — it holds on to Android devices.")
+                } else {
+                    self.androidTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+                    self.androidHint.stringValue = ""
+                }
+            }
+        }
+
+        // If libmtp hasn't answered by now it is almost certainly stuck behind
+        // another process's claim. IOKit can still say what's attached and who
+        // holds it, so report that instead of leaving a blank list.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self = self,
+                  generation == self.androidScanGeneration,
+                  self.androidDevices.isEmpty else { return }
+            let seen = USBOccupancy.mtpDevices()
+            guard let busy = seen.first(where: { !$0.holders.isEmpty }) else { return }
+            self.androidHint.stringValue = tr("%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.",
+                                              busy.name, busy.holders.joined(separator: ", "))
         }
     }
 
