@@ -63,6 +63,20 @@ SwiftUI), inspired by the Total Commander workflow.
 
 ## Install
 
+### Download a build
+
+Every push to `main` refreshes the [`latest`](../../releases/tag/latest)
+prerelease; tagged versions get their own release. Each publishes **two DMGs**
+— pick the one matching your Mac:
+
+| Download | For |
+|---|---|
+| `Double-Finder-arm64.dmg` | Apple Silicon (M1 and later) |
+| `Double-Finder-x86_64.dmg` | Intel Macs |
+
+They are separate rather than universal for the reason described under
+[Package a distributable `.app`](#package-a-distributable-app).
+
 ### Build from source
 
 ```bash

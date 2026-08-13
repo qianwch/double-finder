@@ -3,28 +3,55 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
-# Needed to create/update the rolling "latest" release + its tag.
+# Needed to create/update releases and their tags.
 permissions:
   contents: write
 
+# A newer push supersedes an in-flight one; never let two runs race to
+# recreate the same rolling release.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-test:
-    runs-on: macos-14
+  # Build + test on BOTH architectures. Intel matters here beyond habit: the
+  # Android/MTP backend links libmtp, which Homebrew only bottles for arm64 —
+  # every other platform compiles it from source, so this job is what proves
+  # the Intel path still works.
+  test:
+    name: Test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
     steps:
       - uses: actions/checkout@v5
 
-      # The codebase is developed against a modern Swift toolchain and uses
-      # Swift 6-era syntax (e.g. `: @preconcurrency Protocol` conformances,
-      # `nonisolated(unsafe)`). The macos-14 image's default Xcode (15.x) is too
-      # old and rejects these, so pin to the newest stable Xcode on the runner.
+      # The codebase uses Swift 6-era syntax (`: @preconcurrency Protocol`,
+      # `nonisolated(unsafe)`) that older bundled Xcodes reject.
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
-      - name: Show Swift version
-        run: swift --version
+      - name: Show toolchain
+        run: |
+          swift --version
+          echo "host arch: $(uname -m)"
+
+      # libmtp (+ libusb) back the Android/MTP filesystem; without them the
+      # whole package fails to compile. arm64 gets a bottle, Intel builds from
+      # source — hence the generous job timeout above.
+      - name: Install libmtp
+        run: brew install libmtp
 
       - name: Build (debug)
         run: swift build
@@ -32,30 +59,113 @@ jobs:
       - name: Test
         run: swift test
 
-      # PRs get a quick release-build sanity check; on push to main the universal
-      # release build happens inside package_dmg.sh below instead.
       - name: Build (release)
-        if: github.event_name == 'pull_request'
         run: swift build -c release
 
-      # --- Package + publish (push to main only) ---
-      - name: Package universal .dmg
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  # Package one .dmg per architecture. package_app.sh follows `uname -m`, so
+  # each runner produces its own native build — they are NOT universal, because
+  # a single machine can't obtain both halves of the libmtp dylib.
+  package:
+    name: Package (${{ matrix.arch }})
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install libmtp
+        run: brew install libmtp
+
+      - name: Package .dmg
         run: ./package_dmg.sh
 
-      - name: Publish rolling "latest" prerelease
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # Name the artifact by architecture: the volume and the .app inside keep
+      # their plain "Double Finder" names, only the download is disambiguated.
+      - name: Rename for the release
+        run: mv ".dist/Double Finder.dmg" ".dist/Double-Finder-${{ matrix.arch }}.dmg"
+
+      - name: Verify the bundled libmtp matches this architecture
+        run: |
+          set -euo pipefail
+          hdiutil attach ".dist/Double-Finder-${{ matrix.arch }}.dmg" -mountpoint /tmp/dfdmg -nobrowse -quiet
+          APP="/tmp/dfdmg/Double Finder.app"
+          echo "binary:  $(lipo -archs "$APP/Contents/MacOS/Double Finder")"
+          echo "libmtp:  $(lipo -archs "$APP/Contents/Frameworks/libmtp.9.dylib")"
+          # The app must resolve libmtp from inside the bundle, not from brew.
+          otool -L "$APP/Contents/MacOS/Double Finder" | grep -q "@rpath/libmtp" \
+            || { echo "libmtp is not bundled (@rpath missing)"; exit 1; }
+          lipo -archs "$APP/Contents/Frameworks/libmtp.9.dylib" | grep -q "${{ matrix.arch }}" \
+            || { echo "bundled libmtp does not cover ${{ matrix.arch }}"; exit 1; }
+          hdiutil detach /tmp/dfdmg -quiet
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: .dist/Double-Finder-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  # Both DMGs land on one release. Kept in a separate job so the two package
+  # jobs never race to create/delete the same release.
+  release:
+    name: Publish release
+    needs: package
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dmg-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Recreate the rolling release so both its tag and DMG track the newest
-          # commit (delete is best-effort on the first ever run).
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest \
-            --prerelease \
-            --title "Latest build" \
-            --notes "Automated universal build of \`${GITHUB_SHA:0:7}\`.
+          ls -lh dist
 
-          Drag **Double Finder.app** to /Applications. The build is ad-hoc signed, so on first launch right-click the app → **Open** to bypass Gatekeeper." \
-            ".dist/Double Finder.dmg"
+          NOTES="Two builds, one per architecture — pick the one matching your Mac:
+
+          | Download | For |
+          |---|---|
+          | \`Double-Finder-arm64.dmg\` | Apple Silicon (M1 and later) |
+          | \`Double-Finder-x86_64.dmg\` | Intel Macs |
+
+          They are separate rather than universal because the Android/MTP backend links libmtp, and Homebrew publishes it for arm64 only — the other half of a universal library can't be produced on a single machine.
+
+          Drag **Double Finder.app** to /Applications. The build is ad-hoc signed, so on first launch right-click the app → **Open** to bypass Gatekeeper."
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "Release \`$TAG\`.
+
+          $NOTES" \
+              dist/*.dmg
+          else
+            # Rolling prerelease: recreate it so both the tag and the DMGs track
+            # the newest commit (delete is best-effort on the first ever run).
+            gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+            gh release create latest \
+              --prerelease \
+              --title "Latest build" \
+              --notes "Automated build of \`${GITHUB_SHA:0:7}\`.
+
+          $NOTES" \
+              dist/*.dmg
+          fi
