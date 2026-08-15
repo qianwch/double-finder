@@ -3,7 +3,7 @@ import XCTest
 
 final class FileDropTargetTests: XCTestCase {
 
-    // MARK: Fixtures
+    // MARK: - Fixtures
 
     private func dir(_ name: String, _ path: String) -> FileItem {
         FileItem(id: UUID(), name: name, path: path, isDirectory: true,
@@ -30,7 +30,7 @@ final class FileDropTargetTests: XCTestCase {
         ]
     }
 
-    // MARK: dropDestinationDir
+    // MARK: - dropDestinationDir
 
     func testFolderRowIsTheDestination() {
         XCTAssertEqual(FileDropTarget.dropDestinationDir(row: 1, items: items, currentPath: cwd),
@@ -85,5 +85,36 @@ final class FileDropTargetTests: XCTestCase {
         XCTAssertEqual(FileDropTarget.dropDestinationDir(row: 0, items: bogus,
                                                          currentPath: "/work/docs"),
                        "/work")
+    }
+
+    // MARK: - 边界：以下四条钉死目前靠 NSString 语义成立的行为
+
+    func testEmptyItemsFallsBackToCurrentDirectory() {
+        XCTAssertEqual(FileDropTarget.dropDestinationDir(row: 0, items: [], currentPath: cwd),
+                       cwd)
+    }
+
+    /// currentPath 带尾斜杠时 ".." 仍要落到正确的父目录
+    /// （命令行栏 / GoToFolder / 收藏项都可能存进带斜杠的路径）。
+    func testTrailingSlashOnCurrentPathStillResolvesParent() {
+        let rows = [FileItem.parentEntry(for: "/work")]
+        XCTAssertEqual(FileDropTarget.dropDestinationDir(row: 0, items: rows,
+                                                         currentPath: "/work/"),
+                       "/")
+    }
+
+    /// ".." 的判定看的是名字而非行号——分支视图/过滤列表里它未必在第 0 行。
+    func testDotDotIsRecognizedAtAnyRow() {
+        let rows = [dir("docs", "/work/docs"), FileItem.parentEntry(for: "/work")]
+        XCTAssertEqual(FileDropTarget.dropDestinationDir(row: 1, items: rows, currentPath: cwd),
+                       "/")
+    }
+
+    /// 名字像 bundle 的普通目录也被当作 package 挡掉——扩展名判定是
+    /// 刻意的近似，宁可少投放也不能往真 bundle 里灌文件。
+    func testPlainFolderNamedLikeAPackageIsAlsoExcluded() {
+        let rows = [dir("Notes.bundle", "/work/Notes.bundle")]
+        XCTAssertEqual(FileDropTarget.dropDestinationDir(row: 0, items: rows, currentPath: cwd),
+                       cwd)
     }
 }
