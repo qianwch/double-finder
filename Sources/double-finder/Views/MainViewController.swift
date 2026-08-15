@@ -2524,12 +2524,31 @@ class MainViewController: NSViewController {
     }
 
     /// Files dropped onto a panel from Finder / other apps / the other panel.
+    /// `destDir` is the row-resolved target — a folder row, "..", or the panel's
+    /// own directory when the drop landed on a file row, a package, or empty space.
     func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool, destDir: String) {
         let panel = vc.panelState
         guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
             NSSound.beep(); return
         }
-        importExternalFiles(urls, into: destDir, move: move) { [weak self] in
+        // Same guard F5/F6 uses: a folder dropped onto itself, into its own
+        // subtree, or an item dropped back into its own parent. The local
+        // overwrite path deletes the destination first — which would BE the
+        // source — so this refuses outright rather than silently no-op'ing.
+        let blocked = Set(FileOperation.selfTransferSources(urls.map { $0.path }, destDir: destDir))
+        let sources = urls.filter { !blocked.contains($0.path) }
+        guard !sources.isEmpty else {
+            if let window = view.window {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = tr("Source and destination are the same")
+                alert.informativeText = tr("Cannot transfer an item onto itself or a folder into itself.")
+                alert.beginSheetModal(for: window)
+            }
+            return
+        }
+
+        importExternalFiles(sources, into: destDir, move: move) { [weak self] in
             self?.leftPanelVC.panelState.refresh()
             self?.rightPanelVC.panelState.refresh()
         }
