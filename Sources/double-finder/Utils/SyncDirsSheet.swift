@@ -30,6 +30,9 @@ final class SyncDirsSheet: NSWindowController {
     /// operation reports completion (including when the user backgrounded it —
     /// closing the window still means "stop", per the Close/Background split).
     private weak var runningOp: FileOperation?
+    /// Guards `teardown()` against re-entry — dismissing the window calls back
+    /// into `windowWillClose`, and the queue/scan must only be cancelled once.
+    private var didClose = false
     private var anyS3: Bool { left.isS3 || right.isS3 }
 
     private let tableView = NSTableView()
@@ -51,6 +54,12 @@ final class SyncDirsSheet: NSWindowController {
         window.title = tr("Synchronize Directories")
         window.minSize = NSSize(width: 560, height: 320)
         super.init(window: window)
+        // Every close path must funnel through `closeWin` so an in-flight sync is
+        // cancelled: the Close button and Esc go through the action, but the title
+        // bar's red button and ⌘W go straight to AppKit's performClose: and would
+        // otherwise dismiss the window while the transfer kept running (with no UI
+        // left to reach it, and `onClosed` never firing to release the controller).
+        window.delegate = self
         setupUI()
         recompare()
     }
@@ -394,23 +403,41 @@ final class SyncDirsSheet: NSWindowController {
 
     /// Close means stop. "Move to Background" is the way to keep a sync running
     /// without the window — closing it is the opposite intent, so an in-flight
-    /// operation is cancelled here (files already copied stay; the current file
+    /// operation is cancelled (files already copied stay; the current file
     /// finishes, then no further units are scheduled).
-    @objc private func closeWin() {
+    ///
+    /// Runs exactly once no matter which close path got here: the Close button,
+    /// Esc, the title bar's red button, or ⌘W. `didClose` guards re-entry, since
+    /// dismissing the window below calls back into `windowWillClose`.
+    private func teardown() {
+        guard !didClose else { return }
+        didClose = true
         scanTask?.cancel()
         runningOp?.cancel()
         runningOp = nil
+        onClosed?()
+    }
+
+    @objc private func closeWin() {
+        teardown()
         if let w = window, let parent = w.sheetParent {
             parent.endSheet(w)
         } else {
             window?.close()
         }
-        onClosed?()
     }
 
     func show(relativeTo parent: NSWindow) {
         window?.center()
         parent.beginSheet(window!) { _ in }
+    }
+}
+
+extension SyncDirsSheet: NSWindowDelegate {
+    /// Catches the close paths that bypass the Close button's action — the title
+    /// bar's red button and ⌘W both go straight to AppKit's performClose:.
+    func windowWillClose(_ notification: Notification) {
+        teardown()
     }
 }
 
