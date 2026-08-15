@@ -72,9 +72,21 @@ final class FileListBodyView: NSView {
     /// it only feeds drop-target resolution.
     var currentPath: String = ""
 
-    // Per-drag pasteboard cache, read by FileListBodyView+Drop.swift (a later
-    // task). Stored properties must live in the class body — an extension in
-    // another file cannot add them.
+    /// Row currently highlighted as a drop target (a folder row or ".."), or nil.
+    /// Only repaints the rows that actually change, so dragging over a long list
+    /// doesn't redraw everything on every mouse move.
+    var dropHighlightRow: Int? {
+        didSet {
+            guard dropHighlightRow != oldValue else { return }
+            for row in [oldValue, dropHighlightRow].compactMap({ $0 }) {
+                setNeedsDisplay(geometry.rowRect(row, width: bounds.width))
+            }
+        }
+    }
+
+    // Per-drag pasteboard cache, read by FileListBodyView+Drop.swift. Stored
+    // properties must live in the class body — an extension in another file
+    // cannot add them.
     var draggedPathsCache: [String] = []
     var draggedPathsSequence: Int?
 
@@ -197,6 +209,12 @@ final class FileListBodyView: NSView {
         case .thumbnails:
             drawThumbnails(range: range, geo: geo, para: para, thumbSide: thumbSide,
                            colorByType: colorByType, viewWidth: viewWidth)
+        }
+
+        // 4. Drop-target highlight — painted last so it sits above row content.
+        if let dropRow = dropHighlightRow, dropRow < items.count {
+            let r = geo.rowRect(dropRow, width: viewWidth)
+            if r.intersects(dirtyRect) { drawDropHighlight(r) }
         }
 
         // 5. Post-draw: prefetch visible icons/thumbnails, cancel offscreen.
@@ -467,6 +485,19 @@ final class FileListBodyView: NSView {
         let path = NSBezierPath(rect: rowRect.insetBy(dx: 1, dy: 1))
         path.lineWidth = 1.5
         color.setStroke()
+        path.stroke()
+    }
+
+    /// Outlines the row a drop would land in. Drawn on top of everything else so
+    /// it reads over any row background; the accent fill is kept faint so the
+    /// file name stays legible. `controlAccentColor` is theme-adaptive, so
+    /// light/dark switching is handled by the redraw itself.
+    func drawDropHighlight(_ rowRect: NSRect) {
+        NSColor.controlAccentColor.withAlphaComponent(0.25).setFill()
+        rowRect.fill()
+        let path = NSBezierPath(rect: rowRect.insetBy(dx: 1, dy: 1))
+        path.lineWidth = 2
+        NSColor.controlAccentColor.setStroke()
         path.stroke()
     }
 
@@ -820,7 +851,7 @@ final class FileListBodyView: NSView {
     /// Called when the bench requests a view mode switch (keys 1/2/3).
     var onModeSwitch: ((_ mode: FileViewMode) -> Void)?
     /// Drop callback used by the bench when `fileDelegate == nil`.
-    var onDropFiles: ((_ urls: [URL], _ move: Bool) -> Void)?
+    var onDropFiles: ((_ urls: [URL], _ move: Bool, _ destDir: String) -> Void)?
 }
 
 // MARK: - Drag source (NSDraggingSource)
@@ -858,46 +889,13 @@ extension FileListBodyView: NSDraggingSource {
                                 sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         context == .withinApplication ? [.copy, .move] : .copy
     }
-}
 
-// MARK: - Drop destination (NSDraggingDestination)
-
-extension FileListBodyView {
-
-    private func canAcceptDrop(_ sender: NSDraggingInfo) -> Bool {
-        sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
-                                                options: [.urlReadingFileURLsOnly: true])
-    }
-
-    /// Mirrors NCTableView.dropOperation(for:) exactly.
-    private func dropOperation(for sender: NSDraggingInfo) -> NSDragOperation {
-        guard canAcceptDrop(sender) else { return [] }
-        let mask = sender.draggingSourceOperationMask
-        // Cmd forces move within the app; default is copy.
-        if NSEvent.modifierFlags.contains(.command), mask.contains(.move) { return .move }
-        return mask.contains(.copy) ? .copy : (mask.contains(.move) ? .move : .copy)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        dropOperation(for: sender)
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        dropOperation(for: sender)
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = sender.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty else { return false }
-        let move = dropOperation(for: sender) == .move
-        if let d = fileDelegate {
-            d.fileTableView(self, didDropFiles: urls, move: move)
-        } else {
-            onDropFiles?(urls, move)
-        }
-        return true
-    }
+    /// AppKit otherwise AND-filters `draggingSourceOperationMask` by the held
+    /// modifiers (⌘ → move), which would strip `.copy` exactly when the user
+    /// holds ⌘ to *invert* our same-panel move default — silently turning an
+    /// intended copy into a move. We interpret ⌘ ourselves in `dropOperation`,
+    /// so the raw mask is what we want for in-app drags.
+    public func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
 }
 
 // MARK: - Scroll helper (used by bench)

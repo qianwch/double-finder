@@ -17,5 +17,5 @@ protocol FileTableViewDelegate: AnyObject {
     func fileTableView(_ tableView: NSView, didClickColumn identifier: String)
     func fileTableView(_ tableView: NSView, didToggleExpand item: FileItem)
     func fileTableView(_ tableView: NSView, didRename item: FileItem, to newName: String)
-    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool)
+    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool, destDir: String)
 }

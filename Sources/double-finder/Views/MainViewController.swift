@@ -2524,12 +2524,12 @@ class MainViewController: NSViewController {
     }
 
     /// Files dropped onto a panel from Finder / other apps / the other panel.
-    func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool) {
+    func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool, destDir: String) {
         let panel = vc.panelState
         guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
             NSSound.beep(); return
         }
-        importExternalFiles(urls, into: panel.currentPath, move: move) { [weak self] in
+        importExternalFiles(urls, into: destDir, move: move) { [weak self] in
             self?.leftPanelVC.panelState.refresh()
             self?.rightPanelVC.panelState.refresh()
         }

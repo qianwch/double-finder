@@ -1073,8 +1073,8 @@ extension PanelViewController: FileTableViewDelegate {
         fileTableView.beginRename(row: panelState.cursorIndex)
     }
 
-    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool) {
-        panelDelegate?.panelViewController(self, didDropFiles: urls, move: move)
+    func fileTableView(_ tableView: NSView, didDropFiles urls: [URL], move: Bool, destDir: String) {
+        panelDelegate?.panelViewController(self, didDropFiles: urls, move: move, destDir: destDir)
     }
 
 }
@@ -1131,7 +1131,7 @@ protocol PanelViewControllerDelegate: AnyObject {
     /// survive a crash, not just a clean quit.
     func panelViewControllerTabsDidChange(_ vc: PanelViewController)
     /// Files were dropped onto this panel (from Finder / other apps / the other panel).
-    func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool)
+    func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool, destDir: String)
     /// Rename a large remote (S3) file via a cancelable progress sheet — a server-side
     /// copy of a multi-GB object can take minutes and must not silently block the UI.
     func panelViewController(_ vc: PanelViewController, renameLargeS3File item: FileItem, to newName: String)
