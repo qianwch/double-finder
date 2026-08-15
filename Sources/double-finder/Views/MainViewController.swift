@@ -2752,7 +2752,16 @@ class MainViewController: NSViewController {
         sheet.onRunOperation = { [weak self, weak sheet] op, done in
             // Attach progress to the Synchronize sheet's own window (sheet-on-sheet),
             // not the main window which still hosts the Synchronize sheet.
-            self?.runOperation(op, on: sheet?.window) { done() }
+            self?.runOperation(op, on: sheet?.window) { [weak self] in
+                done()   // sheet's own follow-up (re-compare); a no-op once it's closed
+                // Refresh here too, NOT only in `done`: the sync can outlive the
+                // sheet (Move to Background hands the op to the transfer queue, and
+                // the user can then close the window). `done` is weak-captured on
+                // the sheet, so it silently evaporates in that case and the panels
+                // would keep showing pre-sync contents until the next navigation.
+                self?.leftPanelVC.panelState.refresh()
+                self?.rightPanelVC.panelState.refresh()
+            }
         }
         sheet.onClosed = { [weak self] in
             self?.leftPanelVC.panelState.refresh()
