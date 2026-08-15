@@ -26,6 +26,10 @@ final class SyncDirsSheet: NSWindowController {
     private var entries: [Entry] = []
     private var rows: [Int] = []            // indices into entries that are shown
     private var scanTask: Task<Void, Never>?
+    /// The sync currently in flight, kept so Close can abort it. Held until the
+    /// operation reports completion (including when the user backgrounded it —
+    /// closing the window still means "stop", per the Close/Background split).
+    private weak var runningOp: FileOperation?
     private var anyS3: Bool { left.isS3 || right.isS3 }
 
     private let tableView = NSTableView()
@@ -380,13 +384,22 @@ final class SyncDirsSheet: NSWindowController {
             }
         }
         syncButton.isEnabled = false
+        runningOp = op
         onRunOperation?(op) { [weak self] in
+            self?.runningOp = nil
             self?.recompare()
             self?.syncButton.isEnabled = true
         }
     }
 
+    /// Close means stop. "Move to Background" is the way to keep a sync running
+    /// without the window — closing it is the opposite intent, so an in-flight
+    /// operation is cancelled here (files already copied stay; the current file
+    /// finishes, then no further units are scheduled).
     @objc private func closeWin() {
+        scanTask?.cancel()
+        runningOp?.cancel()
+        runningOp = nil
         if let w = window, let parent = w.sheetParent {
             parent.endSheet(w)
         } else {

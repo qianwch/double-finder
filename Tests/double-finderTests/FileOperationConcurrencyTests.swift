@@ -116,6 +116,38 @@ final class FileOperationConcurrencyTests: XCTestCase {
         XCTAssertGreaterThan(ticks, 5, "main actor was starved during the transfer (\(ticks) ticks)")
     }
 
+    /// Cancelling mid-flight stops scheduling further units.
+    ///
+    /// This is what backs "Close aborts the sync": `SyncDirsSheet.closeWin` calls
+    /// `cancel()` on the running operation (Move to Background is the way to keep
+    /// one running without the window — closing is the opposite intent). Units
+    /// already in flight finish their current file; nothing new is started.
+    func testCancelStopsSchedulingFurtherUnits() async {
+        let op = FileOperation(type: .copy, sources: [], destination: nil)
+        op.concurrency = 2
+
+        let tracker = ConcurrencyTracker()
+        op.transferUnits = (0..<40).map { i in
+            FileOperation.Unit(label: "f\(i)") { _ in
+                await tracker.enter()
+                try? await Task.sleep(nanoseconds: 10_000_000)   // 10ms
+                await tracker.leave()
+            }
+        }
+
+        op.start()
+        // Let a few units through, then cancel the way Close does.
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        op.cancel()
+
+        for _ in 0..<200 where !op.isComplete { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(op.isComplete)
+        XCTAssertTrue(op.isCancelled)
+        // The whole batch would be 40; cancelling early must leave most unstarted.
+        XCTAssertLessThan(op.completedUnits, 40,
+                          "cancel did not stop the batch (\(op.completedUnits)/40 ran)")
+    }
+
     /// The per-Unit `report` reporter accumulates into transferredBytes with no
     /// double counting (each unit reports its size exactly once).
     func testTransferredBytesAccounting() async {
