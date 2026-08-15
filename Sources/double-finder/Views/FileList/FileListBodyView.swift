@@ -65,6 +65,19 @@ final class FileListBodyView: NSView {
     /// Paths of folders currently expanded in place (drives the disclosure triangle).
     var expandedPaths: Set<String> = [] { didSet { needsDisplay = true } }
 
+    /// The panel's current directory — needed to resolve a drop that lands on the
+    /// ".." row or on empty space. Pushed unconditionally by
+    /// `PanelViewController.updateDisplay()` on every call (unlike `items`, which
+    /// is gated on `itemsVersion`). No redraw on set: nothing is painted from it,
+    /// it only feeds drop-target resolution.
+    var currentPath: String = ""
+
+    // Per-drag pasteboard cache, read by FileListBodyView+Drop.swift (a later
+    // task). Stored properties must live in the class body — an extension in
+    // another file cannot add them.
+    var draggedPathsCache: [String] = []
+    var draggedPathsSequence: Int?
+
     var viewMode: FileViewMode = .full {
         didSet {
             if viewMode != oldValue {

@@ -143,6 +143,11 @@ final class FileListView: NSScrollView {
         set { body.expandedPaths = newValue }
     }
 
+    var currentPath: String {
+        get { body.currentPath }
+        set { body.currentPath = newValue }
+    }
+
     weak var fileDelegate: FileTableViewDelegate? {
         get { body.fileDelegate }
         set { body.fileDelegate = newValue }

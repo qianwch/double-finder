@@ -533,6 +533,10 @@ class PanelViewController: NSViewController {
         }
 
         fileTableView.expandedPaths = panelState.expandedPaths
+        // Drop-target resolution needs the panel's directory (".." row / empty space).
+        // Deliberately the raw `currentPath`, not `PanelState.memoryKey(...)`:
+        // memoryKey resolves symlinks and would no longer match `FileItem.path`.
+        fileTableView.currentPath = panelState.currentPath
         // Only feed items to the file list when the underlying array actually
         // changed (itemsVersion bump). Cursor moves don't change items, so
         // skipping the reassignment avoids rebuilding the whole list each move.
