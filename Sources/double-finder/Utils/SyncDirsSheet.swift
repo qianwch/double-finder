@@ -277,9 +277,19 @@ final class SyncDirsSheet: NSWindowController {
         case (.local(let sb), .local(let db)):
             let s = (sb as NSString).appendingPathComponent(rel)
             let t = (db as NSString).appendingPathComponent(rel)
-            try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: t) { try fm.removeItem(atPath: t) }
-            try fm.copyItem(atPath: s, toPath: t)
+            // Off the main actor: `FileOperation.runConcurrently` schedules every
+            // unit with `@MainActor`, and copyItem is a *blocking* syscall with no
+            // suspension point — running it inline freezes the whole UI for the
+            // duration of the copy (a 100MB file on a slow volume = seconds of a
+            // dead window, with the progress bar only ticking between files).
+            // Same discipline as every LocalFS transfer method.
+            try await Task.detached(priority: .userInitiated) {
+                let fm = FileManager.default
+                try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent,
+                                       withIntermediateDirectories: true)
+                if fm.fileExists(atPath: t) { try fm.removeItem(atPath: t) }
+                try fm.copyItem(atPath: s, toPath: t)
+            }.value
             report(localSize(s))
 
         case (.local(let sb), .sftp(let conn, let db)):

@@ -71,6 +71,51 @@ final class FileOperationConcurrencyTests: XCTestCase {
         XCTAssertEqual(op.failures.count, 5)           // even indices threw
     }
 
+    /// A unit whose body does blocking work must not freeze the main actor.
+    ///
+    /// `runConcurrently` schedules every unit with `@MainActor` (it updates
+    /// completedUnits/failures there), so a unit body that blocks *inline* —
+    /// `FileManager.copyItem` and friends have no suspension point — owns the
+    /// main thread for the whole transfer and the UI goes dead. This is exactly
+    /// how directory sync froze the window: its local↔local branch called
+    /// copyItem directly instead of hopping off via `Task.detached`, the way
+    /// every LocalFS transfer method does.
+    ///
+    /// The probe below is a stand-in for the UI: a main-actor timer that must
+    /// keep ticking while the units run.
+    func testBlockingUnitBodyDoesNotStarveTheMainActor() async {
+        let op = FileOperation(type: .copy, sources: [], destination: nil)
+        op.concurrency = 2
+
+        op.transferUnits = (0..<4).map { i in
+            FileOperation.Unit(label: "blocking\(i)") { _ in
+                // Stands in for copyItem: real, blocking, no suspension point.
+                // Correct callers push this off the main actor.
+                try await Task.detached(priority: .userInitiated) {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }.value
+            }
+        }
+
+        var ticks = 0
+        let ticker = Task { @MainActor in
+            while !Task.isCancelled {
+                ticks += 1
+                try? await Task.sleep(nanoseconds: 5_000_000)   // 5ms
+            }
+        }
+
+        op.start()
+        for _ in 0..<400 where !op.isComplete { try? await Task.sleep(nanoseconds: 5_000_000) }
+        ticker.cancel()
+
+        XCTAssertTrue(op.isComplete)
+        XCTAssertEqual(op.completedUnits, 4)
+        // 4 units × 50ms at concurrency 2 = ~100ms of blocking work. If it ran on
+        // the main actor the ticker would be starved; off-actor it keeps running.
+        XCTAssertGreaterThan(ticks, 5, "main actor was starved during the transfer (\(ticks) ticks)")
+    }
+
     /// The per-Unit `report` reporter accumulates into transferredBytes with no
     /// double counting (each unit reports its size exactly once).
     func testTransferredBytesAccounting() async {
