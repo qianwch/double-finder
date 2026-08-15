@@ -375,7 +375,19 @@ final class FindFilesSheet: NSWindowController {
     }
 
     func beginSheet(on parent: NSWindow) {
-        parent.beginSheet(window!, completionHandler: nil)
+        // Dismissal must stop an in-flight scan, and there are three ways out
+        // (Close, Go to File, Feed to Panel) that all route through `endSheet`.
+        // The completion handler is the one hook that sees every one of them:
+        // `windowWillClose` does NOT fire for a sheet — `endSheet` orders it out
+        // rather than closing it (verified against AppKit). Without this the
+        // recursive walk and the SHA-256 duplicate pass keep burning CPU and disk
+        // on a large tree with nobody left to show the results to; the helpers
+        // poll `Task.isCancelled` in their walk loops, so cancelling really does
+        // stop the work rather than just discarding its result.
+        parent.beginSheet(window!) { [weak self] _ in
+            self?.searchTask?.cancel()
+            self?.searchTask = nil
+        }
         window?.makeFirstResponder(nameField)
     }
 }

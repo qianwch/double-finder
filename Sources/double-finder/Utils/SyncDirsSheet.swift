@@ -54,12 +54,6 @@ final class SyncDirsSheet: NSWindowController {
         window.title = tr("Synchronize Directories")
         window.minSize = NSSize(width: 560, height: 320)
         super.init(window: window)
-        // Every close path must funnel through `closeWin` so an in-flight sync is
-        // cancelled: the Close button and Esc go through the action, but the title
-        // bar's red button and ⌘W go straight to AppKit's performClose: and would
-        // otherwise dismiss the window while the transfer kept running (with no UI
-        // left to reach it, and `onClosed` never firing to release the controller).
-        window.delegate = self
         setupUI()
         recompare()
     }
@@ -406,9 +400,9 @@ final class SyncDirsSheet: NSWindowController {
     /// operation is cancelled (files already copied stay; the current file
     /// finishes, then no further units are scheduled).
     ///
-    /// Runs exactly once no matter which close path got here: the Close button,
-    /// Esc, the title bar's red button, or ⌘W. `didClose` guards re-entry, since
-    /// dismissing the window below calls back into `windowWillClose`.
+    /// Runs exactly once no matter which path got here — the Close button, Esc,
+    /// or the sheet being dismissed some other way. `didClose` guards re-entry,
+    /// since `closeWin` also reaches this through the dismissal handler.
     private func teardown() {
         guard !didClose else { return }
         didClose = true
@@ -429,15 +423,13 @@ final class SyncDirsSheet: NSWindowController {
 
     func show(relativeTo parent: NSWindow) {
         window?.center()
-        parent.beginSheet(window!) { _ in }
-    }
-}
-
-extension SyncDirsSheet: NSWindowDelegate {
-    /// Catches the close paths that bypass the Close button's action — the title
-    /// bar's red button and ⌘W both go straight to AppKit's performClose:.
-    func windowWillClose(_ notification: Notification) {
-        teardown()
+        // The dismissal handler is the one hook that catches every way this sheet
+        // can go away. `windowWillClose` does NOT fire for a sheet — `endSheet`
+        // orders it out rather than closing it, and `performClose:` (the red
+        // button / ⌘W) is inert while a window is presented as a sheet (both
+        // verified against AppKit). Hooking the delegate instead would silently
+        // never run, leaving the sync going with no UI left to reach it.
+        parent.beginSheet(window!) { [weak self] _ in self?.teardown() }
     }
 }
 
