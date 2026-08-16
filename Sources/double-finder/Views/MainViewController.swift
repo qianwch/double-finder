@@ -875,7 +875,7 @@ class MainViewController: NSViewController {
         let viewerEntries: [ViewerEntry] = entries.map { item in
             ViewerEntry(title: item.name, resolve: {
                 if local { return URL(fileURLWithPath: item.path) }
-                return await self.materializeOne(item, using: fs)
+                return await self.materializeOne(item, using: fs, useCache: true)
             })
         }
         InternalViewerController.shared.show(entries: viewerEntries, start: start) { [weak self] i in
@@ -913,11 +913,23 @@ class MainViewController: NSViewController {
     /// Download (SFTP) or extract (archive) a single item into its own temp subfolder
     /// and return the local URL, or nil on failure. The subfolder is keyed by the item's
     /// full remote path so files sharing a basename don't collide.
-    private func materializeOne(_ item: FileItem, using fs: VirtualFS) async -> URL? {
+    ///
+    /// `useCache` (F3 only) keys the folder by identity+size+mtime instead and reuses
+    /// an already-materialized copy — stepping back to a file with ⌘↑/⌘↓ then costs
+    /// nothing, which matters most on a solid 7z where one entry means a full pass
+    /// over the archive. F4 (edit) deliberately passes false: it must start from the
+    /// remote bytes, otherwise a second F4 would reopen the user's own unsaved edits.
+    private func materializeOne(_ item: FileItem, using fs: VirtualFS, useCache: Bool = false) async -> URL? {
         let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-View")
-        let dir = (root as NSString).appendingPathComponent(Self.tempSlug(for: item.path))
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let slug = useCache
+            ? MaterializedCache.slug(path: item.path, size: item.size, modified: item.modified)
+            : Self.tempSlug(for: item.path)
+        let dir = (root as NSString).appendingPathComponent(slug)
         let dest = (dir as NSString).appendingPathComponent(item.name)
+        if useCache, MaterializedCache.isFresh(localPath: dest, expectedSize: item.size) {
+            return URL(fileURLWithPath: dest)
+        }
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(atPath: dest)
         do {
             try await fs.copy(from: item.path, to: dir)   // scp download / archive extract

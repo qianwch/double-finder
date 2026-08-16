@@ -101,6 +101,17 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     // that same array — `ListerSearch` is only safe under single-task exclusivity.
     private var searchBusy = false
 
+    // Loading indicator. A remote download — or one entry out of a SOLID 7z, which
+    // costs a decompression pass over the archive — can take tens of seconds; before
+    // this the window just sat there blank with no sign it was working.
+    private var loadingOverlay: AppearanceAwareView?
+    private var loadingSpinner: NSProgressIndicator?
+    /// The in-flight `entry.resolve()`. Cancelled when the user steps to another file
+    /// or closes the window, which propagates into the extract/download itself.
+    private var resolveTask: Task<Void, Never>?
+    /// Delays the overlay so instant (local) files don't flash a spinner.
+    private var spinnerDelayTask: Task<Void, Never>?
+
     private override init() { super.init() }
 
     var isVisible: Bool { window?.isVisible ?? false }
@@ -461,9 +472,15 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         lastDiagramDark = nil                        // per-file: no rendered diagrams shown yet
         diagramGeneration += 1                       // void the previous file's in-flight phase 2 (design §5.3):
                                                      // it must not land during entry.resolve() and repollute lastDiagramDark
-        Task { [weak self] in
+        resolveTask?.cancel()                        // stop the previous file's download/extract
+        // Name the INCOMING file right away: during a slow resolve the titlebar
+        // would otherwise still advertise the previous one.
+        window?.title = "\(entry.title) — (\(index + 1)/\(total))"
+        beginLoadingIndicator()
+        resolveTask = Task { [weak self] in
             let url = await entry.resolve()
             guard let self, self.navGeneration == gen else { return }
+            self.endLoadingIndicator()
             guard let url else {
                 self.source = nil; self.currentURL = nil
                 self.setMode(.preview, auto: true)
@@ -480,6 +497,75 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             self.window?.title = "\(entry.title) — (\(index + 1)/\(total))"
             self.onIndexChange?(index)
         }
+    }
+
+    // MARK: Loading indicator
+
+    /// Arm the spinner. It only appears if the resolve is still running after a
+    /// short delay, so local files (resolved instantly) never flash it.
+    private func beginLoadingIndicator() {
+        spinnerDelayTask?.cancel()
+        let gen = navGeneration
+        spinnerDelayTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled, let self, self.navGeneration == gen else { return }
+            self.showLoadingOverlay()
+        }
+    }
+
+    private func endLoadingIndicator() {
+        spinnerDelayTask?.cancel(); spinnerDelayTask = nil
+        loadingSpinner?.stopAnimation(nil)
+        loadingOverlay?.removeFromSuperview()
+    }
+
+    /// Centered spinner + "Loading…" over the content area, on an opaque backdrop so
+    /// the previous file's text isn't mistaken for the incoming one.
+    private func showLoadingOverlay() {
+        guard let container else { return }
+        let overlay: AppearanceAwareView = loadingOverlay ?? {
+            let v = AppearanceAwareView()
+            v.translatesAutoresizingMaskIntoConstraints = false
+            v.backgroundColor = .windowBackgroundColor
+
+            let spin = NSProgressIndicator()
+            spin.style = .spinning
+            spin.controlSize = .regular
+            spin.translatesAutoresizingMaskIntoConstraints = false
+
+            let label = NSTextField(labelWithString: tr("Loading…"))
+            label.font = .systemFont(ofSize: 12)
+            label.textColor = .secondaryLabelColor
+            label.alignment = .center
+
+            let hint = NSTextField(labelWithString: tr("Press Esc to cancel"))
+            hint.font = .systemFont(ofSize: 11)
+            hint.textColor = .tertiaryLabelColor
+            hint.alignment = .center
+
+            let stack = NSStackView(views: [spin, label, hint])
+            stack.orientation = .vertical
+            stack.spacing = 8
+            stack.alignment = .centerX
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            v.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+                stack.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+            ])
+            self.loadingOverlay = v
+            self.loadingSpinner = spin
+            return v
+        }()
+
+        container.addSubview(overlay, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: container.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        loadingSpinner?.startAnimation(nil)
     }
 
     // MARK: Mode switching
@@ -845,6 +931,10 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
         navGeneration += 1                       // invalidate any in-flight entry.resolve() (e.g. remote download)
+        // Esc/close must actually STOP the work, not just ignore its result: a solid-7z
+        // pass would otherwise keep a core busy long after the window is gone.
+        resolveTask?.cancel(); resolveTask = nil
+        endLoadingIndicator()
         searchTask?.cancel(); searchTask = nil
         // The cancelled task's MainActor.run exits at its isCancelled guard and
         // never resets the flag; the singleton outlives the window, so a leak
@@ -870,6 +960,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         hexScroll = nil
         hexView = nil
         searchBar = nil
+        loadingOverlay = nil
+        loadingSpinner = nil
         statusBar = nil
         container = nil
         modeControl = nil
