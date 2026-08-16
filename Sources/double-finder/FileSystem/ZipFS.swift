@@ -389,9 +389,19 @@ class ZipFS: VirtualFS {
         let archive = archivePath
         let kind = self.kind
         let pw = password
-        try await Task.detached(priority: .userInitiated) {
-            try Self.extractEntry(archivePath: archive, entry: entry, to: to, kind: kind, password: pw)
-        }.value
+        // Detached (CPU-bound decompression must stay off the caller's actor), but
+        // still cancellable: the handler forwards the awaiting task's cancellation
+        // into the extract loop, so closing the viewer really does stop a solid-7z
+        // pass instead of leaving it grinding in the background.
+        let work = Task.detached(priority: .userInitiated) {
+            try Self.extractEntry(archivePath: archive, entry: entry, to: to, kind: kind, password: pw,
+                                  isCancelled: { Task.isCancelled })
+        }
+        try await withTaskCancellationHandler {
+            try await work.value
+        } onCancel: {
+            work.cancel()
+        }
     }
 
     /// Extracts a single internal entry (file, or folder + subtree) to `dest`.
@@ -408,13 +418,15 @@ class ZipFS: VirtualFS {
     /// would recreate the full archive-internal path). The solid-7z case is handled
     /// inside `LibArchive` (read+discard preceding entries). Encrypted 7z, which
     /// libarchive can't decrypt, still falls back to 7zz.
-    static func extractEntry(archivePath: String, entry: String, to dest: String, kind: Kind, password: String? = nil) throws {
+    static func extractEntry(archivePath: String, entry: String, to dest: String, kind: Kind, password: String? = nil,
+                             isCancelled: (() -> Bool)? = nil) throws {
         if isSplitFirstVolume(archivePath) {
             try sevenZipExtract(tool: requireSevenZipTool(), archivePath: archivePath, entry: entry, to: dest, password: password)
             return
         }
         do {
-            try LibArchive.extractItem(archivePath: archivePath, entry: entry, to: dest, password: password)
+            try LibArchive.extractItem(archivePath: archivePath, entry: entry, to: dest, password: password,
+                                       isCancelled: isCancelled)
         } catch is ArchiveEncryptedError {
             try sevenZipEncryptedFallback(archivePath: archivePath, kind: kind) { tool in
                 try sevenZipExtract(tool: tool, archivePath: archivePath, entry: entry, to: dest, password: password)

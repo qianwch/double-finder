@@ -252,9 +252,24 @@ enum LibArchive {
 
     // MARK: - Extraction (read → write-to-disk)
 
+    /// True once `matched` is the wanted item itself AND it's a plain file — there
+    /// can be nothing left to extract, so the scan may stop instead of decompressing
+    /// the rest of the archive. A wanted DIRECTORY returns false: its subtree still
+    /// follows. On a solid 7z this is the difference between decompressing up to the
+    /// entry and decompressing the whole archive (see `extract`'s drain path).
+    static func isFinalMatch(wanted: String, matched: String, matchedIsDirectory: Bool) -> Bool {
+        !matchedIsDirectory && matched == wanted
+    }
+
     /// Core extractor. For each entry, `outputPath(normalizedName)` returns the
     /// absolute destination path, or nil to skip the entry.
+    /// - Parameters:
+    ///   - isCancelled: polled per entry and per I/O block; throws `CancellationError`.
+    ///   - stopAfter: given (name, isDirectory) of an entry just written, return true
+    ///     to stop scanning (early-out for single-file targets).
     private static func extract(archivePath: String, password: String?,
+                                isCancelled: (() -> Bool)? = nil,
+                                stopAfter: ((String, Bool) -> Bool)? = nil,
                                 outputPath: (String) -> String?) throws {
         // Detect the name charset up front so entries decode to the same names
         // shown in the panel (and land on disk with correct UTF-8 names).
@@ -270,6 +285,7 @@ enum LibArchive {
         var entry: OpaquePointer?
         var wroteAny = false
         while true {
+            if isCancelled?() == true { throw CancellationError() }
             let r = archive_read_next_header(a, &entry)
             if r == EOFR { break }
             if r < WARN { try throwClassified(a, archivePath: archivePath) }
@@ -282,7 +298,7 @@ enum LibArchive {
                 // "Truncated 7-Zip file body". So for 7z, read+discard (forces the
                 // decompression) instead of seeking. Other formats skip cheaply.
                 if archive_format(a) == ARCHIVE_FORMAT_7ZIP {
-                    try drainData(from: a, archivePath: archivePath)
+                    try drainData(from: a, archivePath: archivePath, isCancelled: isCancelled)
                 } else {
                     archive_read_data_skip(a)
                 }
@@ -301,9 +317,15 @@ enum LibArchive {
             }
             let wr = archive_write_header(disk, e)
             if wr < WARN { throw Failure(message: errString(disk)) }
-            if archive_entry_size(e) > 0 { try copyData(from: a, to: disk, archivePath: archivePath) }
+            if archive_entry_size(e) > 0 {
+                try copyData(from: a, to: disk, archivePath: archivePath, isCancelled: isCancelled)
+            }
             archive_write_finish_entry(disk)
             wroteAny = true
+            // Nothing else to find? Stop — on a solid 7z every further entry would
+            // have to be decompressed just to be thrown away.
+            let isDir = (archive_entry_filetype(e) & AE_IFMT) == AE_IFDIR
+            if stopAfter?(name, isDir) == true { break }
         }
         archive_write_close(disk)
         if !wroteAny {
@@ -318,22 +340,26 @@ enum LibArchive {
 
     /// Reads and discards the current entry's data — used to advance past an
     /// unwanted entry in a solid archive (where a plain skip can't decompress).
-    private static func drainData(from a: OpaquePointer, archivePath: String) throws {
+    private static func drainData(from a: OpaquePointer, archivePath: String,
+                                  isCancelled: (() -> Bool)? = nil) throws {
         let bufSize = 256 * 1024
         let buf = UnsafeMutableRawPointer.allocate(byteCount: bufSize, alignment: 16)
         defer { buf.deallocate() }
         while true {
+            if isCancelled?() == true { throw CancellationError() }
             let n = archive_read_data(a, buf, bufSize)
             if n == 0 { break }
             if n < 0 { try throwClassified(a, archivePath: archivePath) }
         }
     }
 
-    private static func copyData(from a: OpaquePointer, to disk: OpaquePointer, archivePath: String) throws {
+    private static func copyData(from a: OpaquePointer, to disk: OpaquePointer, archivePath: String,
+                                 isCancelled: (() -> Bool)? = nil) throws {
         let bufSize = 256 * 1024
         let buf = UnsafeMutableRawPointer.allocate(byteCount: bufSize, alignment: 16)
         defer { buf.deallocate() }
         while true {
+            if isCancelled?() == true { throw CancellationError() }
             let n = archive_read_data(a, buf, bufSize)
             if n == 0 { break }
             if n < 0 { try throwClassified(a, archivePath: archivePath) }
@@ -387,11 +413,14 @@ enum LibArchive {
 
     /// Extracts a single entry (a file, or a folder + its whole subtree) to
     /// `destDir`, preserving the item's own name (but not its parent path).
-    static func extractItem(archivePath: String, entry wanted: String, to destDir: String, password: String?) throws {
+    static func extractItem(archivePath: String, entry wanted: String, to destDir: String, password: String?,
+                            isCancelled: (() -> Bool)? = nil) throws {
         let w = normalize(wanted)
         let parent = (w as NSString).deletingLastPathComponent
         let stripPrefix = parent.isEmpty ? "" : parent + "/"
-        try extract(archivePath: archivePath, password: password) { name in
+        try extract(archivePath: archivePath, password: password,
+                    isCancelled: isCancelled,
+                    stopAfter: { name, isDir in isFinalMatch(wanted: w, matched: name, matchedIsDirectory: isDir) }) { name in
             guard name == w || name.hasPrefix(w + "/") else { return nil }
             let rel = stripPrefix.isEmpty ? name : String(name.dropFirst(stripPrefix.count))
             return (destDir as NSString).appendingPathComponent(rel)
