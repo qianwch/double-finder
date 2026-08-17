@@ -610,7 +610,10 @@ final class FileListBodyView: NSView {
 
         // --- Single click ---
         // Capture pre-click state for the slow-double-click rename check.
-        let wasCurrent = row == cursorIndex && selectedItems.count <= 1
+        // Only "was the cursor already here" matters: with a multi-selection
+        // the click below collapses it to this row, and the same click still
+        // schedules the rename (TC behavior) — the selection count must not gate it.
+        let wasCurrent = row == cursorIndex
         let mods = event.modifierFlags
         let noChord = mods.intersection([.command, .shift, .control, .option]).isEmpty
 
