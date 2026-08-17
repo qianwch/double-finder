@@ -743,9 +743,11 @@ final class FileListBodyView: NSView {
         if viewMode == .full {
             // Use the name column's right boundary (FileColumnLayout).
             let optionalIDs = AppSettings.visibleColumns
+            // Same widths as drawFull — else the field misses the real name
+            // column edge whenever the user has resized columns.
             let layout = FileColumnLayout(totalWidth: viewWidth,
                                          visibleOptionalIDs: optionalIDs,
-                                         widths: [:])
+                                         widths: AppSettings.columnWidths)
             if let nameRange = layout.xRange(of: "name") {
                 textRight = nameRange.upperBound - 4
             } else {
