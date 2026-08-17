@@ -1,21 +1,41 @@
 import AppKit
 
+/// Lock state of a folder tab. Both locked modes protect the tab from being
+/// closed; `.folder` additionally snaps the tab back to the folder captured
+/// at lock time whenever the tab is re-activated.
+enum TabLockMode {
+    case none
+    case plain    // "Lock Tab": close protection only, navigation free
+    case folder   // "Lock Tab and Folder": close protection + folder memory
+
+    var isLocked: Bool { self != .none }
+}
+
 /// A simple horizontal folder-tab bar shown above a panel's file list.
 final class TabBarView: NSView {
+    /// Per-tab display state, provided by PanelViewController on configure.
+    struct TabInfo {
+        var title: String
+        var lock: TabLockMode = .none
+        /// Whether "Lock Tab and Folder" can capture a folder right now
+        /// (false on remote/search listings — the item is disabled there).
+        var folderLockable = true
+    }
+
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
     var onNewTab: (() -> Void)?
     var onCloseOthers: ((Int) -> Void)?
     var onCloseRight: ((Int) -> Void)?
     var onToggleLock: ((Int) -> Void)?
+    var onToggleFolderLock: ((Int) -> Void)?
 
     private let stack = NSStackView()
 
     // Last configuration, so the tabs can be rebuilt (re-resolving their
     // appearance-dependent pill colors) when the effective appearance changes.
-    private var lastTitles: [String] = []
+    private var lastTabs: [TabInfo] = []
     private var lastActive = 0
-    private var lastLocked: [Bool] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -41,8 +61,8 @@ final class TabBarView: NSView {
         applyAppearanceColors()
         // Rebuild the tab pills so their snapshotted cgColor backgrounds
         // re-resolve against the new appearance.
-        if !lastTitles.isEmpty {
-            configure(titles: lastTitles, active: lastActive, locked: lastLocked)
+        if !lastTabs.isEmpty {
+            configure(tabs: lastTabs, active: lastActive)
         }
     }
 
@@ -52,18 +72,16 @@ final class TabBarView: NSView {
         }
     }
 
-    func configure(titles: [String], active: Int, locked: [Bool] = []) {
-        lastTitles = titles
+    func configure(tabs: [TabInfo], active: Int) {
+        lastTabs = tabs
         lastActive = active
-        lastLocked = locked
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (i, title) in titles.enumerated() {
-            stack.addArrangedSubview(makeTab(title: title, index: i, active: i == active,
-                                             locked: locked[safe: i] ?? false))
+        for (i, info) in tabs.enumerated() {
+            stack.addArrangedSubview(makeTab(info: info, index: i, active: i == active))
         }
     }
 
-    private func makeTab(title: String, index: Int, active: Bool, locked: Bool) -> NSView {
+    private func makeTab(info: TabInfo, index: Int, active: Bool) -> NSView {
         let tab = NSView()
         tab.wantsLayer = true
         tab.layer?.cornerRadius = 4
@@ -78,11 +96,11 @@ final class TabBarView: NSView {
         // menu to the pill AND its child buttons: an NSButton consumes its own
         // rightMouseDown (it doesn't forward up the responder chain), so the menu
         // must live on every view the click can land on.
-        let menu = buildMenu(forIndex: index, locked: locked)
+        let menu = buildMenu(forIndex: index, info: info)
         tab.menu = menu
 
         // Locked tabs show a 🔒 prefix and NO close button (full protection).
-        let label = NSButton(title: locked ? "🔒 " + title : title,
+        let label = NSButton(title: info.lock.isLocked ? "🔒 " + info.title : info.title,
                              target: self, action: #selector(tabClicked(_:)))
         label.tag = index
         label.isBordered = false
@@ -98,7 +116,7 @@ final class TabBarView: NSView {
             tab.heightAnchor.constraint(equalToConstant: 20),
             label.widthAnchor.constraint(lessThanOrEqualToConstant: 160),
         ]
-        if locked {
+        if info.lock.isLocked {
             constraints.append(label.trailingAnchor.constraint(equalTo: tab.trailingAnchor, constant: -8))
         } else {
             let close = NSButton(title: "✕", target: self, action: #selector(closeClicked(_:)))
@@ -121,17 +139,23 @@ final class TabBarView: NSView {
 
     // MARK: Context menu
 
-    private func buildMenu(forIndex index: Int, locked: Bool) -> NSMenu {
+    private func buildMenu(forIndex index: Int, info: TabInfo) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false           // else the valid target-action re-enables "Close"
         addItem(menu, tr("New Tab")) { [weak self] in self?.onNewTab?() }
         let closeItem = addItem(menu, tr("Close")) { [weak self] in self?.onClose?(index) }
-        closeItem.isEnabled = !locked           // locked tab: Close disabled (full protection)
+        closeItem.isEnabled = !info.lock.isLocked   // locked tab: Close disabled (full protection)
         menu.addItem(.separator())
         addItem(menu, tr("Close Others")) { [weak self] in self?.onCloseOthers?(index) }
         addItem(menu, tr("Close Tabs to the Right")) { [weak self] in self?.onCloseRight?(index) }
         menu.addItem(.separator())
-        addItem(menu, locked ? tr("Unlock Tab") : tr("Lock Tab")) { [weak self] in self?.onToggleLock?(index) }
+        // Two checkmark toggles: the ✓ shows the current mode, clicking the
+        // checked item unlocks, clicking the other item switches modes.
+        let plain = addItem(menu, tr("Lock Tab")) { [weak self] in self?.onToggleLock?(index) }
+        plain.state = info.lock == .plain ? .on : .off
+        let folder = addItem(menu, tr("Lock Tab and Folder")) { [weak self] in self?.onToggleFolderLock?(index) }
+        folder.state = info.lock == .folder ? .on : .off
+        folder.isEnabled = info.folderLockable || info.lock == .folder
         return menu
     }
 

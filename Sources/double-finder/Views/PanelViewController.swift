@@ -202,6 +202,7 @@ class PanelViewController: NSViewController {
         tabBar.onCloseOthers = { [weak self] i in self?.closeOtherTabs(keeping: i) }
         tabBar.onCloseRight = { [weak self] i in self?.closeTabsToRight(of: i) }
         tabBar.onToggleLock = { [weak self] i in self?.toggleTabLock(at: i) }
+        tabBar.onToggleFolderLock = { [weak self] i in self?.toggleTabFolderLock(at: i) }
         view.addSubview(tabBar)
 
         // File list view (owner-drawn)
@@ -355,11 +356,35 @@ class PanelViewController: NSViewController {
         switchToActiveTab(load: false)
     }
 
-    /// Toggle the lock state of a tab (context menu).
+    /// Toggle plain lock (context menu "Lock Tab"): close protection only.
+    /// Clicking it while folder-locked switches to plain (drops folder memory).
     func toggleTabLock(at index: Int) {
         ensureTabsInitialized()
         guard index >= 0, index < tabs.count else { return }
-        tabs[index].isLocked.toggle()
+        let state = tabs[index]
+        let wasPlain = state.isLocked && state.lockedPath == nil
+        state.isLocked = !wasPlain
+        state.lockedPath = nil
+        refreshTabBar()
+        panelDelegate?.panelViewControllerTabsDidChange(self)
+    }
+
+    /// Toggle folder lock (context menu "Lock Tab and Folder"): close
+    /// protection + re-activating the tab snaps back to the folder captured
+    /// here. Clicking it while plain-locked switches modes.
+    func toggleTabFolderLock(at index: Int) {
+        ensureTabsInitialized()
+        guard index >= 0, index < tabs.count else { return }
+        let state = tabs[index]
+        if state.lockedPath != nil {
+            state.isLocked = false
+            state.lockedPath = nil
+        } else if let folder = state.lockableFolder {
+            state.isLocked = true
+            state.lockedPath = folder
+        } else {
+            return   // no capturable folder (the menu item is disabled then)
+        }
         refreshTabBar()
         panelDelegate?.panelViewControllerTabsDidChange(self)
     }
@@ -383,13 +408,24 @@ class PanelViewController: NSViewController {
     func importTabs(_ newTabs: [PanelState], active: Int) {
         tabs = newTabs.isEmpty ? [panelState] : newTabs
         activeTab = max(0, min(active, tabs.count - 1))
-        switchToActiveTab(load: false)
+        // Panel swap (⌘U) and launch restore relocate whole tab sets — that's
+        // not a user tab switch, so folder-locked tabs keep their current path.
+        switchToActiveTab(load: false, snapLocked: false)
     }
 
-    private func switchToActiveTab(load: Bool) {
+    private func switchToActiveTab(load: Bool, snapLocked: Bool = true) {
         let state = tabs[activeTab]
+        let reactivated = state !== panelState
         rebind(to: state)
-        if load || state.items.isEmpty { state.loadDirectory() }
+        if snapLocked, reactivated, state.isLocked,
+           let locked = state.lockedPath, locked != state.currentPath {
+            // Folder-locked tab: switching back re-homes it to the folder
+            // captured at lock time (navigating while it stays active is free).
+            // navigateLocal also leaves any remote session the tab wandered into.
+            state.navigateLocal(to: locked)
+        } else if load || state.items.isEmpty {
+            state.loadDirectory()
+        }
         refreshTabBar()
         panelDelegate?.panelViewController(self, didActivateTab: state)
         panelDelegate?.panelViewControllerTabsDidChange(self)
@@ -397,8 +433,13 @@ class PanelViewController: NSViewController {
 
     private func refreshTabBar() {
         ensureTabsInitialized()
-        let titles = tabs.map { ($0.currentPath as NSString).lastPathComponent.isEmpty ? "/" : ($0.currentPath as NSString).lastPathComponent }
-        tabBar.configure(titles: titles, active: activeTab, locked: tabs.map(\.isLocked))
+        let infos = tabs.map { s in
+            TabBarView.TabInfo(
+                title: (s.currentPath as NSString).lastPathComponent.isEmpty ? "/" : (s.currentPath as NSString).lastPathComponent,
+                lock: s.lockedPath != nil ? .folder : (s.isLocked ? .plain : .none),
+                folderLockable: s.lockableFolder != nil)
+        }
+        tabBar.configure(tabs: infos, active: activeTab)
         tabBarHeightConstraint.constant = tabs.count > 1 ? 24 : 0
         tabBar.isHidden = tabs.count <= 1
     }

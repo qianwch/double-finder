@@ -23,11 +23,27 @@ class PanelState: ObservableObject {
     var history: [String] = []
     var historyIndex: Int = -1
 
-    /// Session-only tab-lock flag (a tab-UI concept, not observed via onChange —
+    /// Tab-lock flag (a tab-UI concept, not observed via onChange —
     /// PanelViewController refreshes the tab bar on toggle). Rides the PanelState
     /// object, so a locked tab stays locked across a ⌘U panel swap. Locked tabs
     /// are protected from close (no ✕, ⌘W ignores them, bulk-close skips them).
+    /// Two modes: plain lock (close protection only, `lockedPath` nil) and
+    /// folder lock (`lockedPath` set — re-activating the tab snaps back there).
     var isLocked = false
+
+    /// Folder captured when the tab was folder-locked ("Lock Tab and Folder"):
+    /// navigating inside the tab stays free, but switching away and back snaps
+    /// it home (see PanelViewController.switchToActiveTab). Persisted with the
+    /// tab set. nil = unlocked or plain lock.
+    var lockedPath: String?
+
+    /// The folder a lock should capture: the current path when it's a real
+    /// local (or local-archive) location. Remote and search-result listings
+    /// aren't restorable by path alone (the session may be gone at snap time),
+    /// so locking there protects the tab from closing but has no folder memory.
+    var lockableFolder: String? {
+        (isRemote || searchResults != nil) ? nil : currentPath
+    }
 
     /// Per-path cursor memory (path → item name), so returning to a directory
     /// restores the cursor to where it was.
