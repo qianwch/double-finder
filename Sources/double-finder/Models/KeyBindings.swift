@@ -56,6 +56,7 @@ enum AppCommand: String, CaseIterable {
     case refresh, copy, move, newDir, delete, pack, extract, find, multiRename
     case sftp, swap, branch, tree, commandLine, rename, quickLook
     case viewFull, viewBrief, viewThumbnails, filter, selectAll, newTab, closeTab
+    case openInOther, matchOther
 
     var label: String {
         switch self {
@@ -82,6 +83,8 @@ enum AppCommand: String, CaseIterable {
         case .selectAll: return "Select All"
         case .newTab: return "New Tab"
         case .closeTab: return "Close Tab"
+        case .openInOther: return "Open Folder in Other Panel"
+        case .matchOther: return "Same Folder as Active in Other Panel"
         }
     }
 
@@ -111,6 +114,8 @@ enum AppCommand: String, CaseIterable {
         case .selectAll: return "⌘A"
         case .newTab: return "⌘T"
         case .closeTab: return "⌘W"
+        case .openInOther: return "⌘⇧O"
+        case .matchOther: return "⌘="
         }
     }
 }

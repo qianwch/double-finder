@@ -200,8 +200,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         renameItem.keyEquivalentModifierMask = [.command]
         applyDefaultKeyState(renameItem, .multiRename)
         cmdMenu.addItem(renameItem)
-        cmdMenu.addItem(NSMenuItem(title: tr("Open Folder in Other Panel"), action: #selector(menuOpenInOther), keyEquivalent: ""))
-        cmdMenu.addItem(NSMenuItem(title: tr("Same Folder as Active in Other Panel"), action: #selector(menuMatchOther), keyEquivalent: ""))
+        let openOtherItem = NSMenuItem(title: tr("Open Folder in Other Panel"), action: #selector(menuOpenInOther), keyEquivalent: "o")
+        openOtherItem.keyEquivalentModifierMask = [.command, .shift]
+        applyDefaultKeyState(openOtherItem, .openInOther)
+        cmdMenu.addItem(openOtherItem)
+        // ⌘= — TC-family "target = source" (Krusader Ctrl+=). The Lister window's
+        // ⌘= zoom is untouched: its local key monitor swallows the event before
+        // menu dispatch.
+        let matchOtherItem = NSMenuItem(title: tr("Same Folder as Active in Other Panel"), action: #selector(menuMatchOther), keyEquivalent: "=")
+        matchOtherItem.keyEquivalentModifierMask = [.command]
+        applyDefaultKeyState(matchOtherItem, .matchOther)
+        cmdMenu.addItem(matchOtherItem)
         cmdMenu.addItem(.separator())
         let termItem = NSMenuItem(title: tr("Open in Terminal"), action: #selector(menuOpenTerminal), keyEquivalent: "t")
         termItem.keyEquivalentModifierMask = [.command, .shift]

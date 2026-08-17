@@ -28,6 +28,8 @@ enum HelpContent {
             Shortcut(nameKey: "Go to Folder…", keys: "⌘⇧G"),
             Shortcut(nameKey: "Focus Command Line", keys: "⌘L"),
             Shortcut(nameKey: "Swap Panels", keys: "⌘U"),
+            Shortcut(nameKey: "Open Folder in Other Panel", keys: "⌘⇧O"),
+            Shortcut(nameKey: "Same Folder as Active in Other Panel", keys: "⌘="),
             Shortcut(nameKey: "Open in Terminal", keys: "⌘⇧T"),
         ]),
         ShortcutGroup(titleKey: "Selection", shortcuts: [

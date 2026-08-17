@@ -296,6 +296,8 @@ class MainViewController: NSViewController {
         case .selectAll: activePanelVC.selectAll()
         case .newTab: activePanelVC.newTab()
         case .closeTab: activePanelVC.closeCurrentTab()
+        case .openInOther: openInOtherPanel()
+        case .matchOther: matchOtherPanelToActive()
         }
     }
 
