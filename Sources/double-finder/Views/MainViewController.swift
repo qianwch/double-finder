@@ -1539,6 +1539,7 @@ class MainViewController: NSViewController {
             self.activePanelVC.panelState.feedSearchResults(paths, base: startDir)
             self.activeFindSheet = nil
         }
+        sheet.onEdit = { [weak self] url in self?.openInEditor(url) }
         sheet.beginSheet(on: window)
     }
 

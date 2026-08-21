@@ -7,6 +7,9 @@ final class FindFilesSheet: NSWindowController {
     var onGoTo: ((String) -> Void)?
     /// Called with all current results to display them in the active panel.
     var onFeed: (([String]) -> Void)?
+    /// F4 on a result: open it in the configured editor (wired to
+    /// MainViewController.openInEditor, same app the panels' F4 uses).
+    var onEdit: ((URL) -> Void)?
 
     private let nameField = NSTextField()
     private let contentField = NSTextField()
@@ -63,6 +66,8 @@ final class FindFilesSheet: NSWindowController {
         table.allowsMultipleSelection = true
         table.target = self; table.doubleAction = #selector(openSelected)   // double-click opens the file
         table.onSpace = { [weak self] in self?.quickLookSelected() }         // Space → Quick Look
+        table.onView = { [weak self] in self?.quickLookSelected() }          // F3 → internal viewer
+        table.onEdit = { [weak self] in self?.editSelected() }               // F4 → editor
         let scroll = NSScrollView(); scroll.documentView = table
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
 
@@ -362,6 +367,18 @@ final class FindFilesSheet: NSWindowController {
         InternalViewerController.shared.show(entries: entries, start: 0, onIndexChange: nil)
     }
 
+    /// F4: open the first selected non-directory result in the editor (same
+    /// single-file semantics as the panels' F4; the sheet stays open).
+    private func editSelected() {
+        var dir: ObjCBool = false
+        let path = table.selectedRowIndexes
+            .filter { $0 < results.count && !results[$0].isEmpty }
+            .map { results[$0] }
+            .first { FileManager.default.fileExists(atPath: $0, isDirectory: &dir) && !dir.boolValue }
+        guard let path else { return }
+        onEdit?(URL(fileURLWithPath: path))
+    }
+
     /// "Feed to Panel": close the sheet and list all results in the active panel.
     @objc private func feedClicked() {
         let r = results.filter { !$0.isEmpty }   // drop duplicate-group separators
@@ -392,15 +409,18 @@ final class FindFilesSheet: NSWindowController {
     }
 }
 
-/// Results table that fires `onSpace` for the spacebar (Quick Look), while
-/// leaving arrow-key navigation and other keys to NSTableView.
+/// Results table that fires callbacks for Space (Quick Look), F3 (view) and
+/// F4 (edit), while leaving arrow-key navigation and other keys to NSTableView.
 final class ResultsTableView: NSTableView {
     var onSpace: (() -> Void)?
+    var onView: (() -> Void)?
+    var onEdit: (() -> Void)?
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 49 {        // space
-            onSpace?()
-        } else {
-            super.keyDown(with: event)
+        switch event.keyCode {
+        case 49: onSpace?()             // space
+        case 99: onView?()              // F3
+        case 118: onEdit?()             // F4
+        default: super.keyDown(with: event)
         }
     }
 }
