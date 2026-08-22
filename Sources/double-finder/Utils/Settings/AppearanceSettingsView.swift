@@ -5,6 +5,8 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
     private var appearancePopup: NSPopUpButton!
     private var fontPopup: NSPopUpButton!
     private var fontSizePopup: NSPopUpButton!
+    private var iconSizePopup: NSPopUpButton!
+    private let iconSizes: [(String, Int)] = [("Small (16)", 16), ("Medium (24)", 24), ("Large (32)", 32), ("Extra Large (40)", 40)]
     private var colorByTypeCheckbox: NSButton!
     private var editSegment: NSSegmentedControl!
     private var colorRows: [(TypeCategory, NSColorWell)] = []
@@ -50,12 +52,22 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         sizePop.target = self
         sizePop.action = #selector(changeFontSize(_:))
         self.fontSizePopup = sizePop
+
+        // --- Icon size (moved here from General: it's list appearance, same as the font) ---
+        let iconLabel = NSTextField(labelWithString: tr("Icon size:"))
+        iconLabel.alignment = .right
+        let iconPop = NSPopUpButton()
+        iconPop.addItems(withTitles: iconSizes.map { tr($0.0) })
+        iconPop.target = self
+        iconPop.action = #selector(changeIconSize(_:))
+        self.iconSizePopup = iconPop
         reloadFontPopups()
 
         let modeGrid = NSGridView(views: [
             [appLabel, appPop],
             [fontLabel, fontPop],
             [sizeLabel, sizePop],
+            [iconLabel, iconPop],
         ])
         modeGrid.column(at: 0).xPlacement = .trailing
         modeGrid.rowSpacing = 10
@@ -174,6 +186,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         let idx = AppSettings.listFontSizes.firstIndex(of: AppSettings.listFontSize)
             ?? AppSettings.listFontSizes.firstIndex(of: AppSettings.defaultListFontSize) ?? 0
         fontSizePopup.selectItem(at: idx)
+        iconSizePopup.selectItem(at: iconSizes.firstIndex { $0.1 == AppSettings.iconSize } ?? 1)
     }
 
     private func resolvedColor(for cat: TypeCategory, dark: Bool) -> NSColor {
@@ -199,6 +212,13 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
 
     @objc private func changeFont(_ s: NSPopUpButton) {
         AppSettings.listFontName = s.indexOfSelectedItem == 0 ? "" : (s.titleOfSelectedItem ?? "")
+        onChange()
+    }
+
+    @objc private func changeIconSize(_ s: NSPopUpButton) {
+        let i = s.indexOfSelectedItem
+        guard i >= 0, i < iconSizes.count else { return }
+        AppSettings.iconSize = iconSizes[i].1
         onChange()
     }
 
