@@ -24,6 +24,8 @@ class PanelViewController: NSViewController {
     private var activeTab = 0
     var fileTableView: FileListView!
     private var statusBar: NSTextField!
+    /// Status-bar "view size" slider: drives icon size + list font size together.
+    private var zoomSlider: NSSlider!
     private var headerView: AppearanceAwareView!
 
     weak var panelDelegate: PanelViewControllerDelegate?
@@ -233,6 +235,19 @@ class PanelViewController: NSViewController {
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(statusBar)
 
+        // View-size slider (right end of the status bar). One shared setting for
+        // both panels: the other panel's slider follows via syncZoomSlider().
+        zoomSlider = NSSlider(value: Double(AppSettings.iconSize),
+                              minValue: Double(AppSettings.zoomIconMin), maxValue: Double(AppSettings.zoomIconMax),
+                              target: self, action: #selector(zoomChanged(_:)))
+        zoomSlider.numberOfTickMarks = (AppSettings.zoomIconMax - AppSettings.zoomIconMin) / AppSettings.zoomIconStep + 1
+        zoomSlider.allowsTickMarkValuesOnly = true
+        zoomSlider.controlSize = .mini
+        zoomSlider.isContinuous = true
+        zoomSlider.toolTip = tr("View size")
+        zoomSlider.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(zoomSlider)
+
         guard let driveScroll = driveStack.enclosingScrollView else { return }
         driveBarHeight = driveBar.heightAnchor.constraint(equalToConstant: 26)
         driveButtonWidth = driveButton.widthAnchor.constraint(equalToConstant: 22)
@@ -281,7 +296,10 @@ class PanelViewController: NSViewController {
             filterField.bottomAnchor.constraint(equalTo: statusBar.topAnchor, constant: -1),
 
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
-            statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+            statusBar.trailingAnchor.constraint(equalTo: zoomSlider.leadingAnchor, constant: -8),
+            zoomSlider.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
+            zoomSlider.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            zoomSlider.widthAnchor.constraint(equalToConstant: 110),
             statusBar.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -2),
             statusBar.heightAnchor.constraint(equalToConstant: 16),
         ])
@@ -300,8 +318,24 @@ class PanelViewController: NSViewController {
         driveButton?.toolTip = tr("Drives")
         favoritesButton?.toolTip = tr("Favorites")
         filterField?.placeholderString = tr("Filter — type to narrow, Esc to clear")
+        zoomSlider?.toolTip = tr("View size")
         fileTableView?.relocalize()
         updateDisplay()   // re-read PanelState.statusText in the new language
+    }
+
+    // MARK: - View-size slider
+
+    @objc private func zoomChanged(_ s: NSSlider) {
+        let icon = Int(s.doubleValue.rounded())
+        guard icon != AppSettings.iconSize || AppSettings.listFontSize != AppSettings.fontSize(forIconSize: icon) else { return }
+        AppSettings.iconSize = icon
+        AppSettings.listFontSize = AppSettings.fontSize(forIconSize: icon)
+        panelDelegate?.panelViewControllerDidChangeViewZoom(self)
+    }
+
+    /// Mirrors the shared icon-size setting (other panel's slider / Settings window).
+    func syncZoomSlider() {
+        zoomSlider?.doubleValue = Double(AppSettings.iconSize)
     }
 
     // MARK: - Folder tabs
@@ -1171,6 +1205,8 @@ protocol PanelViewControllerDelegate: AnyObject {
     /// The tab set changed (new/close/select/lock) — persist it so tabs
     /// survive a crash, not just a clean quit.
     func panelViewControllerTabsDidChange(_ vc: PanelViewController)
+    /// A status-bar view-size slider moved (icon + font size, shared by both panels).
+    func panelViewControllerDidChangeViewZoom(_ vc: PanelViewController)
     /// Files were dropped onto this panel (from Finder / other apps / the other panel).
     func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool, destDir: String)
     /// Rename a large remote (S3) file via a cancelable progress sheet — a server-side

@@ -119,6 +119,13 @@ enum AppSettings {
     }
 
     static let defaultListFontSize: CGFloat = 12
+
+    /// Panel zoom slider range (icon size in points, 4pt steps).
+    static let zoomIconMin = 16, zoomIconMax = 48, zoomIconStep = 4
+
+    /// Font size the zoom slider pairs with an icon size: half the icon
+    /// (24 → 12, the defaults), never below 9pt.
+    static func fontSize(forIconSize icon: Int) -> CGFloat { max(9, (CGFloat(icon) / 2).rounded()) }
     /// Sizes offered by the Settings popup.
     static let listFontSizes: [CGFloat] = [9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
 

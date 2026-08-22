@@ -58,6 +58,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         iconLabel.alignment = .right
         let iconPop = NSPopUpButton()
         iconPop.addItems(withTitles: iconSizes.map { tr($0.0) })
+        for (i, entry) in iconSizes.enumerated() { iconPop.item(at: i)?.tag = entry.1 }
         iconPop.target = self
         iconPop.action = #selector(changeIconSize(_:))
         self.iconSizePopup = iconPop
@@ -186,7 +187,17 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         let idx = AppSettings.listFontSizes.firstIndex(of: AppSettings.listFontSize)
             ?? AppSettings.listFontSizes.firstIndex(of: AppSettings.defaultListFontSize) ?? 0
         fontSizePopup.selectItem(at: idx)
-        iconSizePopup.selectItem(at: iconSizes.firstIndex { $0.1 == AppSettings.iconSize } ?? 1)
+        let icon = AppSettings.iconSize
+        if let i = iconSizes.firstIndex(where: { $0.1 == icon }) {
+            iconSizePopup.selectItem(at: i)
+        } else {
+            // An in-between size from the panel zoom slider (e.g. 28): list it as a number.
+            if iconSizePopup.menu?.item(withTag: icon) == nil {
+                iconSizePopup.addItem(withTitle: "\(icon)")
+                iconSizePopup.lastItem?.tag = icon
+            }
+            iconSizePopup.selectItem(withTag: icon)
+        }
     }
 
     private func resolvedColor(for cat: TypeCategory, dark: Bool) -> NSColor {
@@ -216,9 +227,8 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
     }
 
     @objc private func changeIconSize(_ s: NSPopUpButton) {
-        let i = s.indexOfSelectedItem
-        guard i >= 0, i < iconSizes.count else { return }
-        AppSettings.iconSize = iconSizes[i].1
+        guard let size = s.selectedItem?.tag, size > 0 else { return }
+        AppSettings.iconSize = size
         onChange()
     }
 

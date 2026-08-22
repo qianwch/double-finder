@@ -2994,6 +2994,8 @@ class MainViewController: NSViewController {
         setViewMode(AppSettings.viewMode)
         leftPanelVC.fileTableView?.reloadLayout()
         rightPanelVC.fileTableView?.reloadLayout()
+        leftPanelVC.syncZoomSlider()
+        rightPanelVC.syncZoomSlider()
         resortPanels_menu()
         applyDriveConfig_menu()
         actionRefreshDisplay_menu()
@@ -3383,6 +3385,14 @@ extension MainViewController: PanelViewControllerDelegate {
 
     func panelViewControllerTabsDidChange(_ vc: PanelViewController) {
         saveTabs()
+    }
+
+    func panelViewControllerDidChangeViewZoom(_ vc: PanelViewController) {
+        // Lighter than reapplyAllSettings — this fires on every slider tick.
+        leftPanelVC.fileTableView?.reloadLayout()
+        rightPanelVC.fileTableView?.reloadLayout()
+        leftPanelVC.syncZoomSlider()
+        rightPanelVC.syncZoomSlider()
     }
 
     // MARK: - Tab persistence
