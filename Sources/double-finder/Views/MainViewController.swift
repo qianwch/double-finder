@@ -194,7 +194,10 @@ class MainViewController: NSViewController {
             .init(id: "swap",        symbol: "arrow.left.arrow.right", tooltip: "Swap Panels")    { [weak self] in self?.swapPanels() },
             .init(id: "branch",      symbol: "list.bullet.indent",     tooltip: "Branch View")    { [weak self] in self?.activePanelVC.panelState.toggleBranchView() },
             .init(id: "tree",        symbol: "sidebar.left",           tooltip: "Directory Tree") { [weak self] in self?.toggleDirectoryTree_menu() },
-            .init(id: "commandline", symbol: "terminal",               tooltip: "Command Line")   { [weak self] in self?.focusCommandLine() },
+            // Not "terminal": that reads as the same button as "Open in Terminal"
+            // next to it, and focusing the command line gives almost no visible
+            // feedback — users reported the terminal button "doing nothing".
+            .init(id: "commandline", symbol: "rectangle.bottomthird.inset.filled", tooltip: "Command Line") { [weak self] in self?.focusCommandLine() },
             .init(id: "terminal",    symbol: "terminal.fill",          tooltip: "Open in Terminal") { [weak self] in self?.actionOpenTerminal() },
         ]
     }
@@ -3230,19 +3233,29 @@ extension MainViewController {
     /// Opens the configured terminal app at the active panel's folder.
     @objc func actionOpenTerminal() {
         let panel = appState.activePanelState
-        guard panel.sftp == nil, PanelState.archiveRoot(in: panel.currentPath) == nil else {
-            NSSound.beep(); return   // local folders only
+        // Local folders only: S3/Android/SFTP paths and in-archive paths don't
+        // exist on disk, so `open` would fail with no visible reaction.
+        guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
+            NSSound.beep(); return
         }
+        let path = panel.currentPath
+        Self.openTerminal(AppSettings.terminalApp, at: path) { ok in
+            // `open -a` exits non-zero when the configured app was removed or
+            // renamed — fall back to Terminal rather than failing silently.
+            if !ok { Self.openTerminal("Terminal", at: path, completion: nil) }
+        }
+    }
+
+    nonisolated private static func openTerminal(_ app: String, at path: String,
+                                                 completion: (@MainActor @Sendable (Bool) -> Void)?) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        proc.arguments = ["-a", AppSettings.terminalApp, panel.currentPath]
-        do { try proc.run() } catch {
-            // Fall back to Terminal if the configured app is missing.
-            let fb = Process()
-            fb.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            fb.arguments = ["-a", "Terminal", panel.currentPath]
-            try? fb.run()
+        proc.arguments = ["-a", app, path]
+        proc.terminationHandler = { p in
+            let ok = p.terminationStatus == 0
+            Task { @MainActor in completion?(ok) }
         }
+        do { try proc.run() } catch { Task { @MainActor in completion?(false) } }
     }
 
     // MARK: - Open With (Finder-style)
