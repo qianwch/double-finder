@@ -13,6 +13,9 @@ import AppKit
 /// The view uses `FileColumnLayout` for all geometry so its columns are pixel-perfect
 /// with `FileListBodyView` which uses the same layout object.
 final class FileListHeaderView: NSView {
+    /// List font size for this panel (set by FileListView.reloadLayout; the
+    /// title draws 1pt smaller, like the meta columns).
+    var fontSize: CGFloat = AppSettings.listFontSize
 
     // MARK: - Public API
 
@@ -113,7 +116,7 @@ final class FileListHeaderView: NSView {
         // --- Text attributes (computed once) ---
         // Tracks the list font size (1pt smaller, like the meta columns) so a
         // larger list font doesn't leave a tiny header above it.
-        let titleFont = NSFont.systemFont(ofSize: max(9, AppSettings.listFontSize - 1), weight: .medium)
+        let titleFont = NSFont.systemFont(ofSize: max(9, fontSize - 1), weight: .medium)
         let titleColor = NSColor.secondaryLabelColor
         let titleAttrs: [NSAttributedString.Key: Any] = [
             .font: titleFont,

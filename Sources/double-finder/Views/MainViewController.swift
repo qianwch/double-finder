@@ -96,6 +96,8 @@ class MainViewController: NSViewController {
         leftPanelVC.isActive = true
 
         rightPanelVC = PanelViewController(panelState: appState.rightPanel)
+        leftPanelVC.side = .left
+        rightPanelVC.side = .right
         rightPanelVC.panelDelegate = self
         rightPanelVC.isActive = false
 
@@ -3389,10 +3391,13 @@ extension MainViewController: PanelViewControllerDelegate {
 
     func panelViewControllerDidChangeViewZoom(_ vc: PanelViewController) {
         // Lighter than reapplyAllSettings — this fires on every slider tick.
-        leftPanelVC.fileTableView?.reloadLayout()
-        rightPanelVC.fileTableView?.reloadLayout()
-        leftPanelVC.syncZoomSlider()
-        rightPanelVC.syncZoomSlider()
+        // Linked: both lists follow and the other slider moves in step;
+        // independent: only the panel whose slider moved.
+        let panels = AppSettings.zoomLinked ? [leftPanelVC!, rightPanelVC!] : [vc]
+        for p in panels {
+            p.fileTableView?.reloadLayout()
+            p.syncZoomSlider()
+        }
     }
 
     // MARK: - Tab persistence

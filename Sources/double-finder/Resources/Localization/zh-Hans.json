@@ -527,5 +527,7 @@
   "Font size:": "字号：",
   "System Font": "系统字体",
   "Choose": "选择",
-  "View size": "视图大小"
+  "View size": "视图大小",
+  "Panels change view size together": "两侧面板同步视图大小",
+  "Off: each panel's status-bar slider sizes only that panel": "关闭后，每侧状态栏的滑块只调整本侧面板"
 }

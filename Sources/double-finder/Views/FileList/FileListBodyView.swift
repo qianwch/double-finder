@@ -112,6 +112,9 @@ final class FileListBodyView: NSView {
 
     // MARK: - Private state
 
+    /// Which panel this list belongs to (per-panel view size when sizes are unlinked).
+    var side: PanelSide = .left { didSet { if side != oldValue { reloadLayout(); needsDisplay = true } } }
+
     /// Icon size in points — cached once so draw/per-row never touches UserDefaults.
     private(set) var iconSizePoints: CGFloat = CGFloat(AppSettings.iconSize)
 
@@ -157,22 +160,23 @@ final class FileListBodyView: NSView {
 
     /// Refreshes cached layout values and resizes the frame.
     func reloadLayout() {
-        iconSizePoints = CGFloat(AppSettings.iconSize)
+        iconSizePoints = CGFloat(AppSettings.iconSize(for: side))
         // `items` assignment lands here too; only re-resolve fonts (NSFontManager
         // lookups) when the setting actually changed.
-        let key = "\(AppSettings.listFontName)|\(AppSettings.listFontSize)"
+        let size = AppSettings.listFontSize(for: side)
+        let key = "\(AppSettings.listFontName)|\(size)"
         if key != fontKey {
             fontKey = key
-            nameFont = AppSettings.listFont()
-            nameFontBold = AppSettings.listFont(bold: true)
-            metaFont = AppSettings.listFont(delta: -1, monoDigits: true)
+            nameFont = AppSettings.listFont(size: size)
+            nameFontBold = AppSettings.listFont(size: size, bold: true)
+            metaFont = AppSettings.listFont(size: size, delta: -1, monoDigits: true)
             nameLineHeight = AppSettings.lineHeight(of: nameFont)
             metaLineHeight = AppSettings.lineHeight(of: metaFont)
         }
         geometry = makeGeometry()
         resizeFrame()
     }
-    private var fontKey = "\(AppSettings.listFontName)|\(AppSettings.listFontSize)"
+    private var fontKey = ""   // forces the first reloadLayout to resolve fonts
 
     private func makeGeometry() -> FileRowGeometry {
         FileRowGeometry(mode: viewMode, iconSize: iconSizePoints, textHeight: nameLineHeight)

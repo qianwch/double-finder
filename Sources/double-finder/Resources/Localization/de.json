@@ -527,5 +527,7 @@
   "Font size:": "Schriftgröße:",
   "System Font": "Systemschrift",
   "Choose": "Auswählen",
-  "View size": "Ansichtsgröße"
+  "View size": "Ansichtsgröße",
+  "Panels change view size together": "Ansichtsgröße beider Panels gekoppelt",
+  "Off: each panel's status-bar slider sizes only that panel": "Aus: Der Regler jedes Panels ändert nur dieses Panel"
 }

@@ -527,5 +527,7 @@
   "Font size:": "Taille de police :",
   "System Font": "Police système",
   "Choose": "Choisir",
-  "View size": "Taille d’affichage"
+  "View size": "Taille d’affichage",
+  "Panels change view size together": "Taille d’affichage liée pour les deux panneaux",
+  "Off: each panel's status-bar slider sizes only that panel": "Désactivé : le curseur de chaque panneau n’agit que sur lui"
 }

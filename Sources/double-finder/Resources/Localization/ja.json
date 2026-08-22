@@ -527,5 +527,7 @@
   "Font size:": "フォントサイズ：",
   "System Font": "システムフォント",
   "Choose": "選択",
-  "View size": "表示サイズ"
+  "View size": "表示サイズ",
+  "Panels change view size together": "両パネルの表示サイズを連動",
+  "Off: each panel's status-bar slider sizes only that panel": "オフ：各パネルのスライダーはそのパネルだけを変更"
 }

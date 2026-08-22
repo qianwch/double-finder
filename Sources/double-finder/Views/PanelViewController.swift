@@ -26,6 +26,11 @@ class PanelViewController: NSViewController {
     private var statusBar: NSTextField!
     /// Status-bar "view size" slider: drives icon size + list font size together.
     private var zoomSlider: NSSlider!
+
+    /// Left or right panel — keys the per-panel view size (set by MainViewController).
+    var side: PanelSide = .left {
+        didSet { fileTableView?.side = side; syncZoomSlider() }
+    }
     private var headerView: AppearanceAwareView!
 
     weak var panelDelegate: PanelViewControllerDelegate?
@@ -327,15 +332,15 @@ class PanelViewController: NSViewController {
 
     @objc private func zoomChanged(_ s: NSSlider) {
         let icon = Int(s.doubleValue.rounded())
-        guard icon != AppSettings.iconSize || AppSettings.listFontSize != AppSettings.fontSize(forIconSize: icon) else { return }
-        AppSettings.iconSize = icon
-        AppSettings.listFontSize = AppSettings.fontSize(forIconSize: icon)
+        guard icon != AppSettings.iconSize(for: side)
+                || AppSettings.listFontSize(for: side) != AppSettings.fontSize(forIconSize: icon) else { return }
+        AppSettings.setViewZoom(icon: icon, side: side)
         panelDelegate?.panelViewControllerDidChangeViewZoom(self)
     }
 
-    /// Mirrors the shared icon-size setting (other panel's slider / Settings window).
+    /// Mirrors this panel's effective icon size (shared value when linked).
     func syncZoomSlider() {
-        zoomSlider?.doubleValue = Double(AppSettings.iconSize)
+        zoomSlider?.doubleValue = Double(AppSettings.iconSize(for: side))
     }
 
     // MARK: - Folder tabs

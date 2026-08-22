@@ -22,14 +22,19 @@ final class FileListView: NSScrollView {
     let headerView: FileListHeaderView
 
     /// Grows with the list font so the header text never gets clipped.
-    private static var headerHeight: CGFloat { max(22, AppSettings.listFontSize + 10) }
+    private var headerHeight: CGFloat { max(22, AppSettings.listFontSize(for: side) + 10) }
+
+    /// Which panel this list belongs to; forwarded to body + header sizing.
+    var side: PanelSide = .left {
+        didSet { body.side = side; reloadLayout() }
+    }
 
     // MARK: - Initialiser
 
     override init(frame frameRect: NSRect) {
         body = FileListBodyView(frame: NSRect(x: 0, y: 0, width: frameRect.width, height: 10))
         headerView = FileListHeaderView(
-            frame: NSRect(x: 0, y: 0, width: frameRect.width, height: Self.headerHeight)
+            frame: NSRect(x: 0, y: 0, width: frameRect.width, height: max(22, AppSettings.listFontSize + 10))
         )
         super.init(frame: frameRect)
 
@@ -86,7 +91,7 @@ final class FileListView: NSScrollView {
 
     /// Positions the header at the very top of the scroll view bounds (full-width, fixed height).
     private func positionHeader() {
-        let h = Self.headerHeight
+        let h = headerHeight
         headerView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: h)
     }
 
@@ -95,7 +100,7 @@ final class FileListView: NSScrollView {
         let showHeader = (body.viewMode == .full)
         headerView.isHidden = !showHeader
         if showHeader {
-            contentInsets = NSEdgeInsets(top: Self.headerHeight, left: 0, bottom: 0, right: 0)
+            contentInsets = NSEdgeInsets(top: headerHeight, left: 0, bottom: 0, right: 0)
         } else {
             contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         }
@@ -247,6 +252,7 @@ final class FileListView: NSScrollView {
     // --- Layout reload (mirrors FileTableView.reloadLayout) ---
 
     func reloadLayout() {
+        headerView.fontSize = AppSettings.listFontSize(for: side)
         body.reloadLayout()
         positionHeader()     // header height follows the list font size
         applyViewMode()      // …and so does the content inset below it

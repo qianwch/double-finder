@@ -126,6 +126,49 @@ enum AppSettings {
     /// Font size the zoom slider pairs with an icon size: half the icon
     /// (24 → 12, the defaults), never below 9pt.
     static func fontSize(forIconSize icon: Int) -> CGFloat { max(9, (CGFloat(icon) / 2).rounded()) }
+
+    // MARK: - Per-panel view size
+
+    /// Settings ▸ Appearance "Panels change view size together". On (default):
+    /// one shared icon/font size. Off: each panel keeps its own pair
+    /// (Left/RightIconSize, Left/RightListFontSize), falling back to the shared
+    /// values until its slider is moved.
+    static var zoomLinked: Bool {
+        get { UserDefaults.standard.object(forKey: "ZoomLinked") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "ZoomLinked") }
+    }
+
+    static func iconSize(for side: PanelSide) -> Int {
+        if zoomLinked { return iconSize }
+        let v = UserDefaults.standard.integer(forKey: side.prefix + "IconSize")
+        return v > 0 ? v : iconSize
+    }
+
+    static func listFontSize(for side: PanelSide) -> CGFloat {
+        if zoomLinked { return listFontSize }
+        let v = UserDefaults.standard.double(forKey: side.prefix + "ListFontSize")
+        return v > 0 ? CGFloat(v) : listFontSize
+    }
+
+    /// Slider write: shared values when linked, this side's pair otherwise.
+    static func setViewZoom(icon: Int, side: PanelSide) {
+        let font = fontSize(forIconSize: icon)
+        if zoomLinked {
+            iconSize = icon; listFontSize = font
+        } else {
+            UserDefaults.standard.set(icon, forKey: side.prefix + "IconSize")
+            UserDefaults.standard.set(Double(font), forKey: side.prefix + "ListFontSize")
+        }
+    }
+
+    /// Drops both panels' private sizes so they fall back to the shared values
+    /// (Settings popups act as the global reset while sizes are independent).
+    static func clearPanelZoom() {
+        for side in [PanelSide.left, .right] {
+            UserDefaults.standard.removeObject(forKey: side.prefix + "IconSize")
+            UserDefaults.standard.removeObject(forKey: side.prefix + "ListFontSize")
+        }
+    }
     /// Sizes offered by the Settings popup.
     static let listFontSizes: [CGFloat] = [9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
 
@@ -141,8 +184,8 @@ enum AppSettings {
     /// Resolves the configured list font. `delta` offsets the size, `monoDigits`
     /// asks for tabular figures (sizes/dates line up). Falls back to the system
     /// font when the family is gone, so a stale setting never blanks the list.
-    static func listFont(bold: Bool = false, delta: CGFloat = 0, monoDigits: Bool = false) -> NSFont {
-        let size = max(6, listFontSize + delta)
+    static func listFont(size base: CGFloat? = nil, bold: Bool = false, delta: CGFloat = 0, monoDigits: Bool = false) -> NSFont {
+        let size = max(6, (base ?? listFontSize) + delta)
         let family = listFontName
         if family.isEmpty {
             if monoDigits { return .monospacedDigitSystemFont(ofSize: size, weight: bold ? .bold : .regular) }
@@ -339,4 +382,10 @@ enum FileTypeColor {
             return AppSettings.typeColor(for: cat, dark: isDark) ?? cat.defaultColor(dark: isDark)
         }
     }
+}
+
+/// Which panel a view belongs to — keys per-panel settings (view size).
+enum PanelSide {
+    case left, right
+    var prefix: String { self == .left ? "Left" : "Right" }
 }

@@ -527,5 +527,7 @@
   "Font size:": "글꼴 크기:",
   "System Font": "시스템 글꼴",
   "Choose": "선택",
-  "View size": "보기 크기"
+  "View size": "보기 크기",
+  "Panels change view size together": "양쪽 패널 보기 크기 연동",
+  "Off: each panel's status-bar slider sizes only that panel": "끄면 각 패널의 슬라이더가 해당 패널만 조절"
 }

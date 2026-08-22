@@ -6,6 +6,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
     private var fontPopup: NSPopUpButton!
     private var fontSizePopup: NSPopUpButton!
     private var iconSizePopup: NSPopUpButton!
+    private var zoomLinkedCheckbox: NSButton!
     private let iconSizes: [(String, Int)] = [("Small (16)", 16), ("Medium (24)", 24), ("Large (32)", 32), ("Extra Large (40)", 40)]
     private var colorByTypeCheckbox: NSButton!
     private var editSegment: NSSegmentedControl!
@@ -64,11 +65,19 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         self.iconSizePopup = iconPop
         reloadFontPopups()
 
+        // --- Linked / independent view size ---
+        let linkBox = NSButton(checkboxWithTitle: tr("Panels change view size together"),
+                               target: self, action: #selector(toggleZoomLinked(_:)))
+        linkBox.state = AppSettings.zoomLinked ? .on : .off
+        linkBox.toolTip = tr("Off: each panel's status-bar slider sizes only that panel")
+        self.zoomLinkedCheckbox = linkBox
+
         let modeGrid = NSGridView(views: [
             [appLabel, appPop],
             [fontLabel, fontPop],
             [sizeLabel, sizePop],
             [iconLabel, iconPop],
+            [NSGridCell.emptyContentView, linkBox],
         ])
         modeGrid.column(at: 0).xPlacement = .trailing
         modeGrid.rowSpacing = 10
@@ -217,6 +226,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
             appearancePopup.selectItem(at: idx)
         }
         colorByTypeCheckbox.state = AppSettings.colorByType ? .on : .off
+        zoomLinkedCheckbox.state = AppSettings.zoomLinked ? .on : .off
         reloadFontPopups()
         reloadWells()
     }
@@ -226,9 +236,19 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         onChange()
     }
 
+    @objc private func toggleZoomLinked(_ s: NSButton) {
+        AppSettings.zoomLinked = (s.state == .on)
+        // Re-linking: both panels snap to the shared values.
+        if AppSettings.zoomLinked { AppSettings.clearPanelZoom() }
+        onChange()
+    }
+
+    /// The popups edit the shared values. While sizes are independent they
+    /// double as the global reset: both panels drop their private sizes.
     @objc private func changeIconSize(_ s: NSPopUpButton) {
         guard let size = s.selectedItem?.tag, size > 0 else { return }
         AppSettings.iconSize = size
+        AppSettings.clearPanelZoom()
         onChange()
     }
 
@@ -236,6 +256,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         let i = s.indexOfSelectedItem
         guard i >= 0, i < AppSettings.listFontSizes.count else { return }
         AppSettings.listFontSize = AppSettings.listFontSizes[i]
+        AppSettings.clearPanelZoom()
         onChange()
     }
 
