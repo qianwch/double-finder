@@ -80,6 +80,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
             [NSGridCell.emptyContentView, linkBox],
         ])
         modeGrid.column(at: 0).xPlacement = .trailing
+        modeGrid.yPlacement = .center   // labels centred on their popups/checkboxes
         modeGrid.rowSpacing = 10
         modeGrid.columnSpacing = 8
         modeGrid.translatesAutoresizingMaskIntoConstraints = false
@@ -131,6 +132,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
 
         let colorGrid = NSGridView(views: wellRows)
         colorGrid.column(at: 0).xPlacement = .trailing
+        colorGrid.yPlacement = .center   // labels centred on their popups/checkboxes
         colorGrid.rowSpacing = 8
         colorGrid.columnSpacing = 8
         colorGrid.translatesAutoresizingMaskIntoConstraints = false

@@ -36,6 +36,7 @@ final class PanelsSettingsView: NSView {
             grid.topAnchor.constraint(equalTo: topAnchor, constant: 20),
             grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
         ])
+        grid.yPlacement = .center   // labels centred on their controls
     }
 
     required init?(coder: NSCoder) { fatalError() }

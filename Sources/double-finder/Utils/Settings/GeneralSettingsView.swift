@@ -120,6 +120,7 @@ final class GeneralSettingsView: NSView {
             [NSTextField(labelWithString: tr("Editor app:")), editorPop],
         ])
         grid.column(at: 0).xPlacement = .trailing
+        grid.yPlacement = .center   // labels centred on their popups/checkboxes
         grid.rowSpacing = 10; grid.columnSpacing = 8
         // Full-width checkbox rows (folders-first = row 3, confirm-trash = row 4) span both columns.
         grid.translatesAutoresizingMaskIntoConstraints = false
