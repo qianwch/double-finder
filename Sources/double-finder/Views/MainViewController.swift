@@ -2810,6 +2810,16 @@ class MainViewController: NSViewController {
         let r = rightPanelVC.exportTabs()
         leftPanelVC.importTabs(r.0, active: r.1)
         rightPanelVC.importTabs(l.0, active: l.1)
+        // Quick View: swapping only the contents leaves the active side where it
+        // is, so the user sees their own list replaced by the other panel's tabs
+        // (looks like a tab switch) while the preview never moves. Move the
+        // active side too: the list travels to the other side with its tabs and
+        // the preview overlay takes its place.
+        if quickViewPane != nil {
+            switchPanel()
+            quickViewLastPath = nil
+            updateQuickView()
+        }
     }
 
     /// Points the inactive panel at the active panel's current folder. When the
