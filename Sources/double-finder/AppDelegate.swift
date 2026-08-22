@@ -321,6 +321,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item.state = (name == current) ? .on : .off
                 menu.addItem(item)
             }
+            if AppSettings.isAppPath(current) {   // hand-picked app: list it by name, checked
+                let item = NSMenuItem(title: AppSettings.appDisplayName(current),
+                                      action: #selector(menuSetTerminalApp(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = current
+                item.state = .on
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            let other = NSMenuItem(title: tr("Other…"), action: #selector(menuChooseTerminalApp), keyEquivalent: "")
+            other.target = self
+            menu.addItem(other)
             return
         }
         guard menu === favoritesMenu else { return }
@@ -479,6 +491,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuOpenTerminal() { mainVC()?.actionOpenTerminal() }
     @objc private func menuSetTerminalApp(_ sender: NSMenuItem) {
         if let name = sender.representedObject as? String { mainVC()?.setTerminalApp(name) }
+    }
+    @objc private func menuChooseTerminalApp() {
+        guard let picked = GeneralSettingsView.pickApplication() else { return }
+        let installed = mainVC()?.installedTerminals() ?? []
+        mainVC()?.setTerminalApp(AppSettings.normalizedAppValue(picked, candidates: installed))
     }
     @objc private func menuCustomizeShortcuts() {
         mainVC()?.perform(#selector(MainViewController.customizeShortcuts_menu))

@@ -525,5 +525,6 @@
   "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ est connecté mais monopolisé par %@. Quittez ce programme (Chrome doit être quitté complètement), puis cliquez sur « Actualiser ».",
   "List font:": "Police de la liste :",
   "Font size:": "Taille de police :",
-  "System Font": "Police système"
+  "System Font": "Police système",
+  "Choose": "Choisir"
 }

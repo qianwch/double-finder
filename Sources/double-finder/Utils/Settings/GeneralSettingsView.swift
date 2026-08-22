@@ -5,6 +5,68 @@ import AppKit
 /// here; icon size lives in Appearance next to the list font.)
 final class GeneralSettingsView: NSView {
     private let onChange: () -> Void
+    private var terminalPopup: NSPopUpButton!
+    private var editorPopup: NSPopUpButton!
+    private var terminalNames: [String] = []
+    private var editorNames: [String] = []
+
+    /// Tag of the trailing "Other…" item in the app popups.
+    private static let otherTag = 0x07E4
+
+    /// Builds an app popup: the fixed (title, stored value) entries, then — when
+    /// the current value is a hand-picked .app path — that app by name, then
+    /// "Other…". `representedObject` carries the stored value.
+    static func fillAppPopup(_ pop: NSPopUpButton, fixed: [(String, String)], current: String) {
+        pop.removeAllItems()
+        for (title, value) in fixed {
+            pop.addItem(withTitle: title)
+            pop.lastItem?.representedObject = value
+        }
+        if AppSettings.isAppPath(current) {
+            pop.addItem(withTitle: AppSettings.appDisplayName(current))
+            pop.lastItem?.representedObject = current
+        }
+        pop.menu?.addItem(.separator())
+        pop.addItem(withTitle: tr("Other…"))
+        pop.lastItem?.tag = otherTag
+        if let i = pop.itemArray.firstIndex(where: { ($0.representedObject as? String) == current }) {
+            pop.selectItem(at: i)
+        } else {
+            pop.selectItem(at: 0)
+        }
+    }
+
+    /// Standard app chooser (⁠/Applications, .app bundles only). Returns the
+    /// bundle path, or nil when cancelled.
+    static func pickApplication() -> String? {
+        let panel = NSOpenPanel()
+        panel.title = tr("Choose Application")
+        panel.prompt = tr("Choose")
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+
+    /// Shared popup handler: "Other…" opens the chooser and rebuilds the popup
+    /// (or restores the previous selection on cancel); anything else stores
+    /// the item's value.
+    private func handleAppPopup(_ pop: NSPopUpButton, fixed: [(String, String)],
+                                current: String, store: (String) -> Void) {
+        if pop.selectedItem?.tag == Self.otherTag {
+            if let picked = Self.pickApplication() {
+                let path = AppSettings.normalizedAppValue(picked, candidates: fixed.map { $0.1 })
+                store(path)
+                Self.fillAppPopup(pop, fixed: fixed, current: path)
+            } else {
+                Self.fillAppPopup(pop, fixed: fixed, current: current)
+            }
+            return
+        }
+        if let value = pop.selectedItem?.representedObject as? String { store(value) }
+    }
 
     init(onChange: @escaping () -> Void, terminals: [String], editors: [String] = []) {
         self.onChange = onChange
@@ -31,24 +93,20 @@ final class GeneralSettingsView: NSView {
         let trashBox = NSButton(checkboxWithTitle: tr("Confirm before moving to Trash (⌘⌫)"), target: self, action: #selector(toggleConfirmTrash(_:)))
         trashBox.state = AppSettings.confirmTrash ? .on : .off
 
-        // Terminal app
+        // Terminal app: installed candidates + "Other…" (pick any .app by hand).
         let termPop = NSPopUpButton()
-        termPop.addItems(withTitles: terminals)
-        termPop.selectItem(withTitle: AppSettings.terminalApp)
-        if termPop.indexOfSelectedItem < 0 { termPop.selectItem(at: 0) }
+        self.terminalNames = terminals
+        Self.fillAppPopup(termPop, fixed: terminals.map { ($0, $0) }, current: AppSettings.terminalApp)
         termPop.target = self; termPop.action = #selector(changeTerminal(_:))
+        self.terminalPopup = termPop
 
         // Editor app (F4). First entry is "System Default" → stored as "".
         let editorPop = NSPopUpButton()
-        editorPop.addItem(withTitle: tr("System Default"))
-        editorPop.addItems(withTitles: editors)
-        if AppSettings.editorApp.isEmpty {
-            editorPop.selectItem(at: 0)
-        } else {
-            editorPop.selectItem(withTitle: AppSettings.editorApp)
-            if editorPop.indexOfSelectedItem < 0 { editorPop.selectItem(at: 0) }
-        }
+        self.editorNames = editors
+        Self.fillAppPopup(editorPop, fixed: [(tr("System Default"), "")] + editors.map { ($0, $0) },
+                          current: AppSettings.editorApp)
         editorPop.target = self; editorPop.action = #selector(changeEditor(_:))
+        self.editorPopup = editorPop
 
         let grid = NSGridView(views: [
             [NSTextField(labelWithString: tr("Language:")), langPop],
@@ -82,9 +140,16 @@ final class GeneralSettingsView: NSView {
     }
     @objc private func toggleFolders(_ s: NSButton) { AppSettings.foldersFirst = (s.state == .on); onChange() }
     @objc private func toggleConfirmTrash(_ s: NSButton) { AppSettings.confirmTrash = (s.state == .on) }
-    @objc private func changeTerminal(_ s: NSPopUpButton) { AppSettings.terminalApp = s.titleOfSelectedItem ?? "Terminal" }
-    /// Index 0 ("System Default") stores "" — openInEditor falls back to NSWorkspace.open.
+    @objc private func changeTerminal(_ s: NSPopUpButton) {
+        handleAppPopup(s, fixed: terminalNames.map { ($0, $0) }, current: AppSettings.terminalApp) {
+            AppSettings.terminalApp = $0
+        }
+    }
+    /// "System Default" stores "" — openInEditor falls back to NSWorkspace.open.
     @objc private func changeEditor(_ s: NSPopUpButton) {
-        AppSettings.editorApp = s.indexOfSelectedItem <= 0 ? "" : (s.titleOfSelectedItem ?? "")
+        handleAppPopup(s, fixed: [(tr("System Default"), "")] + editorNames.map { ($0, $0) },
+                       current: AppSettings.editorApp) {
+            AppSettings.editorApp = $0
+        }
     }
 }

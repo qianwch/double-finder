@@ -525,5 +525,6 @@
   "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@이(가) 연결되어 있지만 %@이(가) 점유 중입니다. 해당 프로그램을 종료한 후(Chrome은 완전히 종료해야 함) '새로 고침'을 누르세요.",
   "List font:": "목록 글꼴:",
   "Font size:": "글꼴 크기:",
-  "System Font": "시스템 글꼴"
+  "System Font": "시스템 글꼴",
+  "Choose": "선택"
 }

@@ -525,5 +525,6 @@
   "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ は接続されていますが、%@ が使用中です。そのプログラムを終了し（Chrome は完全に終了する必要があります）、「更新」を押してください。",
   "List font:": "リストのフォント：",
   "Font size:": "フォントサイズ：",
-  "System Font": "システムフォント"
+  "System Font": "システムフォント",
+  "Choose": "選択"
 }

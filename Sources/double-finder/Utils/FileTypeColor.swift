@@ -70,6 +70,22 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "EditorApp") }
     }
 
+    /// Terminal/editor values are either a candidate name ("iTerm") or, for an
+    /// app picked by hand, the full `.app` path. `open -a` accepts both.
+    static func isAppPath(_ value: String) -> Bool { value.hasPrefix("/") }
+
+    /// Name to show for a stored terminal/editor value.
+    static func appDisplayName(_ value: String) -> String {
+        isAppPath(value) ? ((value as NSString).lastPathComponent as NSString).deletingPathExtension : value
+    }
+
+    /// A hand-picked .app whose name is already a candidate is stored by name,
+    /// so the popups/menus don't list "Terminal" twice.
+    static func normalizedAppValue(_ path: String, candidates: [String]) -> String {
+        let name = appDisplayName(path)
+        return candidates.contains(name) ? name : path
+    }
+
     /// Show the drive dropdown button on the left of each panel's path bar.
     static var showDriveDropdown: Bool {
         get { UserDefaults.standard.object(forKey: "ShowDriveDropdown") as? Bool ?? true }

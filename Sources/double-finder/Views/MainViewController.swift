@@ -1085,6 +1085,11 @@ class MainViewController: NSViewController {
     /// (F4 over SFTP/S3) editing.
     private func openInEditor(_ url: URL) {
         let name = AppSettings.editorApp
+        if AppSettings.isAppPath(name), FileManager.default.fileExists(atPath: name) {
+            NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: name),
+                                    configuration: NSWorkspace.OpenConfiguration())
+            return
+        }
         if !name.isEmpty,
            let bundleID = Self.editorCandidates.first(where: { $0.name == name })?.bundleID,
            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {

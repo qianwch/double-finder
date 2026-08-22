@@ -525,5 +525,6 @@
   "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ ist angeschlossen, wird aber von %@ belegt. Beenden Sie dieses Programm (Chrome muss vollständig beendet werden) und klicken Sie auf „Aktualisieren“.",
   "List font:": "Listenschrift:",
   "Font size:": "Schriftgröße:",
-  "System Font": "Systemschrift"
+  "System Font": "Systemschrift",
+  "Choose": "Auswählen"
 }

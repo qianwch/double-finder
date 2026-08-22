@@ -525,5 +525,6 @@
   "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ 已连接，但被 %@ 占用。请退出该程序（Chrome 必须完全退出），然后点「刷新」。",
   "List font:": "列表字体：",
   "Font size:": "字号：",
-  "System Font": "系统字体"
+  "System Font": "系统字体",
+  "Choose": "选择"
 }
