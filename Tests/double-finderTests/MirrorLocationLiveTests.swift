@@ -8,14 +8,30 @@ import XCTest
 /// `SFTP_LIVE=1`. Run with:
 ///   SFTP_LIVE=1 swift test --filter MirrorLocationLiveTests
 ///
-/// Assumes the test server (see CLAUDE.md §7) is reachable and that
-/// `/home/ubuntu/df_test_sub` exists with `file_a.txt` and `inner/`.
+/// Assumes the test server (see CLAUDE.md §7) is reachable. The fixture
+/// `/home/ubuntu/df_test_sub` (`file_a.txt` + `inner/`) is created in setUp and
+/// removed in tearDown, so the test is self-contained on any server.
 @MainActor
 final class MirrorLocationLiveTests: XCTestCase {
 
     private let conn = SFTPConnection(
         host: "10.17.20.55", user: "ubuntu", port: 22,
         keyPath: "~/.ssh/id_rsa", remotePath: "/home/ubuntu", name: "df-test")
+
+    private var live: Bool { ProcessInfo.processInfo.environment["SFTP_LIVE"] == "1" }
+    private let fixture = "/home/ubuntu/df_test_sub"
+
+    override func setUp() async throws {
+        try await super.setUp()
+        guard live else { return }
+        _ = try await SFTPFS(connection: conn)
+            .runCommand("mkdir -p '\(fixture)/inner' && touch '\(fixture)/file_a.txt'")
+    }
+
+    override func tearDown() async throws {
+        if live { _ = try? await SFTPFS(connection: conn).runCommand("rm -rf '\(fixture)'") }
+        try await super.tearDown()
+    }
 
     /// Polls a panel's items (loaded asynchronously) until non-empty or timeout.
     private func waitForItems(_ panel: PanelState, timeout: TimeInterval = 20) async throws {
