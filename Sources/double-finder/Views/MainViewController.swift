@@ -3116,6 +3116,12 @@ extension MainViewController {
         activePanelVC.selectAll()
         activePanelVC.updateDisplay()
     }
+
+    /// Edit ▸ Select All is wired to the responder chain (`selectAll:`, nil
+    /// target) so a focused text field — sheet name box, path bar, command line,
+    /// inline rename — selects its own text. When the file list has focus the
+    /// chain lands here and selects every file instead.
+    override func selectAll(_ sender: Any?) { actionSelectAll_menu() }
     @objc func actionDeselectAll_menu() { activePanelVC.clearSelection() }
     @objc func actionSelectPattern_menu() { actionSelectByPattern(select: true) }
     @objc func actionUnselectPattern_menu() { actionSelectByPattern(select: false) }

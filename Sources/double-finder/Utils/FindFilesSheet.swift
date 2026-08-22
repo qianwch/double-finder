@@ -79,6 +79,7 @@ final class FindFilesSheet: NSWindowController {
         let goBtn = NSButton(title: tr("Go to File"), target: self, action: #selector(goToSelected))
         goBtn.bezelStyle = .rounded
         let closeBtn = NSButton(title: tr("Close"), target: self, action: #selector(closeClicked))
+        closeBtn.keyEquivalent = "\u{1b}"          // Esc closes the sheet (macOS/TC convention)
         closeBtn.bezelStyle = .rounded
 
         let views: [NSView] = [nameLbl, nameField, contentLbl, contentField, subfoldersCheck,

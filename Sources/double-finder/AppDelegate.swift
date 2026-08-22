@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var appState: AppState!
     private weak var favoritesMenu: NSMenu?
     private weak var terminalAppMenu: NSMenu?
+    private var helpKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = AppIconRenderer.image(pixels: 512)
@@ -39,6 +40,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(languageDidChange),
             name: .localizerDidChange, object: nil)
+
+        // ⌘? opens the Help window. The system claims ⌘? for the Help menu's
+        // search field ahead of menu key equivalents, so intercept it here —
+        // only while the main window is key, so sheets/panels keep the default.
+        helpKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.keyCode == 44,
+                  event.modifierFlags.intersection([.command, .shift, .control, .option]) == [.command, .shift],
+                  NSApp.keyWindow === self.windowController.window else { return event }
+            self.menuShowHelp()
+            return nil
+        }
     }
 
     @MainActor @objc private func appBecameActive() {
@@ -141,7 +153,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         copyPathItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(copyPathItem)
         editMenu.addItem(.separator())
-        let selectAllItem = NSMenuItem(title: tr("Select All"), action: #selector(menuSelectAll), keyEquivalent: "a")
+        // nil target: selectAll: walks the responder chain (text field → its text;
+        // file list → MainViewController.selectAll). A direct mainVC call used to
+        // select every FILE while the user was typing ⌘A in a sheet's text box.
+        let selectAllItem = NSMenuItem(title: tr("Select All"), action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a")
         applyDefaultKeyState(selectAllItem, .selectAll)
         editMenu.addItem(selectAllItem)
         let deselectItem = NSMenuItem(title: tr("Deselect All"), action: #selector(menuDeselectAll), keyEquivalent: "a")
@@ -292,6 +307,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(helpMenuItem)
         let helpMenu = NSMenu(title: tr("Help"))
         helpMenuItem.submenu = helpMenu
+        // Shown as ⌘? for reference only: macOS routes ⌘? to the Help menu's own
+        // search field before any item's key equivalent is consulted, so the
+        // actual shortcut is the local key monitor installed in
+        // applicationDidFinishLaunching (helpKeyMonitor).
         helpMenu.addItem(NSMenuItem(title: tr("Double Finder Help"),
                                     action: #selector(menuShowHelp), keyEquivalent: "?"))
         helpMenu.addItem(.separator())
@@ -387,9 +406,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuCopyPath() {
         mainVC()?.perform(#selector(MainViewController.actionCopyPath_menu))
     }
-    @objc private func menuSelectAll() {
-        mainVC()?.perform(#selector(MainViewController.actionSelectAll_menu))
-    }
     @objc private func menuDeselectAll() {
         mainVC()?.perform(#selector(MainViewController.actionDeselectAll_menu))
     }
@@ -477,7 +493,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuCompareDirs() { mainVC()?.actionCompareDirectories() }
     @objc private func menuSyncDirs() { mainVC()?.actionSynchronize() }
     @objc private func menuNewTab() { mainVC()?.activePanelVC.newTab() }
-    @objc private func menuCloseTab() { mainVC()?.activePanelVC.closeCurrentTab() }
+    /// ⌘W: close the current tab — but when an auxiliary window (Settings, Help,
+    /// viewer, compare…) is key, close THAT window instead, as users expect.
+    @objc private func menuCloseTab() {
+        if let key = NSApp.keyWindow, key !== windowController.window, key.sheetParent == nil {
+            key.performClose(nil); return
+        }
+        mainVC()?.activePanelVC.closeCurrentTab()
+    }
     @objc private func menuSwapPanels() { mainVC()?.swapPanels() }
     @objc private func menuOpenInOther() { mainVC()?.openInOtherPanel() }
     @objc private func menuMatchOther() { mainVC()?.matchOtherPanelToActive() }
