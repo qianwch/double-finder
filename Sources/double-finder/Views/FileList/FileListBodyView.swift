@@ -94,7 +94,7 @@ final class FileListBodyView: NSView {
         didSet {
             if viewMode != oldValue {
                 iconSizePoints = CGFloat(AppSettings.iconSize)
-                geometry = FileRowGeometry(mode: viewMode, iconSize: iconSizePoints)
+                geometry = makeGeometry()
                 resizeFrame()
                 needsDisplay = true
             }
@@ -115,6 +115,14 @@ final class FileListBodyView: NSView {
     /// Icon size in points — cached once so draw/per-row never touches UserDefaults.
     private(set) var iconSizePoints: CGFloat = CGFloat(AppSettings.iconSize)
 
+    /// List fonts + their line heights, cached by reloadLayout (Settings ▸
+    /// Appearance ▸ font / size) so draw never touches UserDefaults.
+    private(set) var nameFont: NSFont = AppSettings.listFont()
+    private(set) var nameFontBold: NSFont = AppSettings.listFont(bold: true)
+    private(set) var metaFont: NSFont = AppSettings.listFont(delta: -1, monoDigits: true)
+    private(set) var nameLineHeight: CGFloat = AppSettings.lineHeight(of: AppSettings.listFont())
+    private(set) var metaLineHeight: CGFloat = AppSettings.lineHeight(of: AppSettings.listFont(delta: -1))
+
     /// Row geometry recomputed whenever viewMode or iconSize changes.
     var geometry: FileRowGeometry
 
@@ -124,7 +132,8 @@ final class FileListBodyView: NSView {
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
-        geometry = FileRowGeometry(mode: .full, iconSize: CGFloat(AppSettings.iconSize))
+        geometry = FileRowGeometry(mode: .full, iconSize: CGFloat(AppSettings.iconSize),
+                                   textHeight: AppSettings.lineHeight(of: AppSettings.listFont()))
         super.init(frame: frameRect)
         iconProvider.onReady = { [weak self] _ in
             // Repaint the visible area — O(1) per callback. A ready icon usually
@@ -149,8 +158,24 @@ final class FileListBodyView: NSView {
     /// Refreshes cached layout values and resizes the frame.
     func reloadLayout() {
         iconSizePoints = CGFloat(AppSettings.iconSize)
-        geometry = FileRowGeometry(mode: viewMode, iconSize: iconSizePoints)
+        // `items` assignment lands here too; only re-resolve fonts (NSFontManager
+        // lookups) when the setting actually changed.
+        let key = "\(AppSettings.listFontName)|\(AppSettings.listFontSize)"
+        if key != fontKey {
+            fontKey = key
+            nameFont = AppSettings.listFont()
+            nameFontBold = AppSettings.listFont(bold: true)
+            metaFont = AppSettings.listFont(delta: -1, monoDigits: true)
+            nameLineHeight = AppSettings.lineHeight(of: nameFont)
+            metaLineHeight = AppSettings.lineHeight(of: metaFont)
+        }
+        geometry = makeGeometry()
         resizeFrame()
+    }
+    private var fontKey = "\(AppSettings.listFontName)|\(AppSettings.listFontSize)"
+
+    private func makeGeometry() -> FileRowGeometry {
+        FileRowGeometry(mode: viewMode, iconSize: iconSizePoints, textHeight: nameLineHeight)
     }
 
     /// Sizes the document view to fill at least the visible scroll area. The height
@@ -285,7 +310,7 @@ final class FileListBodyView: NSView {
             widths: AppSettings.columnWidths
         )
         let metaAttr: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+            .font: metaFont,
             .foregroundColor: NSColor.secondaryLabelColor,
             .paragraphStyle: para
         ]
@@ -309,7 +334,7 @@ final class FileListBodyView: NSView {
                 let textLeft = drawLeading(item: item, row: row, geo: geo, side: side)
                 let textRight = nameRange.upperBound - 4
                 let textWidth = max(0, textRight - textLeft)
-                let textY = rowRect.minY + (geo.rowHeight - 14) / 2
+                let textY = rowRect.minY + (geo.rowHeight - nameLineHeight) / 2
                 let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
 
                 let nameAttr = makeNameAttr(item: item, para: para, colorByType: colorByType)
@@ -330,7 +355,7 @@ final class FileListBodyView: NSView {
 
                 let colLeft = xRange.lowerBound + 4
                 let colWidth = (xRange.upperBound - xRange.lowerBound) - 8
-                let colY = rowRect.minY + (geo.rowHeight - 13) / 2
+                let colY = rowRect.minY + (geo.rowHeight - metaLineHeight) / 2
                 let colRect = NSRect(x: colLeft, y: colY, width: max(0, colWidth), height: geo.rowHeight)
                 (text as NSString).draw(in: colRect, withAttributes: attr)
             }
@@ -362,7 +387,7 @@ final class FileListBodyView: NSView {
             // Name text — clipped to this grid cell (not the full view width).
             let textRight = rowRect.maxX - 4
             let textWidth = max(0, textRight - textLeft)
-            let textY = rowRect.minY + (geo.rowHeight - 14) / 2
+            let textY = rowRect.minY + (geo.rowHeight - nameLineHeight) / 2
             let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
 
             let nameAttr = makeNameAttr(item: item, para: para, colorByType: colorByType)
@@ -410,7 +435,7 @@ final class FileListBodyView: NSView {
             let textRight = viewWidth - 4
             let textWidth = max(0, textRight - textLeft)
             // Centre the text vertically in the tall row.
-            let textY = rowRect.minY + (geo.rowHeight - 14) / 2
+            let textY = rowRect.minY + (geo.rowHeight - nameLineHeight) / 2
             let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
 
             let nameAttr = makeNameAttr(item: item, para: para, colorByType: colorByType)
@@ -431,11 +456,8 @@ final class FileListBodyView: NSView {
             nameColor = .labelColor
         }
         let nameAlpha: CGFloat = item.isHidden ? 0.5 : 1.0
-        let nameFont: NSFont = item.isDirectory
-            ? NSFont.boldSystemFont(ofSize: 12)
-            : NSFont.systemFont(ofSize: 12)
         return [
-            .font: nameFont,
+            .font: item.isDirectory ? nameFontBold : nameFont,
             .foregroundColor: nameColor.withAlphaComponent(nameColor.alphaComponent * nameAlpha),
             .paragraphStyle: para
         ]
@@ -764,7 +786,7 @@ final class FileListBodyView: NSView {
 
         let fieldWidth = max(40, textRight - textLeft)
         // Align with where the name baseline is drawn (parity with draw()).
-        let fieldHeight: CGFloat = 20
+        let fieldHeight: CGFloat = max(20, nameLineHeight + 6)
         let fieldY = rowRect.minY + (geo.rowHeight - fieldHeight) / 2
 
         let fieldFrame = NSRect(x: textLeft, y: fieldY, width: fieldWidth, height: fieldHeight)
@@ -772,9 +794,7 @@ final class FileListBodyView: NSView {
         // --- Build the NSTextField ---
         let tf = NSTextField(frame: fieldFrame)
         tf.stringValue = item.name
-        tf.font = item.isDirectory
-            ? NSFont.boldSystemFont(ofSize: 12)
-            : NSFont.systemFont(ofSize: 12)
+        tf.font = item.isDirectory ? nameFontBold : nameFont
         tf.isBordered = true
         tf.bezelStyle = .squareBezel
         tf.useSingleLineScrolling()

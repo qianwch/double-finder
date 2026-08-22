@@ -522,5 +522,8 @@
   "connected": "接続済み",
   "in use by %@": "%@ が使用中",
   "Scanning…": "スキャン中…",
-  "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ は接続されていますが、%@ が使用中です。そのプログラムを終了し（Chrome は完全に終了する必要があります）、「更新」を押してください。"
+  "%@ is connected but held by %@. Quit that program (Chrome must be quit completely), then press Refresh.": "%@ は接続されていますが、%@ が使用中です。そのプログラムを終了し（Chrome は完全に終了する必要があります）、「更新」を押してください。",
+  "List font:": "リストのフォント：",
+  "Font size:": "フォントサイズ：",
+  "System Font": "システムフォント"
 }

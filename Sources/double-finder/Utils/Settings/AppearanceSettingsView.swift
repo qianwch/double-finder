@@ -3,6 +3,8 @@ import AppKit
 final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
     private let onChange: () -> Void
     private var appearancePopup: NSPopUpButton!
+    private var fontPopup: NSPopUpButton!
+    private var fontSizePopup: NSPopUpButton!
     private var colorByTypeCheckbox: NSButton!
     private var editSegment: NSSegmentedControl!
     private var colorRows: [(TypeCategory, NSColorWell)] = []
@@ -30,8 +32,30 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         appPop.action = #selector(changeAppearance(_:))
         self.appearancePopup = appPop
 
+        // --- List font rows ---
+        let fontLabel = NSTextField(labelWithString: tr("List font:"))
+        fontLabel.alignment = .right
+        let fontPop = NSPopUpButton()
+        fontPop.addItem(withTitle: tr("System Font"))
+        fontPop.addItems(withTitles: Self.fontFamilies)
+        fontPop.target = self
+        fontPop.action = #selector(changeFont(_:))
+        fontPop.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        self.fontPopup = fontPop
+
+        let sizeLabel = NSTextField(labelWithString: tr("Font size:"))
+        sizeLabel.alignment = .right
+        let sizePop = NSPopUpButton()
+        sizePop.addItems(withTitles: AppSettings.listFontSizes.map { "\(Int($0))" })
+        sizePop.target = self
+        sizePop.action = #selector(changeFontSize(_:))
+        self.fontSizePopup = sizePop
+        reloadFontPopups()
+
         let modeGrid = NSGridView(views: [
             [appLabel, appPop],
+            [fontLabel, fontPop],
+            [sizeLabel, sizePop],
         ])
         modeGrid.column(at: 0).xPlacement = .trailing
         modeGrid.rowSpacing = 10
@@ -135,6 +159,23 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         ])
     }
 
+    /// Installed font families, minus the "."-prefixed system-private ones.
+    private static let fontFamilies: [String] = NSFontManager.shared.availableFontFamilies
+        .filter { !$0.hasPrefix(".") }
+        .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+
+    private func reloadFontPopups() {
+        let name = AppSettings.listFontName
+        if name.isEmpty || fontPopup.item(withTitle: name) == nil {
+            fontPopup.selectItem(at: 0)
+        } else {
+            fontPopup.selectItem(withTitle: name)
+        }
+        let idx = AppSettings.listFontSizes.firstIndex(of: AppSettings.listFontSize)
+            ?? AppSettings.listFontSizes.firstIndex(of: AppSettings.defaultListFontSize) ?? 0
+        fontSizePopup.selectItem(at: idx)
+    }
+
     private func resolvedColor(for cat: TypeCategory, dark: Bool) -> NSColor {
         let color = AppSettings.typeColor(for: cat, dark: dark) ?? cat.defaultColor(dark: dark)
         return color.usingColorSpace(.sRGB) ?? color
@@ -152,7 +193,20 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
             appearancePopup.selectItem(at: idx)
         }
         colorByTypeCheckbox.state = AppSettings.colorByType ? .on : .off
+        reloadFontPopups()
         reloadWells()
+    }
+
+    @objc private func changeFont(_ s: NSPopUpButton) {
+        AppSettings.listFontName = s.indexOfSelectedItem == 0 ? "" : (s.titleOfSelectedItem ?? "")
+        onChange()
+    }
+
+    @objc private func changeFontSize(_ s: NSPopUpButton) {
+        let i = s.indexOfSelectedItem
+        guard i >= 0, i < AppSettings.listFontSizes.count else { return }
+        AppSettings.listFontSize = AppSettings.listFontSizes[i]
+        onChange()
     }
 
     @objc private func changeAppearance(_ s: NSPopUpButton) {

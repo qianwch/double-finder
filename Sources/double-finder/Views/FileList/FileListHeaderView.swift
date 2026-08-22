@@ -111,7 +111,9 @@ final class FileListHeaderView: NSView {
         bounds.fill()
 
         // --- Text attributes (computed once) ---
-        let titleFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+        // Tracks the list font size (1pt smaller, like the meta columns) so a
+        // larger list font doesn't leave a tiny header above it.
+        let titleFont = NSFont.systemFont(ofSize: max(9, AppSettings.listFontSize - 1), weight: .medium)
         let titleColor = NSColor.secondaryLabelColor
         let titleAttrs: [NSAttributedString.Key: Any] = [
             .font: titleFont,

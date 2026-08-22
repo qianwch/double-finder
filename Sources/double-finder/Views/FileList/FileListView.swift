@@ -21,7 +21,8 @@ final class FileListView: NSScrollView {
     let body: FileListBodyView
     let headerView: FileListHeaderView
 
-    private static let headerHeight: CGFloat = 22
+    /// Grows with the list font so the header text never gets clipped.
+    private static var headerHeight: CGFloat { max(22, AppSettings.listFontSize + 10) }
 
     // MARK: - Initialiser
 
@@ -247,6 +248,8 @@ final class FileListView: NSScrollView {
 
     func reloadLayout() {
         body.reloadLayout()
+        positionHeader()     // header height follows the list font size
+        applyViewMode()      // …and so does the content inset below it
         body.needsDisplay = true
         headerView.needsDisplay = true
     }

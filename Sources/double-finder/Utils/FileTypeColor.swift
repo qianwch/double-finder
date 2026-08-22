@@ -94,6 +94,55 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "IconSize") }
     }
 
+    // MARK: - File-list font
+
+    /// File-list font family; empty = the system font.
+    static var listFontName: String {
+        get { UserDefaults.standard.string(forKey: "ListFontName") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "ListFontName") }
+    }
+
+    static let defaultListFontSize: CGFloat = 12
+    /// Sizes offered by the Settings popup.
+    static let listFontSizes: [CGFloat] = [9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
+
+    /// File-list font size in points (name column; meta columns draw 1pt smaller).
+    static var listFontSize: CGFloat {
+        get {
+            let v = UserDefaults.standard.double(forKey: "ListFontSize")
+            return v > 0 ? CGFloat(v) : defaultListFontSize
+        }
+        set { UserDefaults.standard.set(Double(newValue), forKey: "ListFontSize") }
+    }
+
+    /// Resolves the configured list font. `delta` offsets the size, `monoDigits`
+    /// asks for tabular figures (sizes/dates line up). Falls back to the system
+    /// font when the family is gone, so a stale setting never blanks the list.
+    static func listFont(bold: Bool = false, delta: CGFloat = 0, monoDigits: Bool = false) -> NSFont {
+        let size = max(6, listFontSize + delta)
+        let family = listFontName
+        if family.isEmpty {
+            if monoDigits { return .monospacedDigitSystemFont(ofSize: size, weight: bold ? .bold : .regular) }
+            return bold ? .boldSystemFont(ofSize: size) : .systemFont(ofSize: size)
+        }
+        let fm = NSFontManager.shared
+        var font = fm.font(withFamily: family, traits: bold ? .boldFontMask : [], weight: bold ? 9 : 5, size: size)
+            ?? NSFont(name: family, size: size)
+            ?? (bold ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size))
+        if monoDigits {
+            let desc = font.fontDescriptor.addingAttributes([.featureSettings: [[
+                NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+                NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector]]])
+            font = NSFont(descriptor: desc, size: size) ?? font
+        }
+        return font
+    }
+
+    /// Line height of a list font, for row-height and baseline math.
+    static func lineHeight(of font: NSFont) -> CGFloat {
+        ceil(font.ascender - font.descender + font.leading)
+    }
+
     /// Light/dark appearance. Empty/absent = follow the system.
     static var appearance: AppAppearance {
         get { AppAppearance(rawValue: UserDefaults.standard.string(forKey: "Appearance") ?? "") ?? .system }

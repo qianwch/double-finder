@@ -13,6 +13,9 @@ struct FileRowGeometry {
 
     let mode: FileViewMode
     let iconSize: CGFloat
+    /// Line height of the name font. Rows grow past the icon to fit it when the
+    /// list font is larger than the icon (0 = icon-only sizing).
+    var textHeight: CGFloat = 0
     /// Clip-view height; only the brief grid reads it. 0 until first layout.
     var viewportHeight: CGFloat = 0
 
@@ -24,8 +27,8 @@ struct FileRowGeometry {
     /// Computed row height that matches `FileTableView.tableView(_:heightOfRow:)`.
     var rowHeight: CGFloat {
         switch mode {
-        case .full:       return iconSize + 4
-        case .brief:      return iconSize + 2
+        case .full:       return max(iconSize + 4, textHeight + 6)
+        case .brief:      return max(iconSize + 2, textHeight + 4)
         case .thumbnails: return 56
         }
     }
