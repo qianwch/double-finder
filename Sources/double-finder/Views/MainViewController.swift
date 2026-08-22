@@ -3118,8 +3118,43 @@ class MainViewController: NSViewController {
         }
         var info = lines.joined(separator: "\n")
         if n > 10 { info += "\n" + tr("… and %d more", n - 10) }
+        // Local items that failed for lack of permission (e.g. an app in
+        // /Applications): offer the Finder-style administrator retry.
+        let denied = op.failures.filter { PrivilegedRunner.isPermissionDenied($0.error)
+                                          && FileManager.default.fileExists(atPath: $0.path) }
+        let canElevate = !denied.isEmpty
+            && (op.destinationPath.map { FileManager.default.fileExists(atPath: $0) } ?? true)
+        if canElevate {
+            if op.type == .delete { info += "\n\n" + tr("Retrying as administrator deletes the items permanently.") }
+            alert.addButton(withTitle: tr("Retry as Administrator"))
+            alert.addButton(withTitle: tr("Cancel"))
+        }
         alert.informativeText = info
-        alert.beginSheetModal(for: window)
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard canElevate, response == .alertFirstButtonReturn else { return }
+            self?.retryAsAdministrator(op, paths: denied.map(\.path))
+        }
+    }
+
+    /// Redoes the failed paths of `op` as root (system auth dialog), then
+    /// refreshes both panels. Cancelling the dialog is silent.
+    private func retryAsAdministrator(_ op: FileOperation, paths: [String]) {
+        let command = PrivilegedRunner.command(for: op.type, paths: paths, destination: op.destinationPath)
+        guard !command.isEmpty else { return }
+        Task.detached {
+            let result: Result<Void, Error> = Result { try PrivilegedRunner.run(command) }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.actionRefreshDisplay_menu()
+                if case .failure(let error) = result, !(error is PrivilegedRunner.Cancelled), let window = self.view.window {
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = tr("Administrator retry failed")
+                    alert.informativeText = error.localizedDescription
+                    alert.beginSheetModal(for: window)
+                }
+            }
+        }
     }
 }
 

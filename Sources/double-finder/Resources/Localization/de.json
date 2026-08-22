@@ -529,5 +529,8 @@
   "Choose": "Auswählen",
   "View size": "Ansichtsgröße",
   "Panels change view size together": "Ansichtsgröße beider Panels gekoppelt",
-  "Off: each panel's status-bar slider sizes only that panel": "Aus: Der Regler jedes Panels ändert nur dieses Panel"
+  "Off: each panel's status-bar slider sizes only that panel": "Aus: Der Regler jedes Panels ändert nur dieses Panel",
+  "Retry as Administrator": "Als Administrator wiederholen",
+  "Retrying as administrator deletes the items permanently.": "Beim Wiederholen als Administrator werden die Objekte endgültig gelöscht.",
+  "Administrator retry failed": "Wiederholung als Administrator fehlgeschlagen"
 }

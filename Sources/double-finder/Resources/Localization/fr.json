@@ -529,5 +529,8 @@
   "Choose": "Choisir",
   "View size": "Taille d’affichage",
   "Panels change view size together": "Taille d’affichage liée pour les deux panneaux",
-  "Off: each panel's status-bar slider sizes only that panel": "Désactivé : le curseur de chaque panneau n’agit que sur lui"
+  "Off: each panel's status-bar slider sizes only that panel": "Désactivé : le curseur de chaque panneau n’agit que sur lui",
+  "Retry as Administrator": "Réessayer en tant qu’administrateur",
+  "Retrying as administrator deletes the items permanently.": "Réessayer en tant qu’administrateur supprime définitivement les éléments.",
+  "Administrator retry failed": "Échec de la tentative en tant qu’administrateur"
 }

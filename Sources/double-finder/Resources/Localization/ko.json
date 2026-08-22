@@ -529,5 +529,8 @@
   "Choose": "선택",
   "View size": "보기 크기",
   "Panels change view size together": "양쪽 패널 보기 크기 연동",
-  "Off: each panel's status-bar slider sizes only that panel": "끄면 각 패널의 슬라이더가 해당 패널만 조절"
+  "Off: each panel's status-bar slider sizes only that panel": "끄면 각 패널의 슬라이더가 해당 패널만 조절",
+  "Retry as Administrator": "관리자 권한으로 다시 시도",
+  "Retrying as administrator deletes the items permanently.": "관리자 권한으로 다시 시도하면 항목이 영구 삭제됩니다.",
+  "Administrator retry failed": "관리자 권한 재시도 실패"
 }

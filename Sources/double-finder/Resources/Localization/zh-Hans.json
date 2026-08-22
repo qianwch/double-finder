@@ -529,5 +529,8 @@
   "Choose": "选择",
   "View size": "视图大小",
   "Panels change view size together": "两侧面板同步视图大小",
-  "Off: each panel's status-bar slider sizes only that panel": "关闭后，每侧状态栏的滑块只调整本侧面板"
+  "Off: each panel's status-bar slider sizes only that panel": "关闭后，每侧状态栏的滑块只调整本侧面板",
+  "Retry as Administrator": "以管理员身份重试",
+  "Retrying as administrator deletes the items permanently.": "以管理员身份重试会直接永久删除这些项目。",
+  "Administrator retry failed": "管理员身份重试失败"
 }

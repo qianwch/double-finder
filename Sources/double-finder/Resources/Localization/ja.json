@@ -529,5 +529,8 @@
   "Choose": "選択",
   "View size": "表示サイズ",
   "Panels change view size together": "両パネルの表示サイズを連動",
-  "Off: each panel's status-bar slider sizes only that panel": "オフ：各パネルのスライダーはそのパネルだけを変更"
+  "Off: each panel's status-bar slider sizes only that panel": "オフ：各パネルのスライダーはそのパネルだけを変更",
+  "Retry as Administrator": "管理者として再試行",
+  "Retrying as administrator deletes the items permanently.": "管理者として再試行すると項目は完全に削除されます。",
+  "Administrator retry failed": "管理者としての再試行に失敗しました"
 }
