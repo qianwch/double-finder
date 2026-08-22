@@ -2145,6 +2145,13 @@ class MainViewController: NSViewController {
             attachQuickView(pane, to: inactivePanelVC)
             quickViewLastPath = nil
         }
+        // QLPreviewView steals keyboard focus whenever a preview loads, which
+        // silently killed Tab (panel switch) and the arrow keys. Hand focus
+        // straight back to the active list.
+        if pane.holdsKeyboardFocus(in: view.window),
+           let target = activePanelVC.fileTableView?.firstResponderTarget {
+            view.window?.makeFirstResponder(target)
+        }
         let item = activePanelVC.panelState.currentItem
         let path = item?.path ?? ""
         guard path != quickViewLastPath else { return }

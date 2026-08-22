@@ -53,6 +53,17 @@ final class QuickViewPane: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The pane is display-only: keyboard focus must stay on the active file
+    /// list so Tab / arrows / F-keys keep working while Quick View is up.
+    override var acceptsFirstResponder: Bool { false }
+
+    /// True when the window's first responder is inside this pane —
+    /// QLPreviewView's internal remote view grabs focus when a preview loads.
+    func holdsKeyboardFocus(in window: NSWindow?) -> Bool {
+        guard let fr = window?.firstResponder as? NSView else { return false }
+        return fr === self || fr.isDescendant(of: self)
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
