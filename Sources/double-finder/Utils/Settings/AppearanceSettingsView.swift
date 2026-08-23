@@ -114,57 +114,31 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         seg.translatesAutoresizingMaskIntoConstraints = false
         self.editSegment = seg
 
-        // --- Per-type color rows ---
-        var wellRows: [[NSView]] = []
+        // --- Per-type color rows (reflow to as many columns as the width allows) ---
+        let labelWidth = Self.widestLabel(TypeCategory.allCases.map { tr($0.titleKey) }
+                                          + CommandLineColorRole.allCases.map { tr($0.titleKey) })
+        var colorItems: [(String, NSColorWell)] = []
         for cat in TypeCategory.allCases {
-            let label = NSTextField(labelWithString: tr(cat.titleKey))
-            label.alignment = .right
-
-            let well = NSColorWell()
+            let well = makeColorWell(action: #selector(wellChanged(_:)))
             well.color = resolvedColor(for: cat, dark: initialDark)
-            well.target = self
-            well.action = #selector(wellChanged(_:))
-            well.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            well.heightAnchor.constraint(equalToConstant: 22).isActive = true
-
             colorRows.append((cat, well))
-            wellRows.append([label, well])
+            colorItems.append((tr(cat.titleKey), well))
         }
-
-        let colorGrid = NSGridView(views: wellRows)
-        colorGrid.column(at: 0).xPlacement = .trailing
-        colorGrid.yPlacement = .center   // labels centred on their popups/checkboxes
-        colorGrid.rowSpacing = 8
-        colorGrid.columnSpacing = 8
-        colorGrid.translatesAutoresizingMaskIntoConstraints = false
+        let colorGrid = ColorWellGridView(items: colorItems, labelWidth: labelWidth)
 
         // --- Command line input box colors (same Light/Dark segment above) ---
         let cmdSectionLabel = NSTextField(labelWithString: tr("Command line input box:"))
         cmdSectionLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
         cmdSectionLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        var cmdWellRows: [[NSView]] = []
+        var cmdItems: [(String, NSColorWell)] = []
         for role in CommandLineColorRole.allCases {
-            let label = NSTextField(labelWithString: tr(role.titleKey))
-            label.alignment = .right
-
-            let well = NSColorWell()
+            let well = makeColorWell(action: #selector(cmdWellChanged(_:)))
             well.color = resolvedColor(for: role, dark: initialDark)
-            well.target = self
-            well.action = #selector(cmdWellChanged(_:))
-            well.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            well.heightAnchor.constraint(equalToConstant: 22).isActive = true
-
             cmdRows.append((role, well))
-            cmdWellRows.append([label, well])
+            cmdItems.append((tr(role.titleKey), well))
         }
-
-        let cmdGrid = NSGridView(views: cmdWellRows)
-        cmdGrid.column(at: 0).xPlacement = .trailing
-        cmdGrid.yPlacement = .center
-        cmdGrid.rowSpacing = 8
-        cmdGrid.columnSpacing = 8
-        cmdGrid.translatesAutoresizingMaskIntoConstraints = false
+        let cmdGrid = ColorWellGridView(items: cmdItems, labelWidth: labelWidth)
 
         // --- Reset button (whole page, not just the colors) ---
         let resetButton = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetToDefaults))
@@ -229,18 +203,35 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
 
             colorGrid.topAnchor.constraint(equalTo: colorSectionLabel.bottomAnchor, constant: 10),
             colorGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+            colorGrid.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
 
             cmdSectionLabel.topAnchor.constraint(equalTo: colorGrid.bottomAnchor, constant: 16),
             cmdSectionLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
 
             cmdGrid.topAnchor.constraint(equalTo: cmdSectionLabel.bottomAnchor, constant: 10),
             cmdGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+            cmdGrid.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
 
             resetButton.topAnchor.constraint(equalTo: cmdGrid.bottomAnchor, constant: 18),
             resetButton.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
             // Pins the scrolling content's height to its last row.
             resetButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -margin),
         ])
+    }
+
+    /// Widest of the given labels in the system font, so both colour grids can
+    /// pin their label columns to the same width.
+    private static func widestLabel(_ titles: [String]) -> CGFloat {
+        let attrs = [NSAttributedString.Key.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+        let widest = titles.map { ($0 as NSString).size(withAttributes: attrs).width }.max() ?? 80
+        return ceil(widest) + 4      // a hair of slack so nothing truncates
+    }
+
+    private func makeColorWell(action: Selector) -> NSColorWell {
+        let well = NSColorWell()
+        well.target = self
+        well.action = action
+        return well          // sized by ColorWellGridView, which lays out by frame
     }
 
     /// Installed font families, minus the "."-prefixed system-private ones.

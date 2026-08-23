@@ -47,13 +47,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         self.installedTerminalsValue = installedTerminals.isEmpty ? ["Terminal"] : installedTerminals
         self.installedEditorsValue = installedEditors
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 580),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = tr("Settings")
         window.minSize = NSSize(width: 500, height: 380)
+        // AppKit's window restoration would otherwise resurrect an older saved
+        // frame (and did: the pane came back at the pre-2026-08-23 height), so
+        // the window always opens at the size that fits the tallest pane.
+        window.isRestorable = false
         super.init(window: window)
 
         window.delegate = self
