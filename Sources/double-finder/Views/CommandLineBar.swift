@@ -92,10 +92,10 @@ final class CommandLineBar: NSView {
             // same near-black) on current macOS, so a semantic pair gives no
             // contrast at all. Tint with the label color instead: it inverts with
             // the appearance, so the box stays a shade off the chrome either way.
-            inputBox.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.07).cgColor
+            inputBox.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.14).cgColor
             inputBox.layer?.borderColor = inputHasFocus
                 ? NSColor.controlAccentColor.cgColor
-                : NSColor.labelColor.withAlphaComponent(0.18).cgColor
+                : NSColor.labelColor.withAlphaComponent(0.32).cgColor
         }
     }
 
