@@ -11,6 +11,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
     private var colorByTypeCheckbox: NSButton!
     private var editSegment: NSSegmentedControl!
     private var colorRows: [(TypeCategory, NSColorWell)] = []
+    private var cmdRows: [(CommandLineColorRole, NSColorWell)] = []
 
     private var editingDark: Bool { editSegment.selectedSegment == 1 }
 
@@ -137,49 +138,108 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         colorGrid.columnSpacing = 8
         colorGrid.translatesAutoresizingMaskIntoConstraints = false
 
-        // --- Reset button ---
-        let resetButton = NSButton(title: tr("Reset to Defaults"), target: self, action: #selector(resetToDefaults))
+        // --- Command line input box colors (same Light/Dark segment above) ---
+        let cmdSectionLabel = NSTextField(labelWithString: tr("Command line input box:"))
+        cmdSectionLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+        cmdSectionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        var cmdWellRows: [[NSView]] = []
+        for role in CommandLineColorRole.allCases {
+            let label = NSTextField(labelWithString: tr(role.titleKey))
+            label.alignment = .right
+
+            let well = NSColorWell()
+            well.color = resolvedColor(for: role, dark: initialDark)
+            well.target = self
+            well.action = #selector(cmdWellChanged(_:))
+            well.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            well.heightAnchor.constraint(equalToConstant: 22).isActive = true
+
+            cmdRows.append((role, well))
+            cmdWellRows.append([label, well])
+        }
+
+        let cmdGrid = NSGridView(views: cmdWellRows)
+        cmdGrid.column(at: 0).xPlacement = .trailing
+        cmdGrid.yPlacement = .center
+        cmdGrid.rowSpacing = 8
+        cmdGrid.columnSpacing = 8
+        cmdGrid.translatesAutoresizingMaskIntoConstraints = false
+
+        // --- Reset button (whole page, not just the colors) ---
+        let resetButton = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetToDefaults))
         resetButton.bezelStyle = .rounded
+        resetButton.toolTip = tr("Restores every setting on this page to its default")
         resetButton.translatesAutoresizingMaskIntoConstraints = false
 
+        // --- Scrolling content (this pane is taller than the window) ---
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        let content = FlippedContainerView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = content
+        addSubview(scroll)
+
         // --- Add all subviews ---
-        addSubview(modeGrid)
-        addSubview(sep1)
-        addSubview(colorBox)
-        addSubview(sep2)
-        addSubview(colorSectionLabel)
-        addSubview(seg)
-        addSubview(colorGrid)
-        addSubview(resetButton)
+        content.addSubview(modeGrid)
+        content.addSubview(sep1)
+        content.addSubview(colorBox)
+        content.addSubview(sep2)
+        content.addSubview(colorSectionLabel)
+        content.addSubview(seg)
+        content.addSubview(colorGrid)
+        content.addSubview(cmdSectionLabel)
+        content.addSubview(cmdGrid)
+        content.addSubview(resetButton)
 
         let margin: CGFloat = 20
 
         NSLayoutConstraint.activate([
-            modeGrid.topAnchor.constraint(equalTo: topAnchor, constant: margin),
-            modeGrid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            content.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            content.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+
+            modeGrid.topAnchor.constraint(equalTo: content.topAnchor, constant: margin),
+            modeGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
 
             sep1.topAnchor.constraint(equalTo: modeGrid.bottomAnchor, constant: 12),
-            sep1.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
-            sep1.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -margin),
+            sep1.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+            sep1.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
 
             colorBox.topAnchor.constraint(equalTo: sep1.bottomAnchor, constant: 12),
-            colorBox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
+            colorBox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
 
             sep2.topAnchor.constraint(equalTo: colorBox.bottomAnchor, constant: 12),
-            sep2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
-            sep2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -margin),
+            sep2.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+            sep2.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
 
-            colorSectionLabel.topAnchor.constraint(equalTo: sep2.bottomAnchor, constant: 12),
-            colorSectionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
+            seg.topAnchor.constraint(equalTo: sep2.bottomAnchor, constant: 12),
+            seg.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
 
-            seg.topAnchor.constraint(equalTo: colorSectionLabel.bottomAnchor, constant: 8),
-            seg.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
+            colorSectionLabel.topAnchor.constraint(equalTo: seg.bottomAnchor, constant: 12),
+            colorSectionLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
 
-            colorGrid.topAnchor.constraint(equalTo: seg.bottomAnchor, constant: 10),
-            colorGrid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
+            colorGrid.topAnchor.constraint(equalTo: colorSectionLabel.bottomAnchor, constant: 10),
+            colorGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
 
-            resetButton.topAnchor.constraint(equalTo: colorGrid.bottomAnchor, constant: 14),
-            resetButton.leadingAnchor.constraint(equalTo: colorGrid.leadingAnchor),
+            cmdSectionLabel.topAnchor.constraint(equalTo: colorGrid.bottomAnchor, constant: 16),
+            cmdSectionLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+
+            cmdGrid.topAnchor.constraint(equalTo: cmdSectionLabel.bottomAnchor, constant: 10),
+            cmdGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+
+            resetButton.topAnchor.constraint(equalTo: cmdGrid.bottomAnchor, constant: 18),
+            resetButton.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+            // Pins the scrolling content's height to its last row.
+            resetButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -margin),
         ])
     }
 
@@ -216,10 +276,29 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         return color.usingColorSpace(.sRGB) ?? color
     }
 
+    /// The colour a command line well should show: the user's pick, or the
+    /// built-in tint flattened against the bar (a well can't show translucency).
+    private func resolvedColor(for role: CommandLineColorRole, dark: Bool) -> NSColor {
+        if let custom = AppSettings.commandLineColor(role, dark: dark) {
+            return custom.usingColorSpace(.sRGB) ?? custom
+        }
+        var flat = role.defaultColor
+        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            guard let tint = role.defaultColor.usingColorSpace(.sRGB),
+                  let base = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) else { return }
+            flat = base.blended(withFraction: tint.alphaComponent,
+                                of: tint.withAlphaComponent(1)) ?? tint
+        }
+        return flat
+    }
+
     private func reloadWells() {
         let dark = editingDark
         for (cat, well) in colorRows {
             well.color = resolvedColor(for: cat, dark: dark)
+        }
+        for (role, well) in cmdRows {
+            well.color = resolvedColor(for: role, dark: dark)
         }
     }
 
@@ -283,9 +362,18 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         onChange()
     }
 
+    @objc private func cmdWellChanged(_ well: NSColorWell) {
+        guard let role = cmdRows.first(where: { $0.1 === well })?.0 else { return }
+        AppSettings.setCommandLineColor(well.color, for: role, dark: editingDark)
+        onChange()
+    }
+
+    /// Restores this whole page — appearance mode, fonts, sizes and both colour
+    /// sections, for both appearances — not just the colours being edited.
     @objc private func resetToDefaults() {
-        AppSettings.resetTypeColors(dark: editingDark)
-        reloadWells()
+        SettingsReset.reset(category: "appearance")
+        AppSettings.applyAppearance()
+        reloadFromModel()
         onChange()
     }
 }

@@ -3010,6 +3010,8 @@ class MainViewController: NSViewController {
 
     /// Re-applies all settings that the Settings window can change, to both panels.
     func reapplyAllSettings() {
+        AppSettings.applyAppearance()
+        commandLineBar?.refreshColors()
         setViewMode(AppSettings.viewMode)
         leftPanelVC.fileTableView?.reloadLayout()
         rightPanelVC.fileTableView?.reloadLayout()

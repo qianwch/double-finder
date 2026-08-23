@@ -532,5 +532,15 @@
   "Off: each panel's status-bar slider sizes only that panel": "Désactivé : le curseur de chaque panneau n’agit que sur lui",
   "Retry as Administrator": "Réessayer en tant qu’administrateur",
   "Retrying as administrator deletes the items permanently.": "Réessayer en tant qu’administrateur supprime définitivement les éléments.",
-  "Administrator retry failed": "Échec de la tentative en tant qu’administrateur"
+  "Administrator retry failed": "Échec de la tentative en tant qu’administrateur",
+  "Command line input box:": "Champ de la ligne de commande :",
+  "Fill": "Remplissage",
+  "Border": "Bordure",
+  "Focus border": "Bordure au focus",
+  "Reset This Page": "Réinitialiser cette page",
+  "Restores every setting on this page to its default": "Rétablit tous les réglages de cette page à leurs valeurs par défaut",
+  "Reset All Settings…": "Réinitialiser tous les réglages…",
+  "Restores every setting to its default; favorites and saved connections are kept": "Rétablit tous les réglages par défaut ; les favoris et les connexions enregistrées sont conservés",
+  "Reset all settings to their defaults?": "Rétablir tous les réglages par défaut ?",
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "L'apparence, les panneaux, la barre d'outils, les raccourcis, les polices et les couleurs reviennent à l'état d'origine. Les favoris, les connexions serveur enregistrées et les commandes personnalisées sont conservés."
 }

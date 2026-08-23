@@ -40,23 +40,24 @@ final class ToolbarSettingsView: NSView {
 
     // MARK: - Init
 
+    /// Reads the saved toolbar into working state: saved enabled ids first
+    /// (filtered to known ones), then every remaining command appended.
+    private static func loadState() -> (order: [String], enabled: Set<String>, customs: [CustomToolbarButton]) {
+        let customs = CustomToolbarButtons.all()
+        let currentIDs = ToolbarConfig.ids
+        let known = Set(allCommands.map { $0.id } + customs.map { $0.id })
+        var ord = currentIDs.filter { known.contains($0) }
+        for c in allCommands where !ord.contains(c.id) { ord.append(c.id) }
+        for c in customs where !ord.contains(c.id) { ord.append(c.id) }
+        return (ord, Set(currentIDs), customs)
+    }
+
     init(onChanged: @escaping () -> Void) {
         self.onChanged = onChanged
-
-        // Build order: saved enabled ids first (filtered to known), then rest.
-        let customs = CustomToolbarButtons.all()
-        self.customs = customs
-        let currentIDs = ToolbarConfig.ids
-        let known = Set(ToolbarSettingsView.allCommands.map { $0.id } + customs.map { $0.id })
-        var ord = currentIDs.filter { known.contains($0) }
-        for c in ToolbarSettingsView.allCommands where !ord.contains(c.id) {
-            ord.append(c.id)
-        }
-        for c in customs where !ord.contains(c.id) {
-            ord.append(c.id)
-        }
-        self.order = ord
-        self.enabled = Set(currentIDs)
+        let state = ToolbarSettingsView.loadState()
+        self.customs = state.customs
+        self.order = state.order
+        self.enabled = state.enabled
 
         super.init(frame: .zero)
         setupUI()
@@ -101,7 +102,7 @@ final class ToolbarSettingsView: NSView {
         addSubview(down)
 
         // Reset / custom-command buttons (bottom)
-        let reset = NSButton(title: tr("Reset Defaults"), target: self, action: #selector(resetDefaults))
+        let reset = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetDefaults))
         reset.bezelStyle = .rounded
         reset.translatesAutoresizingMaskIntoConstraints = false
         addSubview(reset)
@@ -284,5 +285,15 @@ extension ToolbarSettingsView: NSTableViewDataSource, NSTableViewDelegate {
         cell.state = enabled.contains(id) ? .on : .off
         cell.font = .systemFont(ofSize: 12)
         return cell
+    }
+}
+
+extension ToolbarSettingsView: SettingsPaneReloadable {
+    func reloadFromModel() {
+        let state = ToolbarSettingsView.loadState()
+        customs = state.customs
+        order = state.order
+        enabled = state.enabled
+        tableView.reloadData()
     }
 }

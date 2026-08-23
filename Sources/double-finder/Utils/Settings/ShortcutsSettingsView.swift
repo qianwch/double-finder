@@ -78,7 +78,7 @@ final class ShortcutsSettingsView: NSView {
         clear.translatesAutoresizingMaskIntoConstraints = false
         addSubview(clear)
 
-        let resetAll = NSButton(title: tr("Reset All"), target: self, action: #selector(resetAllBindings))
+        let resetAll = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetAllBindings))
         resetAll.bezelStyle = .rounded
         resetAll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(resetAll)
@@ -224,4 +224,8 @@ extension ShortcutsSettingsView: NSTableViewDataSource, NSTableViewDelegate {
         cell.textColor = (id == "custom" && recordingRow == row) ? .systemRed : .labelColor
         return cell
     }
+}
+
+extension ShortcutsSettingsView: SettingsPaneReloadable {
+    func reloadFromModel() { tableView.reloadData() }
 }

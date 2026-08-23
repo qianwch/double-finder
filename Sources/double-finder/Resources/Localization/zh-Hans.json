@@ -532,5 +532,15 @@
   "Off: each panel's status-bar slider sizes only that panel": "关闭后，每侧状态栏的滑块只调整本侧面板",
   "Retry as Administrator": "以管理员身份重试",
   "Retrying as administrator deletes the items permanently.": "以管理员身份重试会直接永久删除这些项目。",
-  "Administrator retry failed": "管理员身份重试失败"
+  "Administrator retry failed": "管理员身份重试失败",
+  "Command line input box:": "命令行输入框：",
+  "Fill": "底色",
+  "Border": "边框",
+  "Focus border": "聚焦边框",
+  "Reset This Page": "恢复本页默认",
+  "Restores every setting on this page to its default": "把本页所有设置恢复为默认值",
+  "Reset All Settings…": "恢复全部默认设置…",
+  "Restores every setting to its default; favorites and saved connections are kept": "把所有设置恢复为默认值；收藏夹与已保存的连接会保留",
+  "Reset all settings to their defaults?": "恢复所有设置为默认值？",
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "外观、面板、工具栏、快捷键、字体与配色都会回到出厂状态。收藏夹、已保存的服务器连接和自定义工具栏命令会保留。"
 }

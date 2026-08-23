@@ -274,6 +274,69 @@ enum AppSettings {
     static func resetTypeColors(dark: Bool) {
         UserDefaults.standard.removeObject(forKey: udKey(dark: dark))
     }
+
+    // MARK: - Command line input box colors (per-appearance)
+
+    private static func cmdLineKey(dark: Bool) -> String {
+        dark ? "CommandLineColors.dark" : "CommandLineColors.light"
+    }
+
+    /// The user's colour for one part of the command line input box, or nil to
+    /// use the built-in tint (`CommandLineColorRole.defaultColor`).
+    static func commandLineColor(_ role: CommandLineColorRole, dark: Bool) -> NSColor? {
+        guard let dict = UserDefaults.standard.dictionary(forKey: cmdLineKey(dark: dark)) as? [String: String],
+              let hex = dict[role.rawValue] else { return nil }
+        return NSColor(hexString: hex)
+    }
+
+    /// Writes (nil clears) one part's colour for the given appearance.
+    static func setCommandLineColor(_ color: NSColor?, for role: CommandLineColorRole, dark: Bool) {
+        var dict = (UserDefaults.standard.dictionary(forKey: cmdLineKey(dark: dark)) as? [String: String]) ?? [:]
+        if let color = color, let srgb = color.usingColorSpace(.sRGB) {
+            dict[role.rawValue] = srgb.hexString
+        } else {
+            dict.removeValue(forKey: role.rawValue)
+        }
+        UserDefaults.standard.set(dict, forKey: cmdLineKey(dark: dark))
+    }
+
+    /// Drops every custom command line colour for the given appearance.
+    static func resetCommandLineColors(dark: Bool) {
+        UserDefaults.standard.removeObject(forKey: cmdLineKey(dark: dark))
+    }
+}
+
+// MARK: - CommandLineColorRole
+
+/// The three parts of the command line input box a user can recolour.
+/// The built-in values are *tints over the bar* rather than solid colours, so
+/// they invert with the appearance; a user's pick is always solid.
+enum CommandLineColorRole: String, CaseIterable {
+    case fill
+    case border
+    case focusBorder
+
+    /// English source string (also the translation key) for the settings label.
+    var titleKey: String {
+        switch self {
+        case .fill: return "Fill"
+        case .border: return "Border"
+        case .focusBorder: return "Focus border"
+        }
+    }
+
+    var defaultColor: NSColor {
+        switch self {
+        case .fill: return NSColor.labelColor.withAlphaComponent(0.14)
+        case .border: return NSColor.labelColor.withAlphaComponent(0.32)
+        case .focusBorder: return NSColor.controlAccentColor
+        }
+    }
+
+    /// The colour actually painted: the user's pick when set, else the default.
+    func color(dark: Bool) -> NSColor {
+        AppSettings.commandLineColor(self, dark: dark) ?? defaultColor
+    }
 }
 
 // MARK: - NSColor hex helpers

@@ -14,3 +14,10 @@ struct SettingsCategory {
     /// Builds the detail pane view for this category (called lazily, result cached).
     let make: () -> NSView
 }
+
+/// Top-down container for a scrolling settings pane: NSScrollView lays its
+/// document view out from the bottom otherwise, which puts the first row at the
+/// bottom of a short pane.
+final class FlippedContainerView: NSView {
+    override var isFlipped: Bool { true }
+}

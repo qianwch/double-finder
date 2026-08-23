@@ -86,18 +86,24 @@ final class CommandLineBar: NSView {
     }
 
     private func applyAppearanceColors() {
+        // Which set of user colours applies is decided by the appearance actually
+        // in effect, the same way the per-type name colours pick theirs.
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-            // window/control/text background all resolve to the same white (or the
-            // same near-black) on current macOS, so a semantic pair gives no
-            // contrast at all. Tint with the label color instead: it inverts with
-            // the appearance, so the box stays a shade off the chrome either way.
-            inputBox.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.14).cgColor
-            inputBox.layer?.borderColor = inputHasFocus
-                ? NSColor.controlAccentColor.cgColor
-                : NSColor.labelColor.withAlphaComponent(0.32).cgColor
+            // The built-in defaults are label-colour tints, not semantic background
+            // colours: window/control/text background all resolve to the same white
+            // (or the same near-black) on current macOS, so any pair of them gives
+            // no contrast. See CommandLineColorRole; Settings ▸ Appearance can
+            // override each part per appearance.
+            inputBox.layer?.backgroundColor = CommandLineColorRole.fill.color(dark: dark).cgColor
+            let border: CommandLineColorRole = inputHasFocus ? .focusBorder : .border
+            inputBox.layer?.borderColor = border.color(dark: dark).cgColor
         }
     }
+
+    /// Re-reads the colour settings and repaints — called after Settings changes.
+    func refreshColors() { applyAppearanceColors() }
 
     /// Brightens the box border while the input holds the keyboard focus.
     private func setInputFocused(_ focused: Bool) {

@@ -532,5 +532,15 @@
   "Off: each panel's status-bar slider sizes only that panel": "Aus: Der Regler jedes Panels ändert nur dieses Panel",
   "Retry as Administrator": "Als Administrator wiederholen",
   "Retrying as administrator deletes the items permanently.": "Beim Wiederholen als Administrator werden die Objekte endgültig gelöscht.",
-  "Administrator retry failed": "Wiederholung als Administrator fehlgeschlagen"
+  "Administrator retry failed": "Wiederholung als Administrator fehlgeschlagen",
+  "Command line input box:": "Befehlszeilen-Eingabefeld:",
+  "Fill": "Füllung",
+  "Border": "Rahmen",
+  "Focus border": "Rahmen bei Fokus",
+  "Reset This Page": "Diese Seite zurücksetzen",
+  "Restores every setting on this page to its default": "Setzt alle Einstellungen dieser Seite auf die Standardwerte zurück",
+  "Reset All Settings…": "Alle Einstellungen zurücksetzen…",
+  "Restores every setting to its default; favorites and saved connections are kept": "Setzt alle Einstellungen zurück; Favoriten und gespeicherte Verbindungen bleiben erhalten",
+  "Reset all settings to their defaults?": "Alle Einstellungen auf die Standardwerte zurücksetzen?",
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "Darstellung, Panels, Symbolleiste, Kurzbefehle, Schriften und Farben werden zurückgesetzt. Favoriten, gespeicherte Serververbindungen und eigene Symbolleistenbefehle bleiben erhalten."
 }

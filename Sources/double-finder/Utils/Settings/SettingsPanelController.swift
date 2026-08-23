@@ -110,6 +110,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         // Use autoresizing masks for top-level layout so NSWindow controls the frame.
         let bounds = contentView.bounds
+        let footerHeight: CGFloat = 44
+        let bodyHeight = bounds.height - footerHeight
+
+        // -- Footer: window-wide reset, always reachable from any category --
+        let footer = NSView(frame: NSRect(x: 0, y: 0, width: bounds.width, height: footerHeight))
+        footer.autoresizingMask = [.width]
+
+        let footerSep = NSBox(frame: NSRect(x: 0, y: footerHeight - 1, width: bounds.width, height: 1))
+        footerSep.boxType = .separator
+        footerSep.autoresizingMask = [.width]
+        footer.addSubview(footerSep)
+
+        let resetAll = NSButton(title: tr("Reset All Settings…"), target: self, action: #selector(resetAllSettings))
+        resetAll.bezelStyle = .rounded
+        resetAll.toolTip = tr("Restores every setting to its default; favorites and saved connections are kept")
+        resetAll.sizeToFit()
+        resetAll.setFrameOrigin(NSPoint(x: 16, y: ((footerHeight - 1) - resetAll.frame.height) / 2))
+        resetAll.autoresizingMask = [.maxXMargin]
+        footer.addSubview(resetAll)
 
         // -- Sidebar (NSScrollView + NSTableView) --
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Category"))
@@ -123,23 +142,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         tv.delegate = self
         self.tableView = tv
 
-        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: sidebarWidth, height: bounds.height))
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: footerHeight, width: sidebarWidth, height: bodyHeight))
         scrollView.documentView = tv
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.autoresizingMask = [.height]
 
         // -- Divider --
-        let divider = NSBox(frame: NSRect(x: sidebarWidth, y: 0, width: 1, height: bounds.height))
+        let divider = NSBox(frame: NSRect(x: sidebarWidth, y: footerHeight, width: 1, height: bodyHeight))
         divider.boxType = .separator
         divider.autoresizingMask = [.height]
 
         // -- Detail container --
         let containerX = sidebarWidth + 1
-        let container = NSView(frame: NSRect(x: containerX, y: 0, width: bounds.width - containerX, height: bounds.height))
+        let container = NSView(frame: NSRect(x: containerX, y: footerHeight, width: bounds.width - containerX, height: bodyHeight))
         container.autoresizingMask = [.width, .height]
         self.containerView = container
 
+        contentView.addSubview(footer)
         contentView.addSubview(scrollView)
         contentView.addSubview(divider)
         contentView.addSubview(container)
@@ -187,6 +207,44 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let id = currentPaneID, let p = built[id] as? SettingsPaneReloadable {
             p.reloadFromModel()
         }
+    }
+
+    /// Every built pane re-reads its model — a global reset changes keys that
+    /// panes other than the visible one are showing.
+    private func reloadAllPanes() {
+        for pane in built.values {
+            (pane as? SettingsPaneReloadable)?.reloadFromModel()
+        }
+    }
+
+    // MARK: - Reset all
+
+    @objc private func resetAllSettings() {
+        guard let window = window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = tr("Reset all settings to their defaults?")
+        alert.informativeText = tr("Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.")
+        alert.addButton(withTitle: tr("Reset"))
+        alert.addButton(withTitle: tr("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.performResetAll()
+        }
+    }
+
+    private func performResetAll() {
+        SettingsReset.resetAll()
+        // Language and appearance are applied, not merely stored: re-read both.
+        // `reload()` rather than `setLanguage(.system)` — the latter would write
+        // the key straight back that the reset just removed.
+        Localizer.shared.reload()
+        NotificationCenter.default.post(name: .localizerDidChange, object: nil)
+        AppSettings.applyAppearance()
+        reloadAllPanes()
+        onChange?()
+        onToolbarChanged?()
+        onShortcutsChanged?()
     }
 
     // MARK: - Public show API

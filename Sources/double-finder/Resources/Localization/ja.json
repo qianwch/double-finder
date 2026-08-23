@@ -532,5 +532,15 @@
   "Off: each panel's status-bar slider sizes only that panel": "オフ：各パネルのスライダーはそのパネルだけを変更",
   "Retry as Administrator": "管理者として再試行",
   "Retrying as administrator deletes the items permanently.": "管理者として再試行すると項目は完全に削除されます。",
-  "Administrator retry failed": "管理者としての再試行に失敗しました"
+  "Administrator retry failed": "管理者としての再試行に失敗しました",
+  "Command line input box:": "コマンドライン入力欄：",
+  "Fill": "背景",
+  "Border": "境界線",
+  "Focus border": "フォーカス時の境界線",
+  "Reset This Page": "このページを初期化",
+  "Restores every setting on this page to its default": "このページのすべての設定を既定値に戻します",
+  "Reset All Settings…": "すべての設定を初期化…",
+  "Restores every setting to its default; favorites and saved connections are kept": "すべての設定を既定値に戻します。お気に入りと保存済みの接続は保持されます",
+  "Reset all settings to their defaults?": "すべての設定を既定値に戻しますか？",
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "外観・パネル・ツールバー・ショートカット・フォント・配色が初期状態に戻ります。お気に入り、保存済みのサーバー接続、カスタムツールバーコマンドは保持されます。"
 }

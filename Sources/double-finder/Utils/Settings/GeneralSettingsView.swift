@@ -7,6 +7,10 @@ final class GeneralSettingsView: NSView {
     private let onChange: () -> Void
     private var terminalPopup: NSPopUpButton!
     private var editorPopup: NSPopUpButton!
+    private var languagePopup: NSPopUpButton!
+    private var viewPopup: NSPopUpButton!
+    private var foldersCheckbox: NSButton!
+    private var trashCheckbox: NSButton!
     private var terminalNames: [String] = []
     private var editorNames: [String] = []
 
@@ -78,20 +82,24 @@ final class GeneralSettingsView: NSView {
         langPop.addItems(withTitles: langs.map { $0.displayName })
         if let idx = langs.firstIndex(of: Localizer.shared.storedSelection) { langPop.selectItem(at: idx) }
         langPop.target = self; langPop.action = #selector(changeLanguage(_:))
+        self.languagePopup = langPop
 
         // Default view
         let viewPop = NSPopUpButton()
         viewPop.addItems(withTitles: [tr("Full Details"), tr("Brief"), tr("Thumbnails")])
         viewPop.selectItem(at: AppSettings.viewMode.rawValue)
         viewPop.target = self; viewPop.action = #selector(changeViewMode(_:))
+        self.viewPopup = viewPop
 
         // Folders first
         let foldersBox = NSButton(checkboxWithTitle: tr("Show folders before files"), target: self, action: #selector(toggleFolders(_:)))
         foldersBox.state = AppSettings.foldersFirst ? .on : .off
+        self.foldersCheckbox = foldersBox
 
         // Confirm trash
         let trashBox = NSButton(checkboxWithTitle: tr("Confirm before moving to Trash (⌘⌫)"), target: self, action: #selector(toggleConfirmTrash(_:)))
         trashBox.state = AppSettings.confirmTrash ? .on : .off
+        self.trashCheckbox = trashBox
 
         // Terminal app: installed candidates + "Other…" (pick any .app by hand).
         let termPop = NSPopUpButton()
@@ -125,9 +133,19 @@ final class GeneralSettingsView: NSView {
         // Full-width checkbox rows (folders-first = row 3, confirm-trash = row 4) span both columns.
         grid.translatesAutoresizingMaskIntoConstraints = false
         addSubview(grid)
+
+        let reset = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetPage))
+        reset.bezelStyle = .rounded
+        reset.toolTip = tr("Restores every setting on this page to its default")
+        reset.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(reset)
+
         NSLayoutConstraint.activate([
             grid.topAnchor.constraint(equalTo: topAnchor, constant: 20),
             grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+
+            reset.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            reset.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
         ])
     }
 
@@ -152,5 +170,29 @@ final class GeneralSettingsView: NSView {
                        current: AppSettings.editorApp) {
             AppSettings.editorApp = $0
         }
+    }
+}
+
+extension GeneralSettingsView: SettingsPaneReloadable {
+    func reloadFromModel() {
+        if let idx = Language.allCases.firstIndex(of: Localizer.shared.storedSelection) {
+            languagePopup.selectItem(at: idx)
+        }
+        viewPopup.selectItem(at: AppSettings.viewMode.rawValue)
+        foldersCheckbox.state = AppSettings.foldersFirst ? .on : .off
+        trashCheckbox.state = AppSettings.confirmTrash ? .on : .off
+        Self.fillAppPopup(terminalPopup, fixed: terminalNames.map { ($0, $0) },
+                          current: AppSettings.terminalApp)
+        Self.fillAppPopup(editorPopup, fixed: [(tr("System Default"), "")] + editorNames.map { ($0, $0) },
+                          current: AppSettings.editorApp)
+    }
+
+    @objc fileprivate func resetPage() {
+        SettingsReset.reset(category: "general")
+        // Re-read the (now absent) language key instead of writing "system" back.
+        Localizer.shared.reload()
+        NotificationCenter.default.post(name: .localizerDidChange, object: nil)
+        reloadFromModel()
+        onChange()
     }
 }
