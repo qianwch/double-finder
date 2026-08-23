@@ -5,7 +5,11 @@ import AppKit
 /// in that directory (`cd` is handled inline to navigate the panel).
 final class CommandLineBar: NSView {
     private let promptLabel = NSTextField(labelWithString: "")
-    private let input = NSTextField()
+    private let input = CommandInputField()
+    /// Field-shaped background behind the input so the typing area reads as an
+    /// input box rather than melting into the window chrome.
+    private let inputBox = NSView()
+    private var inputHasFocus = false
 
     // Tab-completion cycle state.
     fileprivate var completionMatches: [String] = []
@@ -29,7 +33,6 @@ final class CommandLineBar: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        applyAppearanceColors()
 
         promptLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         promptLabel.textColor = .secondaryLabelColor
@@ -40,26 +43,39 @@ final class CommandLineBar: NSView {
         promptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(promptLabel)
 
+        inputBox.wantsLayer = true
+        inputBox.layer?.cornerRadius = 4
+        inputBox.layer?.borderWidth = 1
+        inputBox.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(inputBox)
+
         input.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         input.useSingleLineScrolling()
         input.isBordered = false
-        input.drawsBackground = false
+        input.drawsBackground = false        // inputBox paints the background
         input.focusRingType = .none
         input.placeholderString = "Run a command here — Esc returns to the list"
         input.target = self
         input.action = #selector(execute)
         input.delegate = self
+        input.onFocusChange = { [weak self] focused in self?.setInputFocused(focused) }
         input.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(input)
+        inputBox.addSubview(input)
 
         NSLayoutConstraint.activate([
             promptLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             promptLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             promptLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.5),
-            input.leadingAnchor.constraint(equalTo: promptLabel.trailingAnchor, constant: 6),
-            input.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            input.centerYAnchor.constraint(equalTo: centerYAnchor),
+            inputBox.leadingAnchor.constraint(equalTo: promptLabel.trailingAnchor, constant: 6),
+            inputBox.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            inputBox.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            inputBox.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            input.leadingAnchor.constraint(equalTo: inputBox.leadingAnchor, constant: 5),
+            input.trailingAnchor.constraint(equalTo: inputBox.trailingAnchor, constant: -5),
+            input.centerYAnchor.constraint(equalTo: inputBox.centerYAnchor),
         ])
+
+        applyAppearanceColors()   // after wantsLayer on both views — layers exist now
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -71,8 +87,23 @@ final class CommandLineBar: NSView {
 
     private func applyAppearanceColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            // window/control/text background all resolve to the same white (or the
+            // same near-black) on current macOS, so a semantic pair gives no
+            // contrast at all. Tint with the label color instead: it inverts with
+            // the appearance, so the box stays a shade off the chrome either way.
+            inputBox.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.07).cgColor
+            inputBox.layer?.borderColor = inputHasFocus
+                ? NSColor.controlAccentColor.cgColor
+                : NSColor.labelColor.withAlphaComponent(0.18).cgColor
         }
+    }
+
+    /// Brightens the box border while the input holds the keyboard focus.
+    private func setInputFocused(_ focused: Bool) {
+        guard inputHasFocus != focused else { return }
+        inputHasFocus = focused
+        applyAppearanceColors()
     }
 
     @objc private func execute() {
@@ -111,6 +142,8 @@ extension CommandLineBar: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         if !isApplyingCompletion { resetCompletion() }   // user typed → restart cycle
     }
+
+    func controlTextDidEndEditing(_ obj: Notification) { setInputFocused(false) }
     private func resetCompletion() { completionMatches = [] }
 }
 
@@ -172,5 +205,18 @@ extension CommandLineBar {
         if d.hasPrefix("/") { return d }
         if d.hasPrefix("~") { return (d as NSString).expandingTildeInPath }
         return (prompt as NSString).appendingPathComponent(d)
+    }
+}
+
+/// Text field that reports when it takes the keyboard focus, so the bar can
+/// highlight its input box (`resignFirstResponder` is unreliable for
+/// NSTextField — focus loss comes from `controlTextDidEndEditing`).
+final class CommandInputField: NSTextField {
+    var onFocusChange: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onFocusChange?(true) }
+        return ok
     }
 }
