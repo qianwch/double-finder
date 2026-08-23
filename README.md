@@ -13,15 +13,19 @@ SwiftUI), inspired by the Total Commander workflow.
 ## Features
 
 - **Dual-pane layout** with an active panel, tabs (⌘T / ⌘W), and a directory
-  tree sidebar (⌘⇧T).
+  tree sidebar (⌘⇧D).
 - **Android phones over USB (MTP):** plug one in, pick it under ⌘K ▸ Android,
   and it appears as a drive — browse, upload, download with byte progress,
   rename, recursively delete, and copy/move *within* the phone without the data
   crossing USB.
 - **View modes** (⌘1/2/3): full details, brief, and thumbnails (Quick Look).
-- **Built-in viewer (F3):** an embedded Quick Look window that previews any file
-  type (images, PDF, text, video, audio, Office…) and steps through the whole
-  listing with the arrow keys; remote/archive files are fetched on demand.
+- **Built-in viewer (F3):** a Total Commander–style Lister with three modes —
+  text, hexadecimal and Quick Look preview (images, PDF, video, audio,
+  Office…) — chosen automatically per file and switchable with 1 / 2 / 3.
+  Syntax highlighting for 17 languages, Markdown rendered as a page (including
+  mermaid / PlantUML diagrams), ⌘F search, ⌘= / ⌘- / ⌘0 zoom, and
+  ⌘↑ / ⌘↓ to step through the listing; remote and in-archive files are
+  fetched on demand.
 - **Fast navigation:** drive bar & dropdown, favorites, command-line bar (⌘L
   with Tab completion), Go to Folder (⌘⇧G), in-place folder expansion.
 - **Archives (built-in, via libarchive):** browse / extract / create zip, tar
