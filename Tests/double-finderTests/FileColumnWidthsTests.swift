@@ -6,15 +6,20 @@ import XCTest
 final class FileColumnWidthsTests: XCTestCase {
 
     private let key = "ColumnWidths"
+    private var saved: Any?
 
     override func setUp() {
         super.setUp()
-        // Remove any leftover value so each test starts clean.
+        // This is the SHARED user defaults domain, so the user's own column
+        // widths live under this very key — stash them and put them back, never
+        // just delete (a plain `swift test` must not cost the user their layout).
+        saved = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
     }
 
     override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: key)
+        if let saved = saved { UserDefaults.standard.set(saved, forKey: key) }
+        else { UserDefaults.standard.removeObject(forKey: key) }
         super.tearDown()
     }
 

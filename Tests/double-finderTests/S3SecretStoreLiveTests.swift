@@ -13,6 +13,13 @@ final class S3SecretStoreLiveTests: XCTestCase {
     private let host = "s3secretstore-test.invalid"
     private let ak = "TESTACCESSKEY"
     private var unifiedExistedBefore = false
+    /// Set at the very end of setUp. **XCTest still runs tearDown after
+    /// `setUpWithError` throws XCTSkip** (verified), and at that point
+    /// `unifiedExistedBefore` is still its `false` default — so without this
+    /// guard the "clean up the item we created" branch below fires on a PLAIN
+    /// `swift test` and deletes the user's REAL S3 secret blob. That is not
+    /// hypothetical: it happened, twice, before this guard existed.
+    private var setUpCompleted = false
 
     private func unifiedItemExists() -> Bool {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
@@ -26,9 +33,11 @@ final class S3SecretStoreLiveTests: XCTestCase {
                           "set DF_KEYCHAIN_LIVE=1 to run live Keychain tests")
         unifiedExistedBefore = unifiedItemExists()
         S3SecretStore.delete(endpointHost: host, accessKey: ak)
+        setUpCompleted = true
     }
 
     override func tearDown() {
+        guard setUpCompleted else { return }   // skipped run: touch nothing
         S3SecretStore.delete(endpointHost: host, accessKey: ak)
         if !unifiedExistedBefore {
             let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
