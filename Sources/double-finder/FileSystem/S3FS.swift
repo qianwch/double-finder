@@ -50,6 +50,20 @@ final class S3FS: VirtualFS {
         return items
     }
 
+    /// Space-key folder size: the sum of every object under the prefix. S3 has no
+    /// directories, so this is the only meaning "folder size" can have — and
+    /// `listAllObjects` already pages through the whole tree.
+    func directorySize(_ path: String) async -> Int64 {
+        let (bucket, key) = parseS3Path(path)
+        guard let bucket = bucket else { return 0 }   // account root: nothing to sum
+        let prefix = (key.isEmpty || key.hasSuffix("/")) ? key : key + "/"
+        guard let objects = try? await client.listAllObjects(bucket: bucket, prefix: prefix) else {
+            return 0
+        }
+        // Skip the zero-byte placeholder objects that stand in for folders.
+        return objects.reduce(Int64(0)) { $0 + ($1.key.hasSuffix("/") ? 0 : $1.size) }
+    }
+
     func createDirectory(_ path: String) async throws {
         let (bucket, key) = parseS3Path(path)
         guard let bucket = bucket, !key.isEmpty else {

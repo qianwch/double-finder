@@ -115,6 +115,73 @@ class SFTPFS: VirtualFS {
         try await Task.detached(priority: .userInitiated) { [self] in try ssh(command) }.value
     }
 
+    /// Runs a remote command and hands stdout back **line by line as it arrives**.
+    /// Cancelling the surrounding Task kills the local ssh process, which closes
+    /// the channel and takes the remote `find`/`grep` down with it (their next
+    /// write hits a broken pipe) — that is what makes a long remote search
+    /// genuinely stoppable instead of merely ignored. stderr goes to /dev/null
+    /// rather than a Pipe nobody drains: a 64 KB backlog of "Permission denied"
+    /// would otherwise block ssh and stall stdout with it.
+    func streamCommand(_ command: String, onLine: @escaping (String) -> Void) async throws {
+        let box = SSHProcessBox()
+        try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) { [self] in
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+                proc.arguments = sshArgs(command)
+                let out = Pipe()
+                proc.standardOutput = out
+                proc.standardError = FileHandle.nullDevice
+                guard box.adopt(proc) else { return }   // cancelled before launch
+                try proc.run()
+                let handle = out.fileHandleForReading
+                var pending = Data()
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }           // EOF, or the process was killed
+                    pending.append(chunk)
+                    while let newline = pending.firstIndex(of: 0x0A) {
+                        let line = String(data: pending[..<newline], encoding: .utf8)
+                        pending = Data(pending[pending.index(after: newline)...])
+                        if let line = line, !line.isEmpty { onLine(line) }
+                    }
+                }
+                if let tail = String(data: pending, encoding: .utf8), !tail.isEmpty { onLine(tail) }
+                proc.waitUntilExit()
+            }.value
+        } onCancel: {
+            box.terminate()
+        }
+        try Task.checkCancellation()
+    }
+
+    /// Space-key folder size. Runs `du` on the **server** — one round-trip
+    /// instead of walking the tree over ssh. GNU `du -sb` reports apparent bytes,
+    /// which is what the panel shows for remote files (`ls` sizes are apparent
+    /// too). BusyBox has no `-b`, so fall back to `-sk` (KiB) and scale — same
+    /// shape as the `find -printf` fallback in Find Files.
+    func directorySize(_ path: String) async -> Int64 {
+        await Task.detached(priority: .utility) { [self] in
+            let quoted = Self.shellQuote(path)
+            if let bytes = Self.parseDuSize((try? ssh("du -sb -- \(quoted) 2>/dev/null")) ?? "") {
+                return bytes
+            }
+            if let kib = Self.parseDuSize((try? ssh("du -sk -- \(quoted) 2>/dev/null")) ?? "") {
+                return kib * 1024
+            }
+            return 0
+        }.value
+    }
+
+    /// First whitespace-separated field of `du`'s first output line ("1234\t/path").
+    /// Pure → unit-tested.
+    static func parseDuSize(_ output: String) -> Int64? {
+        guard let line = output.split(separator: "\n").first,
+              let field = line.split(whereSeparator: { $0 == "\t" || $0 == " " }).first
+        else { return nil }
+        return Int64(field)
+    }
+
     /// Resolves the remote home directory (used when connecting with "~").
     func resolveHome() async -> String {
         await Task.detached(priority: .userInitiated) { [self] in
@@ -229,5 +296,29 @@ class SFTPFS: VirtualFS {
         let parent = (path as NSString).deletingLastPathComponent
         let dest = parent + "/" + newName
         try await Task.detached(priority: .userInitiated) { [self] in _ = try ssh("mv \"\(path)\" \"\(dest)\"") }.value
+    }
+}
+
+/// Holds the running ssh process behind a lock so a cancellation handler — which
+/// fires on whatever thread cancelled — can terminate it without racing launch.
+private final class SSHProcessBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var cancelled = false
+
+    /// Registers the process; false means cancellation already won, don't launch.
+    func adopt(_ process: Process) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if cancelled { return false }
+        self.process = process
+        return true
+    }
+
+    func terminate() {
+        lock.lock()
+        cancelled = true
+        let process = self.process
+        lock.unlock()
+        if let process = process, process.isRunning { process.terminate() }
     }
 }

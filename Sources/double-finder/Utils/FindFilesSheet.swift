@@ -2,14 +2,23 @@ import AppKit
 
 /// Total Commander-style "Find Files": search by name (wildcard/regex) and
 /// optionally by file content, recursively, with a results list you can jump to.
+/// Runs against the active panel's backend — local, SFTP or S3 — and can be
+/// stopped mid-scan (the Search button becomes Stop).
 final class FindFilesSheet: NSWindowController {
+    private let endpoint: SearchEndpoint
     private let startDir: String
+    private let isRemote: Bool
     var onGoTo: ((String) -> Void)?
     /// Called with all current results to display them in the active panel.
-    var onFeed: (([String]) -> Void)?
+    /// `remoteMeta` is non-nil for SFTP/S3 results (size + mtime the panel can't
+    /// stat for itself).
+    var onFeed: (([String], [String: SearchHit]?) -> Void)?
     /// F4 on a result: open it in the configured editor (wired to
     /// MainViewController.openInEditor, same app the panels' F4 uses).
     var onEdit: ((URL) -> Void)?
+    /// F3 / Space on a remote result: hand the hits to MainViewController, which
+    /// downloads them on demand and opens the internal viewer.
+    var onViewRemote: (([SearchHit]) -> Void)?
 
     private let nameField = NSTextField()
     private let contentField = NSTextField()
@@ -22,14 +31,29 @@ final class FindFilesSheet: NSWindowController {
     private let dupContentCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
     private let table = ResultsTableView()
+    private let searchBtn = NSButton(title: "", target: nil, action: nil)
+    /// Display rows: full paths, plus "" separators between duplicate groups.
     private var results: [String] = []
+    /// Non-nil while the results came off a remote backend.
+    private var remoteMeta: [String: SearchHit]?
     private var searchTask: Task<Void, Never>?
+    /// Bumped per search so a superseded run's late progress is ignored.
+    private var generation = 0
 
-    init(startDir: String) {
-        self.startDir = startDir
+    /// Outcome of one run, so cancellation and failure share the finish path.
+    private enum Outcome {
+        case done([SearchHit])
+        case stopped
+        case failed(Error)
+    }
+
+    init(endpoint: SearchEndpoint) {
+        self.endpoint = endpoint
+        self.startDir = endpoint.base
+        self.isRemote = endpoint.isRemote
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 510),
                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "\(tr("Find Files")) — \(startDir)"
+        window.title = "\(tr("Find Files")) — \(endpoint.displayBase)"
         super.init(window: window)
         setupUI()
     }
@@ -53,9 +77,18 @@ final class FindFilesSheet: NSWindowController {
         dupCheck.target = self; dupCheck.action = #selector(dupToggled)
         dupNameCheck.state = .on; dupSizeCheck.state = .on   // TC's defaults
         nameField.stringValue = "*"
+        contentField.toolTip = tr("Only text files match; binary files are skipped. Except on SFTP, files over 8 MB are not read.")
         [nameField, contentField].forEach { $0.bezelStyle = .roundedBezel; $0.font = .systemFont(ofSize: 12); $0.useSingleLineScrolling() }
         subfoldersCheck.state = .on
         statusLabel.font = .systemFont(ofSize: 10); statusLabel.textColor = .secondaryLabelColor
+        // Spotlight and the duplicate scan are both local-index / local-hash
+        // machinery with no remote equivalent — disable rather than mislead.
+        if isRemote {
+            let note = tr("Not available on a remote connection")
+            [spotlightCheck, dupCheck, dupNameCheck, dupSizeCheck, dupContentCheck].forEach {
+                $0.state = .off; $0.isEnabled = false; $0.toolTip = note
+            }
+        }
         updateDupAvailability()
 
         table.headerView = NSTableHeaderView(); table.rowHeight = 18
@@ -71,7 +104,7 @@ final class FindFilesSheet: NSWindowController {
         let scroll = NSScrollView(); scroll.documentView = table
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
 
-        let searchBtn = NSButton(title: tr("Search"), target: self, action: #selector(searchClicked))
+        searchBtn.title = tr("Search"); searchBtn.target = self; searchBtn.action = #selector(searchClicked)
         searchBtn.bezelStyle = .rounded; searchBtn.keyEquivalent = "\r"
         let feedBtn = NSButton(title: tr("Feed to Panel"), target: self, action: #selector(feedClicked))
         feedBtn.bezelStyle = .rounded
@@ -124,6 +157,7 @@ final class FindFilesSheet: NSWindowController {
 
             statusLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             statusLabel.centerYAnchor.constraint(equalTo: searchBtn.centerYAnchor),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: searchBtn.leadingAnchor, constant: -10),
             searchBtn.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
             closeBtn.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             closeBtn.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
@@ -140,31 +174,38 @@ final class FindFilesSheet: NSWindowController {
     @objc private func dupToggled() { updateDupAvailability() }
 
     private func updateDupAvailability() {
+        guard !isRemote else { return }   // everything stays as disabled as setupUI left it
         let dup = dupCheck.state == .on
         [dupNameCheck, dupSizeCheck, dupContentCheck].forEach { $0.isEnabled = dup }
         [contentField, regexCheck, spotlightCheck].forEach { $0.isEnabled = !dup }
     }
 
+    // MARK: - Running a search
+
+    private var isRunning: Bool { searchTask != nil }
+
     @objc private func searchClicked() {
+        if isRunning { stopSearch(); return }
         let name = nameField.stringValue.isEmpty ? "*" : nameField.stringValue
         let text = contentField.stringValue
         let sub = subfoldersCheck.state == .on
         let regex = regexCheck.state == .on
         let spotlight = spotlightCheck.state == .on
-        statusLabel.stringValue = tr("Searching…")
         let start = startDir
+
         if dupCheck.state == .on {
             let options = DuplicateScan.Options(sameName: dupNameCheck.state == .on,
                                                 sameSize: dupSizeCheck.state == .on,
                                                 sameContent: dupContentCheck.state == .on)
             guard !options.isEmpty else { statusLabel.stringValue = ""; NSSound.beep(); return }
-            searchTask?.cancel()
+            beginRun()
+            let gen = generation
             searchTask = Task.detached(priority: .userInitiated) { [weak self] in
                 let groups = Self.findDuplicates(start: start, namePattern: name,
                                                  subfolders: sub, options: options)
-                if Task.isCancelled { return }
-                guard let self else { return }
-                await MainActor.run {
+                let stopped = Task.isCancelled
+                await MainActor.run { [weak self] in
+                    guard let self, gen == self.generation else { return }
                     // Flatten with an empty separator row between groups (the
                     // row actions all skip non-path rows).
                     var rows: [String] = []
@@ -173,32 +214,122 @@ final class FindFilesSheet: NSWindowController {
                         rows += group.map(\.path)
                     }
                     self.results = rows
+                    self.remoteMeta = nil
                     self.table.reloadData()
                     let count = groups.reduce(0) { $0 + $1.count }
-                    self.statusLabel.stringValue = tr("%1$d duplicates in %2$d groups", count, groups.count)
+                    self.statusLabel.stringValue = stopped
+                        ? tr("Stopped — %d matches", count)
+                        : tr("%1$d duplicates in %2$d groups", count, groups.count)
+                    self.endRun()
                 }
             }
             return
         }
-        // Run the scan on a background task — the recursive file walk / mdfind can
-        // take seconds and MUST NOT run on the main actor or the UI freezes. The
-        // static search helpers are `nonisolated`, so inside `Task.detached` they
-        // execute off the main thread; only the UI update hops back via MainActor.run.
-        searchTask?.cancel()
+
+        if spotlight {
+            beginRun()
+            let gen = generation
+            searchTask = Task.detached(priority: .userInitiated) { [weak self] in
+                let found = Self.spotlightSearch(start: start, namePattern: name,
+                                                 content: text, subfolders: sub)
+                let stopped = Task.isCancelled
+                await MainActor.run { [weak self] in
+                    guard let self, gen == self.generation else { return }
+                    self.results = found
+                    self.remoteMeta = nil
+                    self.table.reloadData()
+                    self.statusLabel.stringValue = stopped
+                        ? tr("Stopped — %d matches", found.count)
+                        : Self.matchCountText(found.count)
+                    self.endRun()
+                }
+            }
+            return
+        }
+
+        // The scan runs on a *detached* task: the local walk blocks its thread
+        // and the remote ssh / S3 round-trips take seconds, so neither may touch
+        // the main actor. Cancelling this task really stops the work — the walk
+        // polls `Task.isCancelled`, the ssh process is killed, S3 requests abort.
+        let query = FileSearchQuery(namePattern: name, content: text,
+                                    subfolders: sub, regexName: regex)
+        let endpoint = self.endpoint
+        let remote = isRemote
+        beginRun()
+        let gen = generation
         searchTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let found = spotlight
-                ? Self.spotlightSearch(start: start, namePattern: name, content: text, subfolders: sub)
-                : Self.search(start: start, namePattern: name, content: text, subfolders: sub, regexName: regex)
-            if Task.isCancelled { return }
-            guard let self else { return }
-            await MainActor.run {
-                self.results = found
-                self.table.reloadData()
-                self.statusLabel.stringValue = found.count == 1
-                    ? tr("1 match")
-                    : tr("%d matches", found.count)
+            let outcome: Outcome
+            do {
+                let hits = try await FileSearch.run(endpoint: endpoint, query: query) { hits, scanned in
+                    Task { @MainActor [weak self] in
+                        self?.applyProgress(hits, scanned: scanned, generation: gen, remote: remote)
+                    }
+                }
+                outcome = .done(hits)
+            } catch is CancellationError {
+                outcome = .stopped
+            } catch {
+                outcome = .failed(error)
+            }
+            await MainActor.run { [weak self] in
+                self?.finish(outcome, generation: gen, remote: remote)
             }
         }
+    }
+
+    private func stopSearch() {
+        searchTask?.cancel()
+        generation &+= 1            // ignore anything still in flight
+        endRun()
+        statusLabel.stringValue = tr("Stopped — %d matches", results.filter { !$0.isEmpty }.count)
+    }
+
+    private func beginRun() {
+        generation &+= 1
+        results = []
+        remoteMeta = nil
+        table.reloadData()
+        statusLabel.stringValue = tr("Searching…")
+        searchBtn.title = tr("Stop")
+    }
+
+    private func endRun() {
+        searchTask = nil
+        searchBtn.title = tr("Search")
+    }
+
+    /// Live update while a scan is running: remote scans can take a while, so the
+    /// hits and the examined-file count land as they come instead of at the end.
+    private func applyProgress(_ hits: [SearchHit], scanned: Int, generation gen: Int, remote: Bool) {
+        guard gen == generation, isRunning else { return }
+        show(hits, remote: remote)
+        statusLabel.stringValue = tr("Searching… %1$d scanned, %2$d found", scanned, hits.count)
+    }
+
+    private func finish(_ outcome: Outcome, generation gen: Int, remote: Bool) {
+        guard gen == generation else { return }
+        endRun()
+        switch outcome {
+        case .done(let hits):
+            show(hits, remote: remote)
+            statusLabel.stringValue = Self.matchCountText(hits.count)
+        case .stopped:
+            statusLabel.stringValue = tr("Stopped — %d matches", results.filter { !$0.isEmpty }.count)
+        case .failed(let error):
+            statusLabel.stringValue = tr("Search failed: %@", error.localizedDescription)
+        }
+    }
+
+    private func show(_ hits: [SearchHit], remote: Bool) {
+        results = hits.map(\.path)
+        remoteMeta = remote
+            ? Dictionary(hits.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+            : nil
+        table.reloadData()
+    }
+
+    private static func matchCountText(_ count: Int) -> String {
+        count == 1 ? tr("1 match") : tr("%d matches", count)
     }
 
     /// Queries Spotlight via `mdfind` — fast (uses the system index) and, unlike
@@ -258,17 +389,12 @@ final class FindFilesSheet: NSWindowController {
     nonisolated static func findDuplicates(start: String, namePattern: String, subfolders: Bool,
                                            options: DuplicateScan.Options) -> [[DuplicateScan.FileInfo]] {
         let fm = FileManager.default
-        let hasWildcard = namePattern.contains(where: { "*?[".contains($0) })
-        func nameMatches(_ fileName: String) -> Bool {
-            if namePattern.isEmpty || namePattern == "*" { return true }
-            if hasWildcard { return fnmatch(namePattern, fileName, FNM_CASEFOLD) == 0 }
-            return fileName.localizedCaseInsensitiveContains(namePattern)
-        }
+        let matcher = SearchNameMatcher(pattern: namePattern, isRegex: false)
 
         var files: [DuplicateScan.FileInfo] = []
         func collect(_ url: URL) {
             guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                  values.isRegularFile == true, nameMatches(url.lastPathComponent) else { return }
+                  values.isRegularFile == true, matcher.matches(url.lastPathComponent) else { return }
             files.append(DuplicateScan.FileInfo(path: url.path, name: url.lastPathComponent,
                                                 size: Int64(values.fileSize ?? 0)))
         }
@@ -293,56 +419,11 @@ final class FindFilesSheet: NSWindowController {
                                    isCancelled: { Task.isCancelled })
     }
 
-    nonisolated static func search(start: String, namePattern: String, content: String,
-                       subfolders: Bool, regexName: Bool) -> [String] {
-        let fm = FileManager.default
-        let startURL = URL(fileURLWithPath: start)
-        let re = regexName ? try? NSRegularExpression(pattern: namePattern, options: [.caseInsensitive]) : nil
-        var results: [String] = []
-
-        // Pre-classify the pattern once (not per file).
-        let hasWildcard = namePattern.contains(where: { "*?[".contains($0) })
-        func nameMatches(_ fileName: String) -> Bool {
-            if regexName {
-                guard let re = re else { return false }
-                return re.firstMatch(in: fileName, range: NSRange(fileName.startIndex..., in: fileName)) != nil
-            }
-            if namePattern.isEmpty { return true }
-            // With glob metacharacters, match as a wildcard (case-insensitive);
-            // plain text matches as a case-insensitive substring (what users
-            // expect — "技术架构" finds "MetaIT 技术架构_2025…").
-            if hasWildcard {
-                return fnmatch(namePattern, fileName, FNM_CASEFOLD) == 0
-            }
-            return fileName.localizedCaseInsensitiveContains(namePattern)
-        }
-        func contentMatches(_ url: URL) -> Bool {
-            if content.isEmpty { return true }
-            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe), data.count < 8_000_000,
-                  let str = String(data: data, encoding: .utf8) else { return false }
-            return str.localizedCaseInsensitiveContains(content)
-        }
-
-        if subfolders {
-            guard let en = fm.enumerator(at: startURL, includingPropertiesForKeys: [.isRegularFileKey],
-                                         options: [], errorHandler: { _, _ in true }) else { return [] }
-            while let url = en.nextObject() as? URL {
-                if Task.isCancelled { break }   // a newer search superseded this one
-                if nameMatches(url.lastPathComponent), contentMatches(url) {
-                    results.append(url.path)
-                    if results.count >= 5000 { break }
-                }
-            }
-        } else {
-            let urls = (try? fm.contentsOfDirectory(at: startURL, includingPropertiesForKeys: nil)) ?? []
-            for url in urls where nameMatches(url.lastPathComponent) && contentMatches(url) {
-                results.append(url.path)
-            }
-        }
-        return results.sorted()
-    }
+    // MARK: - Result actions
 
     /// "Go to File" button: closes the sheet and reveals the file in its folder.
+    /// Works remotely too — the panel is still connected, so navigating to the
+    /// hit's parent directory lands on the server.
     @objc private func goToSelected() {
         let row = table.selectedRow
         guard row >= 0, row < results.count, !results[row].isEmpty else { return }
@@ -352,29 +433,40 @@ final class FindFilesSheet: NSWindowController {
     }
 
     /// Double-click: open the file with its default app (don't leave the search).
+    /// A remote hit has no local URL to open, so it jumps to the file instead.
     @objc private func openSelected() {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard row >= 0, row < results.count, !results[row].isEmpty else { return }
+        if isRemote { goToSelected(); return }
         NSWorkspace.shared.open(URL(fileURLWithPath: results[row]))
     }
 
-    /// Space: preview the selected result(s) in the internal viewer (Esc closes it).
-    private func quickLookSelected() {
-        let urls = table.selectedRowIndexes
+    private var selectedHits: [SearchHit] {
+        table.selectedRowIndexes
             .filter { $0 < results.count && !results[$0].isEmpty }
-            .map { URL(fileURLWithPath: results[$0]) }
-        guard !urls.isEmpty else { return }
+            .map { remoteMeta?[results[$0]] ?? SearchHit(path: results[$0]) }
+    }
+
+    /// Space / F3: preview the selected result(s) in the internal viewer (Esc
+    /// closes it). Remote hits are downloaded on demand by MainViewController.
+    private func quickLookSelected() {
+        let hits = selectedHits
+        guard !hits.isEmpty else { return }
+        if isRemote { onViewRemote?(hits); return }
+        let urls = hits.map { URL(fileURLWithPath: $0.path) }
         let entries = urls.map { url in ViewerEntry(title: url.lastPathComponent, resolve: { url }) }
         InternalViewerController.shared.show(entries: entries, start: 0, onIndexChange: nil)
     }
 
     /// F4: open the first selected non-directory result in the editor (same
-    /// single-file semantics as the panels' F4; the sheet stays open).
+    /// single-file semantics as the panels' F4; the sheet stays open). Remote
+    /// results have no local file to hand the editor — Feed to Panel, then F4
+    /// there, which sets up the download + write-back session properly.
     private func editSelected() {
+        guard !isRemote else { NSSound.beep(); return }
         var dir: ObjCBool = false
-        let path = table.selectedRowIndexes
-            .filter { $0 < results.count && !results[$0].isEmpty }
-            .map { results[$0] }
+        let path = selectedHits
+            .map(\.path)
             .first { FileManager.default.fileExists(atPath: $0, isDirectory: &dir) && !dir.boolValue }
         guard let path else { return }
         onEdit?(URL(fileURLWithPath: path))
@@ -385,7 +477,7 @@ final class FindFilesSheet: NSWindowController {
         let r = results.filter { !$0.isEmpty }   // drop duplicate-group separators
         guard !r.isEmpty else { return }
         window?.sheetParent?.endSheet(window!, returnCode: .OK)
-        onFeed?(r)
+        onFeed?(r, remoteMeta)
     }
 
     @objc private func closeClicked() {
@@ -398,10 +490,11 @@ final class FindFilesSheet: NSWindowController {
         // The completion handler is the one hook that sees every one of them:
         // `windowWillClose` does NOT fire for a sheet — `endSheet` orders it out
         // rather than closing it (verified against AppKit). Without this the
-        // recursive walk and the SHA-256 duplicate pass keep burning CPU and disk
-        // on a large tree with nobody left to show the results to; the helpers
-        // poll `Task.isCancelled` in their walk loops, so cancelling really does
-        // stop the work rather than just discarding its result.
+        // recursive walk, the SHA-256 duplicate pass and the remote find/grep
+        // keep burning CPU, disk and bandwidth with nobody left to show the
+        // results to; the helpers poll `Task.isCancelled` in their walk loops and
+        // the ssh process is terminated outright, so cancelling really does stop
+        // the work rather than just discarding its result.
         parent.beginSheet(window!) { [weak self] _ in
             self?.searchTask?.cancel()
             self?.searchTask = nil

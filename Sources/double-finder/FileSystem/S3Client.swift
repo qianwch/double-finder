@@ -108,16 +108,30 @@ final class S3Client {
 
     /// Like `listAllKeys` but keeps each object's size + modified date.
     /// No delimiter → recurses the whole tree under `prefix`, paginated.
-    func listAllObjects(bucket: String, prefix: String) async throws -> [S3ObjectInfo] {
+    /// `onPage` (Find Files) sees each page as it lands, so a bucket with a
+    /// million keys shows progress instead of a frozen sheet; cancellation is
+    /// checked between pages so stopping a search stops the listing too.
+    func listAllObjects(bucket: String, prefix: String,
+                        onPage: (([S3ObjectInfo]) -> Void)? = nil) async throws -> [S3ObjectInfo] {
         var out: [S3ObjectInfo] = []; var token: String? = nil
         repeat {
+            try Task.checkCancellation()
             var q = ["list-type": "2", "prefix": prefix]
             if let t = token { q["continuation-token"] = t }
             let (data, _) = try await send(method: "GET", bucket: bucket, key: "", query: q)
             let r = S3XML.listObjects(data)
             out += r.objects; token = r.nextToken
+            onPage?(r.objects)
         } while token != nil
         return out
+    }
+
+    /// Fetches a whole object into memory. Used by Find Files' content search,
+    /// which only ever asks for objects it has already size-filtered — there is
+    /// no server-side grep in S3, so the bytes have to come to us.
+    func getObjectData(bucket: String, key: String) async throws -> Data {
+        let (data, _) = try await send(method: "GET", bucket: bucket, key: key)
+        return data
     }
 
     /// Downloads to a local path, streaming via `bytes(for:)` so memory stays flat.

@@ -22,6 +22,15 @@ final class AndroidFS: VirtualFS {
         try await registry.list(sessionID, path: path)
     }
 
+    /// Space-key folder size. MTP has no `du` and no size-of-subtree property, so
+    /// the only way is to walk — `listTree` already does that on the device's
+    /// serial queue. Costs one USB round-trip per folder underneath, which is why
+    /// `calculateAllFolderSizes` probes Android folders one at a time.
+    func directorySize(_ path: String) async -> Int64 {
+        guard let files = try? await registry.listTree(sessionID, path: path) else { return 0 }
+        return files.reduce(Int64(0)) { $0 + $1.size }
+    }
+
     /// Direction is inferred from `from`, mirroring `S3FS.copy`: a path that
     /// exists on disk is a local source (upload), anything else is a device path
     /// (download). Device paths are virtual (`/内部存储/…`) and never collide

@@ -110,13 +110,41 @@ class PanelState: ObservableObject {
     /// Non-nil while the panel is showing search results (a flat list of files
     /// from arbitrary locations) instead of a real directory. `searchBase` is the
     /// folder the search started in (used for the displayed relative names).
-    private(set) var searchResults: [String]?
+    private(set) var searchResults: [String]? {
+        // Every exit from a search listing clears `searchResults`; hanging the
+        // remote metadata off that assignment means none of those call sites can
+        // forget to clear it too.
+        didSet { if searchResults == nil { searchRemoteMeta = nil } }
+    }
     private(set) var searchBase = ""
+
+    /// Size + mtime per result path, set only for SFTP/S3 results. There is no
+    /// cheap per-path stat on those backends, so the searcher hands over what the
+    /// remote listing already told it and `searchResultItems` uses it instead of
+    /// touching FileManager (which would report every remote path as missing and
+    /// silently drop the whole result set).
+    private(set) var searchRemoteMeta: [String: SearchHit]?
 
     /// Feeds a set of result paths into this panel as a virtual listing the user
     /// can act on (copy/move/delete/Quick Look). Leaving (goUp / navigate) exits.
     func feedSearchResults(_ paths: [String], base: String) {
+        feed(paths: paths, base: base, remoteMeta: nil)
+    }
+
+    /// Remote (SFTP / S3) variant: the hits carry their own size + mtime.
+    /// The panel stays connected, so the fed items are live remote paths —
+    /// F3/F4/F5/F8 on them go through the panel's own `fs` as usual.
+    func feedRemoteSearchResults(_ hits: [SearchHit], base: String) {
+        feed(paths: hits.map(\.path), base: base,
+             remoteMeta: Dictionary(hits.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a }))
+    }
+
+    /// One load, not two: the metadata must be in place *before* loadDirectory
+    /// runs, or the first (metadata-less) pass would stat remote paths locally,
+    /// find nothing, and briefly show an empty panel.
+    private func feed(paths: [String], base: String, remoteMeta: [String: SearchHit]?) {
         searchResults = paths
+        searchRemoteMeta = remoteMeta
         searchBase = base
         branchView = false
         currentPath = base
@@ -128,7 +156,13 @@ class PanelState: ObservableObject {
 
     /// Builds FileItems for search results: name is the path relative to `base`
     /// (so files from different folders don't collide), path is the full path.
-    nonisolated static func searchResultItems(paths: [String], base: String, showHidden: Bool) -> [FileItem] {
+    /// With `remoteMeta` the paths live on a remote backend: no stat, no symlink
+    /// resolution — size/date come from the map the searcher built.
+    nonisolated static func searchResultItems(paths: [String], base: String, showHidden: Bool,
+                                              remoteMeta: [String: SearchHit]? = nil) -> [FileItem] {
+        if let remoteMeta = remoteMeta {
+            return remoteSearchResultItems(paths: paths, base: base, meta: remoteMeta)
+        }
         // Resolve symlinks on both sides so the relative-name prefix matches even
         // when one side is /tmp and the other /private/tmp (etc.).
         let rb = (base as NSString).resolvingSymlinksInPath
@@ -146,6 +180,24 @@ class PanelState: ObservableObject {
                 isArchive: FileItem.isArchiveFileName(leaf),
                 size: (attrs?[.size] as? Int64) ?? 0,
                 modified: (attrs?[.modificationDate] as? Date) ?? Date(),
+                isHidden: false, isSymlink: false, permissions: "")
+        }
+    }
+
+    /// Remote search results → FileItems. Names are relative to `base` when the
+    /// hit sits under it (SFTP), and relative to the bucket otherwise (S3, whose
+    /// keys are absolute within the bucket regardless of where the panel is).
+    nonisolated static func remoteSearchResultItems(paths: [String], base: String,
+                                                    meta: [String: SearchHit]) -> [FileItem] {
+        let prefix = base.hasSuffix("/") ? base : base + "/"
+        return paths.map { full in
+            let leaf = (full as NSString).lastPathComponent
+            let rel = full.hasPrefix(prefix) ? String(full.dropFirst(prefix.count)) : leaf
+            let hit = meta[full]
+            return FileItem(
+                id: UUID(), name: rel, path: full, isDirectory: false,
+                isArchive: FileItem.isArchiveFileName(leaf),
+                size: hit?.size ?? 0, modified: hit?.modified ?? Date(),
                 isHidden: false, isSymlink: false, permissions: "")
         }
     }
@@ -181,16 +233,43 @@ class PanelState: ObservableObject {
         if let ra = remoteArchive { return ra }
         if let device = android { return AndroidFS(device: device, currentPath: currentPath) }
         if let conn = sftp { return SFTPFS(connection: conn) }
-        if let conn = s3 {
-            // Tolerate an endpoint typed without a scheme (e.g. "obs.example.com"):
-            // a scheme-less string parses to a URL with no host, breaking requests.
-            let raw = conn.endpoint.contains("://") ? conn.endpoint : "https://\(conn.endpoint)"
-            let ep = S3Endpoint(base: URL(string: raw) ?? URL(string: "https://s3.amazonaws.com")!,
-                                region: conn.region, pathStyle: conn.pathStyle)
-            let signer = S3Signer(accessKey: conn.accessKey, secretKey: s3Secret, region: conn.region)
-            return S3FS(client: S3Client(endpoint: ep, signer: signer), currentPath: currentPath)
-        }
+        if let conn = s3 { return S3FS(client: s3Client(conn), currentPath: currentPath) }
         return Self.fileSystem(for: currentPath)
+    }
+
+    /// Builds the signed REST client for an S3 connection. Shared by `fs` and
+    /// `searchEndpoint` — the secret lives here, so nothing outside PanelState
+    /// can (or has to) assemble one.
+    private func s3Client(_ conn: S3Connection) -> S3Client {
+        // Tolerate an endpoint typed without a scheme (e.g. "obs.example.com"):
+        // a scheme-less string parses to a URL with no host, breaking requests.
+        let raw = conn.endpoint.contains("://") ? conn.endpoint : "https://\(conn.endpoint)"
+        let ep = S3Endpoint(base: URL(string: raw) ?? URL(string: "https://s3.amazonaws.com")!,
+                            region: conn.region, pathStyle: conn.pathStyle)
+        let signer = S3Signer(accessKey: conn.accessKey, secretKey: s3Secret, region: conn.region)
+        return S3Client(endpoint: ep, signer: signer)
+    }
+
+    /// The Find Files backend for this panel: the connected remote when there is
+    /// one, the local tree otherwise. nil where there is nothing to search —
+    /// inside an archive (local or remote), or at the S3 account root (no bucket
+    /// yet, so no prefix to list).
+    var searchEndpoint: SearchEndpoint? {
+        if remoteArchive != nil { return nil }
+        if let device = android {
+            // The device root lists storages rather than files; walking from
+            // there is fine (it recurses into each storage).
+            return .android(device, label: androidLabel, base: currentPath)
+        }
+        if let conn = sftp { return .sftp(conn, base: currentPath) }
+        if let conn = s3 {
+            let (bucket, key) = parseS3Path(currentPath)
+            guard let bucket = bucket else { return nil }
+            let prefix = (key.isEmpty || key.hasSuffix("/")) ? key : key + "/"
+            return .s3(s3Client(conn), bucket: bucket, prefix: prefix, base: currentPath)
+        }
+        if Self.archiveRoot(in: currentPath) != nil { return nil }
+        return .local(base: currentPath)
     }
 
     /// True when the panel is showing a remote location (SFTP / S3 / a remote
@@ -246,14 +325,7 @@ class PanelState: ObservableObject {
     }
 
     /// The S3 client for the active S3 session, or nil if not connected to S3.
-    var s3Client: S3Client? {
-        guard let conn = s3 else { return nil }
-        let raw = conn.endpoint.contains("://") ? conn.endpoint : "https://\(conn.endpoint)"
-        let ep = S3Endpoint(base: URL(string: raw) ?? URL(string: "https://s3.amazonaws.com")!,
-                            region: conn.region, pathStyle: conn.pathStyle)
-        let signer = S3Signer(accessKey: conn.accessKey, secretKey: s3Secret, region: conn.region)
-        return S3Client(endpoint: ep, signer: signer)
-    }
+    var s3Client: S3Client? { s3.map(s3Client) }
 
     /// Local path to fall back to when an *initial* remote connection fails — captured
     /// just before entering a remote session (only while still local). Defaults to home.
@@ -479,6 +551,7 @@ class PanelState: ObservableObject {
         let branch = branchView && sftp == nil
         let searchPaths = searchResults
         let searchBaseDir = searchBase
+        let searchMeta = searchRemoteMeta
         let showHiddenSnapshot = showHidden
         Task {
             do {
@@ -487,7 +560,8 @@ class PanelState: ObservableObject {
                     // Building result items stats every path — run off the main actor
                     // (up to 5000 files) or the panel freezes while it lists results.
                     loaded = await Task.detached(priority: .userInitiated) {
-                        Self.searchResultItems(paths: sp, base: searchBaseDir, showHidden: showHiddenSnapshot)
+                        Self.searchResultItems(paths: sp, base: searchBaseDir,
+                                               showHidden: showHiddenSnapshot, remoteMeta: searchMeta)
                     }.value
                 } else if branch {
                     // Branch view recursively enumerates the whole tree (up to 20k
@@ -841,12 +915,50 @@ class PanelState: ObservableObject {
         onChange?()
     }
 
+    /// How many remote folders may be sized at once (Alt+Shift+Space). Each probe
+    /// is a full round-trip — an ssh `du`, a paged S3 listing, or an MTP tree walk
+    /// — so firing one per row of a 200-entry listing would open 200 ssh
+    /// connections at once. Android gets 1: libmtp is funnelled through a single
+    /// per-device serial queue anyway, so extra tasks would only queue up and make
+    /// cancellation-free work sit in front of the user's next action.
+    nonisolated static func remoteSizeConcurrency(android: Bool) -> Int { android ? 1 : 4 }
+
     /// Computes the recursive size of **every visible folder** in the panel at
-    /// once (TC's Alt+Shift+Space). Each folder is sized independently/concurrently
-    /// via `calculateSize`; already-computed and non-directory rows are skipped.
+    /// once (TC's Alt+Shift+Space). Local folders are sized independently and
+    /// concurrently; remote ones go through a bounded queue (see
+    /// `remoteSizeConcurrency`). Already-computed and non-directory rows are skipped.
     func calculateAllFolderSizes() {
-        for index in items.indices where items[index].isDirectory && items[index].name != ".." {
-            calculateSize(at: index)
+        let targets: [(id: UUID, path: String)] = items.indices
+            .filter { items[$0].isDirectory && items[$0].name != ".." && items[$0].calculatedSize == nil }
+            .map { (items[$0].id, items[$0].path) }
+        guard !targets.isEmpty else { return }
+
+        guard isRemote else {
+            for index in items.indices where items[index].isDirectory && items[index].name != ".." {
+                calculateSize(at: index)
+            }
+            return
+        }
+
+        let fs = self.fs
+        let limit = Self.remoteSizeConcurrency(android: android != nil)
+        Task {
+            var next = 0
+            await withTaskGroup(of: (UUID, Int64).self) { group in
+                func schedule() {
+                    guard next < targets.count else { return }
+                    let target = targets[next]
+                    next += 1
+                    group.addTask { (target.id, await fs.directorySize(target.path)) }
+                }
+                for _ in 0..<min(limit, targets.count) { schedule() }
+                while let (id, size) = await group.next() {
+                    // Apply as each one lands, so folders fill in progressively
+                    // instead of all at the end of a long remote sweep.
+                    self.applyCalculatedSize(id: id, size: size)
+                    schedule()
+                }
+            }
         }
     }
 
@@ -860,39 +972,44 @@ class PanelState: ObservableObject {
         let id = item.id
         Task {
             let size = await fs.directorySize(path)
-            await MainActor.run {
-                if let i = self.items.firstIndex(where: { $0.id == id }) {
-                    self.items[i].calculatedSize = size
-                    // Bump explicitly: updateDisplay gates the list re-feed on
-                    // itemsVersion, so the async folder-size result must mark the
-                    // list dirty or the Size column would stay blank.
-                    self.itemsVersion &+= 1
-                }
-                // Write the computed size back into the authoritative caches too,
-                // not just the visible `items` — otherwise re-sorting by Size (which
-                // sorts `allLoadedItems`) would still see calculatedSize == nil and
-                // fall back to the shallow folder size.
-                if let i = self.allLoadedItems.firstIndex(where: { $0.id == id }) {
-                    self.allLoadedItems[i].calculatedSize = size
-                }
-                for (parent, var kids) in self.expandedChildren {
-                    if let i = kids.firstIndex(where: { $0.id == id }) {
-                        kids[i].calculatedSize = size
-                        self.expandedChildren[parent] = kids
-                        break
-                    }
-                }
-                // When the list is sorted by Size, the freshly computed size changes
-                // this folder's rank — re-sort so it settles into place (TC behavior;
-                // folders jump into order as their sizes arrive). resort() reassigns
-                // `items` (→ itemsVersion bump) and fires onChange itself, preserving
-                // the cursor/selection by path. Other sort columns just repaint.
-                if self.sortColumn == .size {
-                    self.resort()
-                } else {
-                    self.onChange?()
-                }
+            self.applyCalculatedSize(id: id, size: size)
+        }
+    }
+
+    /// Writes a computed folder size into every cache that can surface it, then
+    /// refreshes the list. Shared by the single-folder (Space) and sweep
+    /// (Alt+Shift+Space) paths so they can never drift apart.
+    private func applyCalculatedSize(id: UUID, size: Int64) {
+        if let i = items.firstIndex(where: { $0.id == id }) {
+            items[i].calculatedSize = size
+            // Bump explicitly: updateDisplay gates the list re-feed on
+            // itemsVersion, so the async folder-size result must mark the
+            // list dirty or the Size column would stay blank.
+            itemsVersion &+= 1
+        }
+        // Write the computed size back into the authoritative caches too,
+        // not just the visible `items` — otherwise re-sorting by Size (which
+        // sorts `allLoadedItems`) would still see calculatedSize == nil and
+        // fall back to the shallow folder size.
+        if let i = allLoadedItems.firstIndex(where: { $0.id == id }) {
+            allLoadedItems[i].calculatedSize = size
+        }
+        for (parent, var kids) in expandedChildren {
+            if let i = kids.firstIndex(where: { $0.id == id }) {
+                kids[i].calculatedSize = size
+                expandedChildren[parent] = kids
+                break
             }
+        }
+        // When the list is sorted by Size, the freshly computed size changes
+        // this folder's rank — re-sort so it settles into place (TC behavior;
+        // folders jump into order as their sizes arrive). resort() reassigns
+        // `items` (→ itemsVersion bump) and fires onChange itself, preserving
+        // the cursor/selection by path. Other sort columns just repaint.
+        if sortColumn == .size {
+            resort()
+        } else {
+            onChange?()
         }
     }
 

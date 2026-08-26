@@ -1535,22 +1535,60 @@ class MainViewController: NSViewController {
         }
     }
 
+    /// ⌘⇧F — searches the active panel's backend: the local tree, or the SFTP /
+    /// S3 connection it is browsing. Archives and Android phones have no search
+    /// backend, so the sheet isn't offered there.
     func actionFindFiles() {
         guard let window = view.window else { return }
-        let startDir = appState.activePanelState.currentPath
-        let sheet = FindFilesSheet(startDir: startDir)
+        let panel = appState.activePanelState
+        guard let endpoint = panel.searchEndpoint else {
+            let alert = NSAlert()
+            alert.messageText = tr("Find Files")
+            alert.informativeText = tr("Searching is not available in this location.")
+            alert.beginSheetModal(for: window, completionHandler: nil)
+            return
+        }
+        let startDir = endpoint.base
+        let sheet = FindFilesSheet(endpoint: endpoint)
         activeFindSheet = sheet
         sheet.onGoTo = { [weak self] path in
             self?.goToFile(path)
             self?.activeFindSheet = nil
         }
-        sheet.onFeed = { [weak self] paths in
+        sheet.onFeed = { [weak self] paths, remoteMeta in
             guard let self = self else { return }
-            self.activePanelVC.panelState.feedSearchResults(paths, base: startDir)
+            if let remoteMeta = remoteMeta {
+                // Remote results carry their own size/mtime — the panel can't
+                // stat a remote path, so it must be handed the metadata.
+                panel.feedRemoteSearchResults(paths.map { remoteMeta[$0] ?? SearchHit(path: $0) },
+                                              base: startDir)
+            } else {
+                panel.feedSearchResults(paths, base: startDir)
+            }
             self.activeFindSheet = nil
         }
         sheet.onEdit = { [weak self] url in self?.openInEditor(url) }
+        sheet.onViewRemote = { [weak self] hits in self?.viewRemoteSearchHits(hits, using: panel) }
         sheet.beginSheet(on: window)
+    }
+
+    /// F3 / Space on a remote search result: reuse the panel's own filesystem to
+    /// download each hit on demand (cached by identity+size+mtime) and show it in
+    /// the internal viewer, exactly as F3 does inside a remote panel.
+    private func viewRemoteSearchHits(_ hits: [SearchHit], using panel: PanelState) {
+        guard !hits.isEmpty else { return }
+        let fs = panel.fs
+        let entries = hits.map { hit -> ViewerEntry in
+            let name = (hit.path as NSString).lastPathComponent
+            let item = FileItem(id: UUID(), name: name, path: hit.path, isDirectory: false,
+                                isArchive: FileItem.isArchiveFileName(name), size: hit.size,
+                                modified: hit.modified, isHidden: false, isSymlink: false,
+                                permissions: "")
+            return ViewerEntry(title: name, resolve: {
+                await self.materializeOne(item, using: fs, useCache: true)
+            })
+        }
+        InternalViewerController.shared.show(entries: entries, start: 0, onIndexChange: nil)
     }
 
     @objc func actionGoToFolder_menu() { actionGoToFolder() }
