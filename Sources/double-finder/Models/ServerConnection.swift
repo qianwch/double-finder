@@ -56,6 +56,40 @@ enum ServerConnection: Equatable {
         }
     }
 
+    /// Second line of an address-book row: enough to tell two entries apart
+    /// when their names cannot (three S3 connections on one endpoint used to be
+    /// indistinguishable). Kept free of the name itself — that is the line above.
+    var subtitle: String {
+        switch self {
+        case .sftp(let c):
+            let who = c.user.isEmpty ? c.host : "\(c.user)@\(c.host)"
+            return c.port == 22 ? who : "\(who):\(c.port)"
+        case .s3(let c):
+            // Bucket first: two connections to the same endpoint differ by their
+            // bucket, and the rail is narrow enough that whatever comes first is
+            // the part that survives truncation.
+            let host = URL(string: c.endpoint)?.host ?? c.endpoint
+            return c.bucket.isEmpty ? host : "\(c.bucket) · \(host)"
+        case .smb(let c):
+            return c.host
+        case .android:
+            return "USB"
+        }
+    }
+
+    /// SF Symbol for the row / detail header, one per backend.
+    var symbolName: String {
+        switch self {
+        case .sftp:    return "externaldrive.connected.to.line.below"
+        case .s3:      return "cloud"
+        case .smb:     return "network"
+        case .android: return "iphone"
+        }
+    }
+
+    /// Identity in the address book — `add`/`delete`/`update` all key on this.
+    var storeKey: String { "\(kind.rawValue)|\(name)" }
+
     /// Flat string dict with a `kind` discriminator (for UserDefaults).
     var dict: [String: String] {
         switch self {
@@ -139,6 +173,60 @@ enum ServerConnectionStore {
         var conns = load(defaults: defaults)
         conns.removeAll { $0.kind == kind && $0.name == name }
         save(conns, defaults: defaults)
+        var stamps = lastConnectedMap(defaults: defaults)
+        if stamps.removeValue(forKey: "\(kind.rawValue)|\(name)") != nil {
+            defaults.set(stamps, forKey: lastConnectedKey)
+        }
+    }
+
+    /// Replaces the entry stored under `oldKey` with `conn`, **in place**.
+    ///
+    /// `add` keys on the new name, so using it to commit an edit that renamed
+    /// the connection would leave the old row behind as a duplicate. Editing is
+    /// continuous in the connection window (there is no Save button any more),
+    /// so this runs on every keystroke-committed field — it must be identity
+    /// preserving, including the last-connected timestamp.
+    static func update(oldKey: String, to conn: ServerConnection,
+                       defaults: UserDefaults = .standard) {
+        guard conn.kind != .android else { return }
+        var conns = load(defaults: defaults)
+        // A rename that collides with another existing entry would silently
+        // shadow it; drop the collision rather than keep two rows with one name.
+        conns.removeAll { $0.storeKey == conn.storeKey && $0.storeKey != oldKey }
+        guard let index = conns.firstIndex(where: { $0.storeKey == oldKey }) else {
+            add(conn, defaults: defaults); return
+        }
+        conns[index] = conn                       // in place: order is the user's
+        save(conns, defaults: defaults)
+        if oldKey != conn.storeKey {
+            var m = lastConnectedMap(defaults: defaults)
+            if let stamp = m.removeValue(forKey: oldKey) { m[conn.storeKey] = stamp }
+            defaults.set(m, forKey: lastConnectedKey)
+        }
+    }
+
+    // MARK: - Last connected
+
+    private static let lastConnectedKey = "ServerLastConnected"
+
+    /// Kept in a side table keyed by `storeKey` rather than as a field on the
+    /// connection structs: those round-trip through `dict` in several places
+    /// (and in tests), and a timestamp is not part of a connection's identity.
+    private static func lastConnectedMap(defaults: UserDefaults) -> [String: Double] {
+        defaults.dictionary(forKey: lastConnectedKey) as? [String: Double] ?? [:]
+    }
+
+    static func lastConnected(_ conn: ServerConnection,
+                              defaults: UserDefaults = .standard) -> Date? {
+        lastConnectedMap(defaults: defaults)[conn.storeKey].map(Date.init(timeIntervalSince1970:))
+    }
+
+    static func markConnected(_ conn: ServerConnection, at date: Date = Date(),
+                              defaults: UserDefaults = .standard) {
+        guard conn.kind != .android else { return }   // the cable is not an address
+        var m = lastConnectedMap(defaults: defaults)
+        m[conn.storeKey] = date.timeIntervalSince1970
+        defaults.set(m, forKey: lastConnectedKey)
     }
 
     /// One-time migration of the three legacy address books into the unified one.

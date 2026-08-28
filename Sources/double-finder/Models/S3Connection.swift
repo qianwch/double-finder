@@ -92,7 +92,54 @@ enum S3SecretStore {
         var item: CFTypeRef?
         guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data else { return [:] }
-        return decodeBlob(data)
+        let all = decodeBlob(data)
+        // One successful read reconciles the whole index (the blob holds every
+        // connection's key), so a user who has ever connected has an accurate
+        // index without anything extra being read.
+        setStoredKeys(Set(all.keys))
+        return all
+    }
+
+    // MARK: - "Is a secret stored?" without asking for secret material
+
+    private static let indexKey = "S3SecretIndex"
+
+    /// Plaintext list of the blob keys that have a stored secret.
+    ///
+    /// Reading the blob needs `kSecReturnData`, which asks the Keychain for
+    /// secret material and therefore raises an authorization prompt whenever the
+    /// asking binary is not the one that created the item — and an ad-hoc signed
+    /// build changes identity on every rebuild. The connection window has to
+    /// answer "does this entry have a key?" while merely *browsing* the list, so
+    /// it asks this index instead: it carries no secret material, only which
+    /// entries have one. Reading a secret on selection is exactly what used to
+    /// freeze the window behind a modal Keychain prompt.
+    static func storedKeys(defaults: UserDefaults = .standard) -> Set<String> {
+        Set(defaults.stringArray(forKey: indexKey) ?? [])
+    }
+
+    static func hasSecret(endpointHost: String, accessKey: String,
+                          defaults: UserDefaults = .standard) -> Bool {
+        storedKeys(defaults: defaults)
+            .contains(blobKey(endpointHost: endpointHost, accessKey: accessKey))
+    }
+
+    private static func setStoredKeys(_ keys: Set<String>, defaults: UserDefaults = .standard) {
+        defaults.set(keys.sorted(), forKey: indexKey)
+    }
+
+    /// Fills the index in from the Keychain, **off the main thread**, and only
+    /// when it has nothing to say yet — secrets stored before the index existed
+    /// would otherwise be reported as missing. One successful read covers every
+    /// connection (they share one blob), after which save/delete keep it current.
+    /// Backgrounded because this is the one call that asks for secret material,
+    /// and on a binary the Keychain does not recognise that means a modal prompt.
+    static func reconcileIndexIfNeeded(completion: @escaping () -> Void) {
+        guard storedKeys().isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            _ = loadAll()                    // its success path writes the index
+            DispatchQueue.main.async(execute: completion)
+        }
     }
 
     private static func saveAll(_ dict: [String: String]) {
@@ -122,16 +169,20 @@ enum S3SecretStore {
     }
 
     static func save(endpointHost: String, accessKey: String, secret: String) {
+        let key = blobKey(endpointHost: endpointHost, accessKey: accessKey)
         var all = loadAll()
-        all[blobKey(endpointHost: endpointHost, accessKey: accessKey)] = secret
+        all[key] = secret
         saveAll(all)
+        setStoredKeys(storedKeys().union([key]))
         legacyDelete(endpointHost: endpointHost, accessKey: accessKey)
     }
 
     static func delete(endpointHost: String, accessKey: String) {
+        let key = blobKey(endpointHost: endpointHost, accessKey: accessKey)
         var all = loadAll()
-        all.removeValue(forKey: blobKey(endpointHost: endpointHost, accessKey: accessKey))
+        all.removeValue(forKey: key)
         saveAll(all)
+        setStoredKeys(storedKeys().subtracting([key]))
         legacyDelete(endpointHost: endpointHost, accessKey: accessKey)
     }
 
