@@ -816,15 +816,36 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     }
 
     @objc private func connectClicked() {
-        guard let (conn, secret) = formConnection(focusIfIncomplete: true) else { return }
+        guard let form = formConnection(focusIfIncomplete: true) else { return }
+        let conn = form.0
+        var secret = form.1
         if case .sftp(let c) = conn { Self.saveLastSFTP(c) }
-        if conn.kind == .s3, let secret = secret, !secret.isEmpty,
-           case .s3(let c) = conn {
-            // Storing on connect (rather than behind a checkbox) is the point of
-            // the credential line: what the window shows and what the Keychain
-            // holds can no longer disagree.
-            S3SecretStore.save(endpointHost: c.endpointHost, accessKey: c.accessKey, secret: secret)
+
+        if case .s3(let c) = conn {
+            let typed = secret ?? ""
+            // The form deliberately never carries a stored key — reading one to
+            // populate a field would block the whole window behind a Keychain
+            // prompt (see `populate`). It is fetched HERE instead, at the one
+            // moment the user has actually asked to connect, where a prompt is
+            // both expected and answerable.
+            secret = S3SecretStore.resolveSecret(
+                typed: typed,
+                stored: S3SecretStore.load(endpointHost: c.endpointHost, accessKey: c.accessKey))
+            if !typed.isEmpty {
+                // Storing on connect (rather than behind a checkbox) is the point
+                // of the credential line: what the window shows and what the
+                // Keychain holds can no longer disagree.
+                S3SecretStore.save(endpointHost: c.endpointHost, accessKey: c.accessKey, secret: typed)
+            }
+            guard !(secret ?? "").isEmpty else {
+                // SigV4 has no unauthenticated mode; connecting with an empty key
+                // only buys a cryptic signature error several screens later.
+                NSSound.beep()
+                window?.makeFirstResponder(s3Secret)
+                return
+            }
         }
+
         commitEdit()
         ServerConnectionStore.markConnected(conn)
         onConnect?(conn, secret)

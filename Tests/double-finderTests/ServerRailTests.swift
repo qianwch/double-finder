@@ -153,3 +153,32 @@ final class ServerConnectionUpdateTests: XCTestCase {
         XCTAssertNil(ServerConnectionStore.lastConnected(c, defaults: defaults))
     }
 }
+
+/// The connect path's secret rule. Its own test because getting it wrong
+/// shipped: once the form stopped pre-filling the secret (that Keychain read
+/// froze the window on selection), Connect passed the empty field straight
+/// through and every saved S3 connection signed with no key.
+final class S3SecretResolutionTests: XCTestCase {
+    func testEmptyFieldFallsBackToTheStoredKey() {
+        XCTAssertEqual(S3SecretStore.resolveSecret(typed: "", stored: "stored"), "stored")
+    }
+
+    func testATypedKeyWins() {
+        XCTAssertEqual(S3SecretStore.resolveSecret(typed: "typed", stored: "stored"), "typed")
+    }
+
+    func testNothingTypedAndNothingStoredIsNil() {
+        XCTAssertNil(S3SecretStore.resolveSecret(typed: "", stored: nil))
+    }
+
+    /// The Keychain must not be touched when the field already has a key —
+    /// reading it is the call that can raise a modal prompt.
+    func testStoredIsNotEvaluatedWhenSomethingWasTyped() {
+        var reads = 0
+        func read() -> String? { reads += 1; return "stored" }
+        _ = S3SecretStore.resolveSecret(typed: "typed", stored: read())
+        XCTAssertEqual(reads, 0)
+        _ = S3SecretStore.resolveSecret(typed: "", stored: read())
+        XCTAssertEqual(reads, 1)
+    }
+}

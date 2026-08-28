@@ -168,6 +168,19 @@ enum S3SecretStore {
         return s
     }
 
+    /// Which secret to connect with, given what the form carries and what is
+    /// stored. `stored` is an autoclosure on purpose: the Keychain must only be
+    /// read when the field is actually empty, because reading it can raise a
+    /// modal prompt.
+    ///
+    /// This exists as its own function because getting it wrong shipped once —
+    /// after the form stopped pre-filling the secret (that read froze the window
+    /// on selection), Connect kept passing the empty field straight through and
+    /// every saved S3 connection tried to sign with no key.
+    static func resolveSecret(typed: String, stored: @autoclosure () -> String?) -> String? {
+        typed.isEmpty ? stored() : typed
+    }
+
     static func save(endpointHost: String, accessKey: String, secret: String) {
         let key = blobKey(endpointHost: endpointHost, accessKey: accessKey)
         var all = loadAll()
