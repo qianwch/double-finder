@@ -98,6 +98,20 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "ShowDriveBar") }
     }
 
+    /// Show the command line between the panels and the function-key bar.
+    /// When off, Cmd+L still reveals it for one command (see MainViewController).
+    static var showCommandLine: Bool {
+        get { UserDefaults.standard.object(forKey: "ShowCommandLine") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "ShowCommandLine") }
+    }
+
+    /// Show the F3–F8 button strip along the bottom. The function *keys* keep
+    /// working when it is off — this hides the buttons only.
+    static var showFunctionKeyBar: Bool {
+        get { UserDefaults.standard.object(forKey: "ShowFunctionKeyBar") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "ShowFunctionKeyBar") }
+    }
+
     /// Ask for confirmation before moving items to the Trash (⌘⌫). Off by default.
     static var confirmTrash: Bool {
         get { UserDefaults.standard.object(forKey: "ConfirmTrash") as? Bool ?? false }

@@ -27,7 +27,7 @@ enum SettingsReset {
         ],
         "panels": [
             "VisibleColumns", "ColumnWidths",
-            "ShowDriveBar", "ShowDriveDropdown",
+            "ShowDriveBar", "ShowDriveDropdown", "ShowCommandLine", "ShowFunctionKeyBar",
             "LeftShowHidden", "RightShowHidden",
         ],
         "toolbar": [

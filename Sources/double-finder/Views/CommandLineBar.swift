@@ -24,6 +24,10 @@ final class CommandLineBar: NSView {
     var onExecute: ((String) -> Void)?
     /// Called when the user presses Esc — used to hand focus back to the list.
     var onEscape: (() -> Void)?
+    /// Called when the input gives up the keyboard focus, whatever the reason
+    /// (Esc, a command that ran, a click back into the list). A hidden-by-setting
+    /// bar that Cmd+L revealed folds away again here.
+    var onFocusLost: (() -> Void)?
 
     /// The directory prompt shown before the input (the active panel's path).
     var prompt: String = "" {
@@ -110,6 +114,7 @@ final class CommandLineBar: NSView {
         guard inputHasFocus != focused else { return }
         inputHasFocus = focused
         applyAppearanceColors()
+        if !focused { onFocusLost?() }
     }
 
     @objc private func execute() {

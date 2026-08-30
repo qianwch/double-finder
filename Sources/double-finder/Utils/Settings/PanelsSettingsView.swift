@@ -4,6 +4,8 @@ final class PanelsSettingsView: NSView {
     private let onChange: () -> Void
     private var driveBarCheckbox: NSButton!
     private var driveDropCheckbox: NSButton!
+    private var commandLineCheckbox: NSButton!
+    private var functionKeyCheckbox: NSButton!
     private var columnCheckboxes: [(String, NSButton)] = []
 
     init(onChange: @escaping () -> Void) {
@@ -18,11 +20,23 @@ final class PanelsSettingsView: NSView {
         driveDropBox.state = AppSettings.showDriveDropdown ? .on : .off
         self.driveDropCheckbox = driveDropBox
 
+        let cmdLineBox = NSButton(checkboxWithTitle: tr("Show command line (bar above the function keys)"), target: self, action: #selector(toggleCommandLine(_:)))
+        cmdLineBox.state = AppSettings.showCommandLine ? .on : .off
+        cmdLineBox.toolTip = tr("When off, Cmd+L still reveals the command line for one command")
+        self.commandLineCheckbox = cmdLineBox
+
+        let fkeyBox = NSButton(checkboxWithTitle: tr("Show function key bar (F3–F8 buttons along the bottom)"), target: self, action: #selector(toggleFunctionKeyBar(_:)))
+        fkeyBox.state = AppSettings.showFunctionKeyBar ? .on : .off
+        fkeyBox.toolTip = tr("The F3–F8 keys keep working when the bar is hidden")
+        self.functionKeyCheckbox = fkeyBox
+
         let colLabel = NSTextField(labelWithString: tr("Columns (Full view):"))
         let visible = Set(AppSettings.visibleColumns)
         var rows: [[NSView]] = [
             [driveBarBox],
             [driveDropBox],
+            [cmdLineBox],
+            [fkeyBox],
             [colLabel],
         ]
         for col in FileColumnLayout.optionalColumns {
@@ -59,6 +73,8 @@ final class PanelsSettingsView: NSView {
 
     @objc private func toggleDriveBar(_ s: NSButton) { AppSettings.showDriveBar = (s.state == .on); onChange() }
     @objc private func toggleDriveDropdown(_ s: NSButton) { AppSettings.showDriveDropdown = (s.state == .on); onChange() }
+    @objc private func toggleCommandLine(_ s: NSButton) { AppSettings.showCommandLine = (s.state == .on); onChange() }
+    @objc private func toggleFunctionKeyBar(_ s: NSButton) { AppSettings.showFunctionKeyBar = (s.state == .on); onChange() }
     @objc private func toggleColumn(_ s: NSButton) {
         guard let id = s.identifier?.rawValue else { return }
         var cols = AppSettings.visibleColumns
@@ -73,6 +89,8 @@ extension PanelsSettingsView: SettingsPaneReloadable {
     func reloadFromModel() {
         driveBarCheckbox.state = AppSettings.showDriveBar ? .on : .off
         driveDropCheckbox.state = AppSettings.showDriveDropdown ? .on : .off
+        commandLineCheckbox.state = AppSettings.showCommandLine ? .on : .off
+        functionKeyCheckbox.state = AppSettings.showFunctionKeyBar ? .on : .off
         let visible = Set(AppSettings.visibleColumns)
         for (id, box) in columnCheckboxes {
             box.state = visible.contains(id) ? .on : .off

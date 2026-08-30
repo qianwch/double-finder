@@ -297,6 +297,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let driveBarItem = NSMenuItem(title: tr("Show Drive Buttons"), action: #selector(menuToggleDriveBar), keyEquivalent: "")
         driveBarItem.state = AppSettings.showDriveBar ? .on : .off
         viewMenu.addItem(driveBarItem)
+        // No key equivalent: Cmd+L stays "focus the command line", which also
+        // reveals it for one command while this is off.
+        let showCmdLineItem = NSMenuItem(title: tr("Show Command Line"), action: #selector(menuToggleCommandLine), keyEquivalent: "")
+        showCmdLineItem.state = AppSettings.showCommandLine ? .on : .off
+        viewMenu.addItem(showCmdLineItem)
+        let fkeyBarItem = NSMenuItem(title: tr("Show Function Key Bar"), action: #selector(menuToggleFunctionKeyBar), keyEquivalent: "")
+        fkeyBarItem.state = AppSettings.showFunctionKeyBar ? .on : .off
+        viewMenu.addItem(fkeyBarItem)
         viewMenu.addItem(.separator())
         let refreshItem = NSMenuItem(title: tr("Refresh"), action: #selector(menuRefresh), keyEquivalent: "r")
         applyDefaultKeyState(refreshItem, .refresh)
@@ -474,6 +482,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AppSettings.showDriveBar.toggle()
         sender.state = AppSettings.showDriveBar ? .on : .off
         mainVC()?.perform(#selector(MainViewController.applyDriveConfig_menu))
+    }
+    @objc private func menuToggleCommandLine(_ sender: NSMenuItem) {
+        AppSettings.showCommandLine.toggle()
+        sender.state = AppSettings.showCommandLine ? .on : .off
+        mainVC()?.perform(#selector(MainViewController.applyCommandLineVisibility_menu))
+    }
+    @objc private func menuToggleFunctionKeyBar(_ sender: NSMenuItem) {
+        AppSettings.showFunctionKeyBar.toggle()
+        sender.state = AppSettings.showFunctionKeyBar ? .on : .off
+        mainVC()?.perform(#selector(MainViewController.applyFunctionKeyBarVisibility_menu))
     }
     @objc private func menuNewFile() { mainVC()?.actionNewFile() }
     @objc private func menuChangeAttributes() { mainVC()?.actionChangeAttributes() }

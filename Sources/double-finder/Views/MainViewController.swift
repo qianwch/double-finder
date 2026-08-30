@@ -12,6 +12,15 @@ class MainViewController: NSViewController {
     private var toolbarBar: ToolbarBar!
     private var treeView: DirectoryTreeView!
     private var treeWidthConstraint: NSLayoutConstraint!
+    /// The two foldable bottom bars (View ▸ Show Command Line / Show Function
+    /// Key Bar, or Settings ▸ Panels).
+    private var commandLineFold: CollapsibleBar!
+    private var functionKeyFold: CollapsibleBar!
+    /// True while the command line only shows because Cmd+L asked for it; it
+    /// folds back away as soon as the input loses focus.
+    private var commandLineIsTemporary = false
+    private static let commandLineBarHeight: CGFloat = 22
+    private static let functionKeyBarHeight: CGFloat = 28
     private var splitViewItem: NSSplitViewItem!
     private var activeProgressSheet: ProgressSheet?
     /// Retains lazy Open-With submenu delegates while a context menu is open.
@@ -130,6 +139,7 @@ class MainViewController: NSViewController {
         commandLineBar.translatesAutoresizingMaskIntoConstraints = false
         commandLineBar.onExecute = { [weak self] cmd in self?.runCommandLine(cmd) }
         commandLineBar.onEscape = { [weak self] in self?.focusActiveList() }
+        commandLineBar.onFocusLost = { [weak self] in self?.foldTemporaryCommandLine() }
         view.addSubview(commandLineBar)
 
         // Function key bar
@@ -155,16 +165,25 @@ class MainViewController: NSViewController {
             commandLineBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             commandLineBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             commandLineBar.bottomAnchor.constraint(equalTo: functionKeyBar.topAnchor),
-            commandLineBar.heightAnchor.constraint(equalToConstant: 22),
 
             functionKeyBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             functionKeyBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             functionKeyBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            functionKeyBar.heightAnchor.constraint(equalToConstant: 28),
         ])
+        let commandLineHeight = commandLineBar.heightAnchor.constraint(equalToConstant: Self.commandLineBarHeight)
+        commandLineHeight.isActive = true
+        commandLineFold = CollapsibleBar(view: commandLineBar, height: commandLineHeight,
+                                         fullHeight: Self.commandLineBarHeight)
+        let functionKeyHeight = functionKeyBar.heightAnchor.constraint(equalToConstant: Self.functionKeyBarHeight)
+        functionKeyHeight.isActive = true
+        functionKeyFold = CollapsibleBar(view: functionKeyBar, height: functionKeyHeight,
+                                         fullHeight: Self.functionKeyBarHeight)
         treeWidthConstraint = treeView.widthAnchor.constraint(equalToConstant: 0)
         treeWidthConstraint.isActive = true
         treeView.isHidden = true
+        // No animation on the way in — the window is still being built.
+        applyCommandLineVisibility(animated: false)
+        applyFunctionKeyBarVisibility(animated: false)
         updateCommandLinePrompt()
         configureToolbar()
     }
@@ -313,8 +332,45 @@ class MainViewController: NSViewController {
         commandLineBar?.prompt = appState.activePanelState.currentPath
     }
 
-    /// Moves keyboard focus into the command line (Cmd+L).
+    /// Applies the "show command line" setting to the layout. Also cancels a
+    /// pending temporary reveal, so switching the setting on mid-reveal can't
+    /// leave the bar folding itself away behind the user's back.
+    @objc func applyCommandLineVisibility_menu() { applyCommandLineVisibility() }
+
+    private func applyCommandLineVisibility(animated: Bool = true) {
+        commandLineIsTemporary = false
+        setCommandLineShown(AppSettings.showCommandLine, animated: animated)
+    }
+
+    private func setCommandLineShown(_ show: Bool, animated: Bool = true) {
+        commandLineFold.set(shown: show, animated: animated)
+    }
+
+    /// Applies the "show function key bar" setting. The F3–F8 *keys* keep
+    /// working when the bar is hidden — it is only the button strip.
+    @objc func applyFunctionKeyBarVisibility_menu() { applyFunctionKeyBarVisibility() }
+
+    private func applyFunctionKeyBarVisibility(animated: Bool = true) {
+        functionKeyFold.set(shown: AppSettings.showFunctionKeyBar, animated: animated)
+    }
+
+    /// Folds a Cmd+L reveal away once the input gives up the keyboard focus —
+    /// Esc, a command that ran (both end in `focusActiveList`), or a click back
+    /// into the list all arrive here.
+    private func foldTemporaryCommandLine() {
+        guard commandLineIsTemporary else { return }
+        commandLineIsTemporary = false
+        setCommandLineShown(false)
+    }
+
+    /// Moves keyboard focus into the command line (Cmd+L). When the bar is
+    /// hidden it slides out just for this one command — a hidden view cannot
+    /// become first responder, so it has to be shown before focusing.
     private func focusCommandLine() {
+        if !AppSettings.showCommandLine && !commandLineIsTemporary {
+            commandLineIsTemporary = true
+            setCommandLineShown(true)
+        }
         updateCommandLinePrompt()
         commandLineBar.focusInput()
     }
@@ -3050,6 +3106,8 @@ class MainViewController: NSViewController {
     func reapplyAllSettings() {
         AppSettings.applyAppearance()
         commandLineBar?.refreshColors()
+        applyCommandLineVisibility()
+        applyFunctionKeyBarVisibility()
         setViewMode(AppSettings.viewMode)
         leftPanelVC.fileTableView?.reloadLayout()
         rightPanelVC.fileTableView?.reloadLayout()
@@ -3058,6 +3116,10 @@ class MainViewController: NSViewController {
         resortPanels_menu()
         applyDriveConfig_menu()
         actionRefreshDisplay_menu()
+        // The View menu carries checkmarks for the same toggles the Settings
+        // window edits (command line, function keys, drive bar/dropdown) —
+        // rebuild so they don't sit there contradicting what the user just chose.
+        (NSApp.delegate as? AppDelegate)?.rebuildMenus()
     }
 
     // MARK: - Pattern selection
