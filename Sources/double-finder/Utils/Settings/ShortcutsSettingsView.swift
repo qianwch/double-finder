@@ -7,10 +7,22 @@ final class ShortcutsSettingsView: NSView {
 
     // MARK: - State
 
-    private let commands = AppCommand.allCases
     private let onChanged: () -> Void
+    /// Search text; the table shows `commands`, the filtered slice of all of them.
+    private var query = ""
+    /// 30-odd commands don't fit the pane, so the list is searchable rather than
+    /// scrolled blind. Rows index into this, never into `AppCommand.allCases`.
+    private var commands: [AppCommand] {
+        let all = AppCommand.allCases
+        guard !query.isEmpty else { return all }
+        return all.filter {
+            tr($0.label).localizedCaseInsensitiveContains(query)
+                || $0.defaultHint.localizedCaseInsensitiveContains(query)
+        }
+    }
 
     private let tableView = NSTableView()
+    private var searchField: NSSearchField!
     /// Which row is currently in "press keys…" capture mode, or nil.
     private var recordingRow: Int? { didSet { tableView.reloadData() } }
     private var monitor: Any?
@@ -36,11 +48,19 @@ final class ShortcutsSettingsView: NSView {
     private func setupUI() {
         // Instruction label
         let label = NSTextField(wrappingLabelWithString:
-            tr("Select a command, then Record to assign a shortcut. Custom shortcuts work in addition to the built-in defaults; uncheck Enabled to turn a built-in key off."))
+            tr("Double-click a command to record its shortcut. Custom shortcuts work in addition to the built-in defaults; uncheck Enabled to turn a built-in key off."))
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
+
+        let search = NSSearchField()
+        search.placeholderString = tr("Search")
+        search.target = self
+        search.action = #selector(filterChanged(_:))
+        search.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(search)
+        self.searchField = search
 
         // Scroll + table
         let scroll = NSScrollView()
@@ -62,8 +82,13 @@ final class ShortcutsSettingsView: NSView {
         tableView.addTableColumn(curCol)
         tableView.rowHeight = 22
         tableView.usesAlternatingRowBackgroundColors = true
+        // The custom column soaks up whatever width the window has; the table used
+        // to stop at a hard-coded 460pt and leave the rest of the pane bare.
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.target = self
+        tableView.doubleAction = #selector(startRecording)
         scroll.documentView = tableView
         addSubview(scroll)
 
@@ -78,16 +103,15 @@ final class ShortcutsSettingsView: NSView {
         clear.translatesAutoresizingMaskIntoConstraints = false
         addSubview(clear)
 
-        let resetAll = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetAllBindings))
-        resetAll.bezelStyle = .rounded
-        resetAll.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(resetAll)
-
         NSLayoutConstraint.activate([
-            // Label — top of pane
+            // Top row: hint on the left, search on the right
             label.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: search.leadingAnchor, constant: -12),
+
+            search.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            search.widthAnchor.constraint(equalToConstant: 150),
 
             // Scroll view fills bulk of pane
             scroll.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 10),
@@ -95,19 +119,24 @@ final class ShortcutsSettingsView: NSView {
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             scroll.bottomAnchor.constraint(equalTo: record.topAnchor, constant: -12),
 
-            // Bottom row: Record | Clear on left, Reset All on right
+            // Bottom row: Record | Clear (the resets live in the window footer)
             record.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             record.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
 
             clear.leadingAnchor.constraint(equalTo: record.trailingAnchor, constant: 8),
             clear.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-
-            resetAll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            resetAll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
         ])
     }
 
     // MARK: - Actions
+
+    @objc private func filterChanged(_ sender: NSSearchField) {
+        // Rows are indexes into the filtered list, so a live recording would end
+        // up bound to whatever command slid into that row.
+        cancelRecording()
+        query = sender.stringValue
+        tableView.reloadData()
+    }
 
     @objc private func startRecording() {
         let row = tableView.selectedRow
@@ -159,18 +188,6 @@ final class ShortcutsSettingsView: NSView {
         onChanged()
     }
 
-    @objc private func resetAllBindings() {
-        // Cancel any in-progress recording
-        cancelRecording()
-        // Clear all custom bindings and re-enable every built-in default
-        for cmd in AppCommand.allCases {
-            KeyBindings.set(nil, for: cmd)
-            KeyBindings.setDefaultDisabled(false, for: cmd)
-        }
-        tableView.reloadData()
-        // cancelRecording() above already reset recordingRow → didSet reloadData()
-        onChanged()
-    }
 }
 
 // MARK: - NSTableViewDataSource / NSTableViewDelegate

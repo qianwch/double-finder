@@ -1,6 +1,14 @@
 import AppKit
 
-final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
+/// Appearance pane — two groups: the window/list appearance, and every colour
+/// the user can override.
+///
+/// The Light/Dark switch rides on the Colors card's title row rather than
+/// floating above a heading: it scopes *both* colour sections in that card
+/// (file-name colours and the command line box), which the old stacked layout —
+/// segment first, heading after, heading text identical to the checkbox right
+/// above it — made impossible to read off the screen.
+final class AppearanceSettingsView: SettingsPaneView, SettingsPaneReloadable {
     private let onChange: () -> Void
     private var appearancePopup: NSPopUpButton!
     private var fontPopup: NSPopUpButton!
@@ -17,16 +25,13 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
 
     init(onChange: @escaping () -> Void) {
         self.onChange = onChange
-        super.init(frame: .zero)
+        super.init(labelTitles: [tr("Appearance:"), tr("List font:"), tr("Font size:"), tr("Icon size:")])
         buildUI()
     }
     required init?(coder: NSCoder) { fatalError() }
 
     private func buildUI() {
-        // --- Appearance mode row ---
-        let appLabel = NSTextField(labelWithString: tr("Appearance:"))
-        appLabel.alignment = .right
-
+        // --- Appearance mode ---
         let appPop = NSPopUpButton()
         appPop.addItems(withTitles: [tr("Follow System"), tr("Light"), tr("Dark")])
         if let idx = AppAppearance.allCases.firstIndex(of: AppSettings.appearance) {
@@ -36,9 +41,7 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         appPop.action = #selector(changeAppearance(_:))
         self.appearancePopup = appPop
 
-        // --- List font rows ---
-        let fontLabel = NSTextField(labelWithString: tr("List font:"))
-        fontLabel.alignment = .right
+        // --- List font ---
         let fontPop = NSPopUpButton()
         fontPop.addItem(withTitle: tr("System Font"))
         fontPop.addItems(withTitles: Self.fontFamilies)
@@ -47,17 +50,13 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         fontPop.widthAnchor.constraint(equalToConstant: 240).isActive = true
         self.fontPopup = fontPop
 
-        let sizeLabel = NSTextField(labelWithString: tr("Font size:"))
-        sizeLabel.alignment = .right
         let sizePop = NSPopUpButton()
         sizePop.addItems(withTitles: AppSettings.listFontSizes.map { "\(Int($0))" })
         sizePop.target = self
         sizePop.action = #selector(changeFontSize(_:))
         self.fontSizePopup = sizePop
 
-        // --- Icon size (moved here from General: it's list appearance, same as the font) ---
-        let iconLabel = NSTextField(labelWithString: tr("Icon size:"))
-        iconLabel.alignment = .right
+        // --- Icon size (list appearance, same as the font) ---
         let iconPop = NSPopUpButton()
         iconPop.addItems(withTitles: iconSizes.map { tr($0.0) })
         for (i, entry) in iconSizes.enumerated() { iconPop.item(at: i)?.tag = entry.1 }
@@ -73,50 +72,29 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
         linkBox.toolTip = tr("Off: each panel's status-bar slider sizes only that panel")
         self.zoomLinkedCheckbox = linkBox
 
-        let modeGrid = NSGridView(views: [
-            [appLabel, appPop],
-            [fontLabel, fontPop],
-            [sizeLabel, sizePop],
-            [iconLabel, iconPop],
-            [NSGridCell.emptyContentView, linkBox],
+        addCard(title: tr("Appearance & List"), rows: [
+            SettingsRow.labeled(tr("Appearance:"), appPop, labelWidth: labelWidth),
+            SettingsRow.labeled(tr("List font:"), fontPop, labelWidth: labelWidth),
+            SettingsRow.labeled(tr("Font size:"), sizePop, labelWidth: labelWidth),
+            SettingsRow.labeled(tr("Icon size:"), iconPop, labelWidth: labelWidth),
+            SettingsRow.control(linkBox, labelWidth: labelWidth),
         ])
-        modeGrid.column(at: 0).xPlacement = .trailing
-        modeGrid.yPlacement = .center   // labels centred on their popups/checkboxes
-        modeGrid.rowSpacing = 10
-        modeGrid.columnSpacing = 8
-        modeGrid.translatesAutoresizingMaskIntoConstraints = false
 
-        // --- Separator 1 ---
-        let sep1 = NSBox()
-        sep1.boxType = .separator
-        sep1.translatesAutoresizingMaskIntoConstraints = false
+        // --- Light / Dark segment: scopes the whole Colors card ---
+        let seg = NSSegmentedControl(labels: [tr("Light"), tr("Dark")], trackingMode: .selectOne, target: self, action: #selector(segmentChanged(_:)))
+        let initialDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+        seg.selectedSegment = initialDark ? 1 : 0
+        self.editSegment = seg
 
         // --- Color-by-type checkbox ---
         let colorBox = NSButton(checkboxWithTitle: tr("Color file names by type"), target: self, action: #selector(toggleColorByType(_:)))
         colorBox.state = AppSettings.colorByType ? .on : .off
-        colorBox.translatesAutoresizingMaskIntoConstraints = false
         self.colorByTypeCheckbox = colorBox
 
-        // --- Separator 2 ---
-        let sep2 = NSBox()
-        sep2.boxType = .separator
-        sep2.translatesAutoresizingMaskIntoConstraints = false
-
-        // --- Colors section header ---
-        let colorSectionLabel = NSTextField(labelWithString: tr("Name colors by type:"))
-        colorSectionLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
-        colorSectionLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        // --- Light / Dark segment ---
-        let seg = NSSegmentedControl(labels: [tr("Light"), tr("Dark")], trackingMode: .selectOne, target: self, action: #selector(segmentChanged(_:)))
-        let initialDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
-        seg.selectedSegment = initialDark ? 1 : 0
-        seg.translatesAutoresizingMaskIntoConstraints = false
-        self.editSegment = seg
-
-        // --- Per-type color rows (reflow to as many columns as the width allows) ---
-        let labelWidth = Self.widestLabel(TypeCategory.allCases.map { tr($0.titleKey) }
-                                          + CommandLineColorRole.allCases.map { tr($0.titleKey) })
+        // --- Per-type colour wells (reflow to as many columns as the width allows) ---
+        // Both colour grids share one label column width so they line up.
+        let wellLabelWidth = SettingsLayout.labelWidth(TypeCategory.allCases.map { tr($0.titleKey) }
+                                                       + CommandLineColorRole.allCases.map { tr($0.titleKey) })
         var colorItems: [(String, NSColorWell)] = []
         for cat in TypeCategory.allCases {
             let well = makeColorWell(action: #selector(wellChanged(_:)))
@@ -124,12 +102,11 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
             colorRows.append((cat, well))
             colorItems.append((tr(cat.titleKey), well))
         }
-        let colorGrid = ColorWellGridView(items: colorItems, labelWidth: labelWidth)
+        let colorGrid = ColorWellGridView(items: colorItems, labelWidth: wellLabelWidth)
 
-        // --- Command line input box colors (same Light/Dark segment above) ---
+        // --- Command line input box colours (same Light/Dark segment) ---
         let cmdSectionLabel = NSTextField(labelWithString: tr("Command line input box:"))
-        cmdSectionLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
-        cmdSectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        cmdSectionLabel.textColor = .secondaryLabelColor
 
         var cmdItems: [(String, NSColorWell)] = []
         for role in CommandLineColorRole.allCases {
@@ -138,93 +115,14 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
             cmdRows.append((role, well))
             cmdItems.append((tr(role.titleKey), well))
         }
-        let cmdGrid = ColorWellGridView(items: cmdItems, labelWidth: labelWidth)
+        let cmdGrid = ColorWellGridView(items: cmdItems, labelWidth: wellLabelWidth)
 
-        // --- Reset button (whole page, not just the colors) ---
-        let resetButton = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetToDefaults))
-        resetButton.bezelStyle = .rounded
-        resetButton.toolTip = tr("Restores every setting on this page to its default")
-        resetButton.translatesAutoresizingMaskIntoConstraints = false
-
-        // --- Scrolling content (this pane is taller than the window) ---
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        let content = FlippedContainerView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        scroll.documentView = content
-        addSubview(scroll)
-
-        // --- Add all subviews ---
-        content.addSubview(modeGrid)
-        content.addSubview(sep1)
-        content.addSubview(colorBox)
-        content.addSubview(sep2)
-        content.addSubview(colorSectionLabel)
-        content.addSubview(seg)
-        content.addSubview(colorGrid)
-        content.addSubview(cmdSectionLabel)
-        content.addSubview(cmdGrid)
-        content.addSubview(resetButton)
-
-        let margin: CGFloat = 20
-
-        NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            content.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            content.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
-
-            modeGrid.topAnchor.constraint(equalTo: content.topAnchor, constant: margin),
-            modeGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-
-            sep1.topAnchor.constraint(equalTo: modeGrid.bottomAnchor, constant: 12),
-            sep1.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-            sep1.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
-
-            colorBox.topAnchor.constraint(equalTo: sep1.bottomAnchor, constant: 12),
-            colorBox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-
-            sep2.topAnchor.constraint(equalTo: colorBox.bottomAnchor, constant: 12),
-            sep2.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-            sep2.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
-
-            seg.topAnchor.constraint(equalTo: sep2.bottomAnchor, constant: 12),
-            seg.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-
-            colorSectionLabel.topAnchor.constraint(equalTo: seg.bottomAnchor, constant: 12),
-            colorSectionLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-
-            colorGrid.topAnchor.constraint(equalTo: colorSectionLabel.bottomAnchor, constant: 10),
-            colorGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-            colorGrid.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
-
-            cmdSectionLabel.topAnchor.constraint(equalTo: colorGrid.bottomAnchor, constant: 16),
-            cmdSectionLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-
-            cmdGrid.topAnchor.constraint(equalTo: cmdSectionLabel.bottomAnchor, constant: 10),
-            cmdGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-            cmdGrid.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
-
-            resetButton.topAnchor.constraint(equalTo: cmdGrid.bottomAnchor, constant: 18),
-            resetButton.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-            // Pins the scrolling content's height to its last row.
-            resetButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -margin),
+        addCard(title: tr("Colors"), accessory: seg, rows: [
+            SettingsRow.full(colorBox),
+            SettingsRow.full(colorGrid, stretch: true),
+            SettingsRow.full(cmdSectionLabel),
+            SettingsRow.full(cmdGrid, stretch: true),
         ])
-    }
-
-    /// Widest of the given labels in the system font, so both colour grids can
-    /// pin their label columns to the same width.
-    private static func widestLabel(_ titles: [String]) -> CGFloat {
-        let attrs = [NSAttributedString.Key.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
-        let widest = titles.map { ($0 as NSString).size(withAttributes: attrs).width }.max() ?? 80
-        return ceil(widest) + 4      // a hair of slack so nothing truncates
     }
 
     private func makeColorWell(action: Selector) -> NSColorWell {
@@ -356,15 +254,6 @@ final class AppearanceSettingsView: NSView, SettingsPaneReloadable {
     @objc private func cmdWellChanged(_ well: NSColorWell) {
         guard let role = cmdRows.first(where: { $0.1 === well })?.0 else { return }
         AppSettings.setCommandLineColor(well.color, for: role, dark: editingDark)
-        onChange()
-    }
-
-    /// Restores this whole page — appearance mode, fonts, sizes and both colour
-    /// sections, for both appearances — not just the colours being edited.
-    @objc private func resetToDefaults() {
-        SettingsReset.reset(category: "appearance")
-        AppSettings.applyAppearance()
-        reloadFromModel()
         onChange()
     }
 }

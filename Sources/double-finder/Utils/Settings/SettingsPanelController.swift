@@ -40,6 +40,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let sidebarWidth: CGFloat = 170
     private var tableView: NSTableView!
     private var containerView: NSView!
+    private var resetPageButton: NSButton!
 
     // MARK: - Init
 
@@ -126,12 +127,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         footerSep.autoresizingMask = [.width]
         footer.addSubview(footerSep)
 
+        // Both resets live here, side by side: per-page on the left, whole-app on
+        // the right. They used to sit 40pt apart on top of each other — a page's
+        // own button in its bottom-left corner, the global one right below it in
+        // the footer — which read as one control drawn twice.
+        let resetPage = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetCurrentPage))
+        resetPage.bezelStyle = .rounded
+        resetPage.sizeToFit()
+        resetPage.setFrameOrigin(NSPoint(x: 16, y: ((footerHeight - 1) - resetPage.frame.height) / 2))
+        resetPage.autoresizingMask = [.maxXMargin]
+        footer.addSubview(resetPage)
+        self.resetPageButton = resetPage
+
         let resetAll = NSButton(title: tr("Reset All Settings…"), target: self, action: #selector(resetAllSettings))
         resetAll.bezelStyle = .rounded
         resetAll.toolTip = tr("Restores every setting to its default; favorites and saved connections are kept")
         resetAll.sizeToFit()
-        resetAll.setFrameOrigin(NSPoint(x: 16, y: ((footerHeight - 1) - resetAll.frame.height) / 2))
-        resetAll.autoresizingMask = [.maxXMargin]
+        resetAll.setFrameOrigin(NSPoint(x: bounds.width - 16 - resetAll.frame.width,
+                                        y: ((footerHeight - 1) - resetAll.frame.height) / 2))
+        resetAll.autoresizingMask = [.minXMargin]
         footer.addSubview(resetAll)
 
         // -- Sidebar (NSScrollView + NSTableView) --
@@ -201,6 +215,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pane.frame = containerView.bounds
         pane.autoresizingMask = [.width, .height]
         containerView.addSubview(pane)
+        updateResetPageButton(for: cat.id)
         reloadVisiblePane()
     }
 
@@ -221,7 +236,53 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    // MARK: - Reset all
+    // MARK: - Reset
+
+    /// Favorites and the connection address book are user data, not preferences,
+    /// so `SettingsReset` never touches them — the button says so by going grey
+    /// rather than by doing nothing when pressed.
+    private func updateResetPageButton(for id: String) {
+        let resettable = SettingsReset.resettableCategories.contains(id)
+        resetPageButton.isEnabled = resettable
+        resetPageButton.toolTip = resettable
+            ? tr("Restores every setting on this page to its default")
+            : tr("Favorites are your data, not a setting — Reset leaves them alone")
+    }
+
+    /// Resets the visible category. Every pane's reset used to be its own copy of
+    /// this; the differences between them were the side effects below, so those
+    /// live here now and the panes only re-read their model.
+    @objc private func resetCurrentPage() {
+        guard let id = currentPaneID, SettingsReset.resettableCategories.contains(id) else {
+            NSSound.beep()
+            return
+        }
+        SettingsReset.reset(category: id)
+        applySideEffects(of: id)
+        reloadAllPanes()
+        onChange?()
+        if id == "toolbar" { onToolbarChanged?() }
+        if id == "shortcuts" { onShortcutsChanged?() }
+    }
+
+    /// Language and appearance are *applied*, not merely stored, so removing
+    /// their keys isn't enough — they have to be re-read and pushed to the app.
+    private func applySideEffects(of id: String) {
+        if id == "general" {
+            // `reload()` rather than `setLanguage(.system)` — the latter would
+            // write the key straight back that the reset just removed.
+            Localizer.shared.reload()
+            NotificationCenter.default.post(name: .localizerDidChange, object: nil)
+        }
+        if id == "appearance" {
+            AppSettings.applyAppearance()
+        }
+        if id == "shortcuts" {
+            // A capture in progress would otherwise write a binding back after
+            // the reset (and leave its key monitor installed).
+            (built["shortcuts"] as? ShortcutsSettingsView)?.endRecordingIfActive()
+        }
+    }
 
     @objc private func resetAllSettings() {
         guard let window = window else { return }
@@ -239,12 +300,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func performResetAll() {
         SettingsReset.resetAll()
-        // Language and appearance are applied, not merely stored: re-read both.
-        // `reload()` rather than `setLanguage(.system)` — the latter would write
-        // the key straight back that the reset just removed.
-        Localizer.shared.reload()
-        NotificationCenter.default.post(name: .localizerDidChange, object: nil)
-        AppSettings.applyAppearance()
+        for id in SettingsReset.resettableCategories { applySideEffects(of: id) }
         reloadAllPanes()
         onChange?()
         onToolbarChanged?()

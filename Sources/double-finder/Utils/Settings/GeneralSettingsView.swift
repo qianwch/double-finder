@@ -1,9 +1,10 @@
 import AppKit
 
-/// General settings pane — language, list display (view mode / sort),
-/// and operations (trash confirm / terminal). (Display + Operation were merged
-/// here; icon size lives in Appearance next to the list font.)
-final class GeneralSettingsView: NSView {
+/// General settings pane — three groups: the app's language and the external
+/// programs it hands files to, how the file list starts out, and the one
+/// confirmation that guards file operations. (Icon size lives in Appearance,
+/// next to the list font.)
+final class GeneralSettingsView: SettingsPaneView {
     private let onChange: () -> Void
     private var terminalPopup: NSPopUpButton!
     private var editorPopup: NSPopUpButton!
@@ -74,7 +75,7 @@ final class GeneralSettingsView: NSView {
 
     init(onChange: @escaping () -> Void, terminals: [String], editors: [String] = []) {
         self.onChange = onChange
-        super.init(frame: .zero)
+        super.init(labelTitles: [tr("Language:"), tr("Terminal app:"), tr("Editor app:"), tr("Default view:")])
 
         // Language
         let langPop = NSPopUpButton()
@@ -83,6 +84,21 @@ final class GeneralSettingsView: NSView {
         if let idx = langs.firstIndex(of: Localizer.shared.storedSelection) { langPop.selectItem(at: idx) }
         langPop.target = self; langPop.action = #selector(changeLanguage(_:))
         self.languagePopup = langPop
+
+        // Terminal app: installed candidates + "Other…" (pick any .app by hand).
+        let termPop = NSPopUpButton()
+        self.terminalNames = terminals
+        Self.fillAppPopup(termPop, fixed: terminals.map { ($0, $0) }, current: AppSettings.terminalApp)
+        termPop.target = self; termPop.action = #selector(changeTerminal(_:))
+        self.terminalPopup = termPop
+
+        // Editor app (F4). First entry is "System Default" → stored as "".
+        let editorPop = NSPopUpButton()
+        self.editorNames = editors
+        Self.fillAppPopup(editorPop, fixed: [(tr("System Default"), "")] + editors.map { ($0, $0) },
+                          current: AppSettings.editorApp)
+        editorPop.target = self; editorPop.action = #selector(changeEditor(_:))
+        self.editorPopup = editorPop
 
         // Default view
         let viewPop = NSPopUpButton()
@@ -101,51 +117,17 @@ final class GeneralSettingsView: NSView {
         trashBox.state = AppSettings.confirmTrash ? .on : .off
         self.trashCheckbox = trashBox
 
-        // Terminal app: installed candidates + "Other…" (pick any .app by hand).
-        let termPop = NSPopUpButton()
-        self.terminalNames = terminals
-        Self.fillAppPopup(termPop, fixed: terminals.map { ($0, $0) }, current: AppSettings.terminalApp)
-        termPop.target = self; termPop.action = #selector(changeTerminal(_:))
-        self.terminalPopup = termPop
-
-        // Editor app (F4). First entry is "System Default" → stored as "".
-        let editorPop = NSPopUpButton()
-        self.editorNames = editors
-        Self.fillAppPopup(editorPop, fixed: [(tr("System Default"), "")] + editors.map { ($0, $0) },
-                          current: AppSettings.editorApp)
-        editorPop.target = self; editorPop.action = #selector(changeEditor(_:))
-        self.editorPopup = editorPop
-
-        let grid = NSGridView(views: [
-            [NSTextField(labelWithString: tr("Language:")), langPop],
-            [NSTextField(labelWithString: tr("Default view:")), viewPop],
-            // Checkboxes sit in the control column (label cell empty) so they
-            // left-align with the popups above — a merged two-column cell inherits
-            // the label column's trailing placement and leaves them ragged.
-            [NSGridCell.emptyContentView, foldersBox],
-            [NSGridCell.emptyContentView, trashBox],
-            [NSTextField(labelWithString: tr("Terminal app:")), termPop],
-            [NSTextField(labelWithString: tr("Editor app:")), editorPop],
+        addCard(title: tr("Language & External Programs"), rows: [
+            SettingsRow.labeled(tr("Language:"), langPop, labelWidth: labelWidth),
+            SettingsRow.labeled(tr("Terminal app:"), termPop, labelWidth: labelWidth),
+            SettingsRow.labeled(tr("Editor app:"), editorPop, labelWidth: labelWidth),
         ])
-        grid.column(at: 0).xPlacement = .trailing
-        grid.yPlacement = .center   // labels centred on their popups/checkboxes
-        grid.rowSpacing = 10; grid.columnSpacing = 8
-        // Full-width checkbox rows (folders-first = row 3, confirm-trash = row 4) span both columns.
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(grid)
-
-        let reset = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetPage))
-        reset.bezelStyle = .rounded
-        reset.toolTip = tr("Restores every setting on this page to its default")
-        reset.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(reset)
-
-        NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: topAnchor, constant: 20),
-            grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-
-            reset.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            reset.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+        addCard(title: tr("File List"), rows: [
+            SettingsRow.labeled(tr("Default view:"), viewPop, labelWidth: labelWidth),
+            SettingsRow.control(foldersBox, labelWidth: labelWidth),
+        ])
+        addCard(title: tr("File Operations"), rows: [
+            SettingsRow.control(trashBox, labelWidth: labelWidth),
         ])
     }
 
@@ -185,14 +167,5 @@ extension GeneralSettingsView: SettingsPaneReloadable {
                           current: AppSettings.terminalApp)
         Self.fillAppPopup(editorPopup, fixed: [(tr("System Default"), "")] + editorNames.map { ($0, $0) },
                           current: AppSettings.editorApp)
-    }
-
-    @objc fileprivate func resetPage() {
-        SettingsReset.reset(category: "general")
-        // Re-read the (now absent) language key instead of writing "system" back.
-        Localizer.shared.reload()
-        NotificationCenter.default.post(name: .localizerDidChange, object: nil)
-        reloadFromModel()
-        onChange()
     }
 }

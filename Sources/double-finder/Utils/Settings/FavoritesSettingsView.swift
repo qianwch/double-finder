@@ -49,6 +49,9 @@ final class FavoritesSettingsView: NSView, NSTextFieldDelegate {
         tableView.addTableColumn(pathCol)
         tableView.rowHeight = 20
         tableView.usesAlternatingRowBackgroundColors = true
+        // The path column absorbs the remaining width instead of truncating at
+        // 200pt with empty pane to its right.
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.dataSource = self
         tableView.delegate = self
         tableView.registerForDraggedTypes([Self.dragType])

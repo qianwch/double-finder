@@ -1,6 +1,11 @@
 import AppKit
 
-final class PanelsSettingsView: NSView {
+/// Panels pane — which chrome shows around the two file lists, and which
+/// optional columns the Full view draws.
+///
+/// The column checkboxes are laid out two per line: stacked one per line they
+/// ran the pane past the fold while the right half of it stayed empty.
+final class PanelsSettingsView: SettingsPaneView {
     private let onChange: () -> Void
     private var driveBarCheckbox: NSButton!
     private var driveDropCheckbox: NSButton!
@@ -10,7 +15,7 @@ final class PanelsSettingsView: NSView {
 
     init(onChange: @escaping () -> Void) {
         self.onChange = onChange
-        super.init(frame: .zero)
+        super.init(labelTitles: [])
 
         let driveBarBox = NSButton(checkboxWithTitle: tr("Show drive buttons (volume bar above each panel)"), target: self, action: #selector(toggleDriveBar(_:)))
         driveBarBox.state = AppSettings.showDriveBar ? .on : .off
@@ -30,43 +35,36 @@ final class PanelsSettingsView: NSView {
         fkeyBox.toolTip = tr("The F3–F8 keys keep working when the bar is hidden")
         self.functionKeyCheckbox = fkeyBox
 
-        let colLabel = NSTextField(labelWithString: tr("Columns (Full view):"))
+        addCard(title: tr("Interface Elements"), rows: [
+            SettingsRow.full(driveBarBox),
+            SettingsRow.full(driveDropBox),
+            SettingsRow.full(cmdLineBox),
+            SettingsRow.full(fkeyBox),
+        ])
+
         let visible = Set(AppSettings.visibleColumns)
-        var rows: [[NSView]] = [
-            [driveBarBox],
-            [driveDropBox],
-            [cmdLineBox],
-            [fkeyBox],
-            [colLabel],
-        ]
+        let grid = NSGridView()
+        grid.rowSpacing = 8
+        grid.columnSpacing = 20
+        var pending: [NSView] = []
         for col in FileColumnLayout.optionalColumns {
             let box = NSButton(checkboxWithTitle: tr(col.title), target: self, action: #selector(toggleColumn(_:)))
             box.state = visible.contains(col.id) ? .on : .off
             box.identifier = NSUserInterfaceItemIdentifier(col.id)
             columnCheckboxes.append((col.id, box))
-            rows.append([box])
+            pending.append(box)
+            if pending.count == 2 {
+                grid.addRow(with: pending)
+                pending = []
+            }
         }
-
-        let grid = NSGridView(views: rows)
+        if !pending.isEmpty {
+            grid.addRow(with: pending + [NSGridCell.emptyContentView])
+        }
         grid.column(at: 0).xPlacement = .leading
-        grid.rowSpacing = 10; grid.columnSpacing = 8
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(grid)
+        grid.column(at: 1).xPlacement = .leading
 
-        let reset = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetPage))
-        reset.bezelStyle = .rounded
-        reset.toolTip = tr("Restores every setting on this page to its default")
-        reset.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(reset)
-
-        NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: topAnchor, constant: 20),
-            grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-
-            reset.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            reset.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-        ])
-        grid.yPlacement = .center   // labels centred on their controls
+        addCard(title: tr("Columns (Full view)"), rows: [SettingsRow.full(grid)])
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -95,11 +93,5 @@ extension PanelsSettingsView: SettingsPaneReloadable {
         for (id, box) in columnCheckboxes {
             box.state = visible.contains(id) ? .on : .off
         }
-    }
-
-    @objc fileprivate func resetPage() {
-        SettingsReset.reset(category: "panels")
-        reloadFromModel()
-        onChange()
     }
 }

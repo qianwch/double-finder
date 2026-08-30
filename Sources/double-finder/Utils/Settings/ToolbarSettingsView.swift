@@ -37,6 +37,7 @@ final class ToolbarSettingsView: NSView {
 
     private let onChanged: () -> Void
     private let tableView = NSTableView()
+    private static let dragType = NSPasteboard.PasteboardType("com.doublefinder.toolbarbutton.row")
 
     // MARK: - Init
 
@@ -69,7 +70,7 @@ final class ToolbarSettingsView: NSView {
 
     private func setupUI() {
         // Instruction label
-        let label = NSTextField(labelWithString: tr("Check the buttons to show; reorder with the arrows."))
+        let label = NSTextField(labelWithString: tr("Check the buttons to show; drag a row (or use the arrows) to reorder."))
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -85,8 +86,12 @@ final class ToolbarSettingsView: NSView {
         tableView.addTableColumn(col)
         tableView.headerView = nil
         tableView.rowHeight = 22
+        // Let the single column take the pane's full width — pinned at 260 it left
+        // half the pane empty next to a list of short labels.
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.registerForDraggedTypes([Self.dragType])
         scroll.documentView = tableView
         addSubview(scroll)
 
@@ -101,12 +106,7 @@ final class ToolbarSettingsView: NSView {
         down.translatesAutoresizingMaskIntoConstraints = false
         addSubview(down)
 
-        // Reset / custom-command buttons (bottom)
-        let reset = NSButton(title: tr("Reset This Page"), target: self, action: #selector(resetDefaults))
-        reset.bezelStyle = .rounded
-        reset.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(reset)
-
+        // Custom-command buttons (bottom; the resets live in the window footer)
         let addCmd = NSButton(title: tr("Add Command…"), target: self, action: #selector(addCustomCommand))
         addCmd.bezelStyle = .rounded
         addCmd.translatesAutoresizingMaskIntoConstraints = false
@@ -136,15 +136,13 @@ final class ToolbarSettingsView: NSView {
             scroll.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             scroll.trailingAnchor.constraint(equalTo: up.leadingAnchor, constant: -8),
-            scroll.bottomAnchor.constraint(equalTo: reset.topAnchor, constant: -12),
+            scroll.bottomAnchor.constraint(equalTo: addCmd.topAnchor, constant: -12),
 
-            // Bottom row: Reset left, custom-command management right
-            reset.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            reset.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-            removeCmd.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            removeCmd.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-            addCmd.trailingAnchor.constraint(equalTo: removeCmd.leadingAnchor, constant: -8),
+            // Bottom row: custom-command management
+            addCmd.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             addCmd.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            removeCmd.leadingAnchor.constraint(equalTo: addCmd.trailingAnchor, constant: 8),
+            removeCmd.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
         ])
     }
 
@@ -179,22 +177,6 @@ final class ToolbarSettingsView: NSView {
         order.swapAt(r, r + 1)
         tableView.reloadData()
         tableView.selectRowIndexes([r + 1], byExtendingSelection: false)
-        applyLive()
-    }
-
-    @objc private func resetDefaults() {
-        enabled = Set(ToolbarConfig.defaultIDs)
-        var ord = ToolbarConfig.defaultIDs.filter { id in
-            ToolbarSettingsView.allCommands.contains { $0.id == id }
-        }
-        for c in ToolbarSettingsView.allCommands where !ord.contains(c.id) {
-            ord.append(c.id)
-        }
-        for c in customs where !ord.contains(c.id) {
-            ord.append(c.id)
-        }
-        order = ord
-        tableView.reloadData()
         applyLive()
     }
 
@@ -285,6 +267,33 @@ extension ToolbarSettingsView: NSTableViewDataSource, NSTableViewDelegate {
         cell.state = enabled.contains(id) ? .on : .off
         cell.font = .systemFont(ofSize: 12)
         return cell
+    }
+
+    // MARK: Drag-to-reorder (same contract as the Favorites pane)
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        let item = NSPasteboardItem()
+        item.setString(String(row), forType: Self.dragType)
+        return item
+    }
+
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo,
+                   proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
+        op == .above ? .move : []
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
+                   row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
+        guard let str = info.draggingPasteboard.string(forType: Self.dragType),
+              let from = Int(str), from >= 0, from < order.count else { return false }
+        var to = row
+        let moved = order.remove(at: from)
+        if from < to { to -= 1 }
+        order.insert(moved, at: to)
+        tableView.reloadData()
+        tableView.selectRowIndexes([to], byExtendingSelection: false)
+        applyLive()
+        return true
     }
 }
 
