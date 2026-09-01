@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in Double Finder behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities here — see
+        [SECURITY.md](../blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a folder containing …
+        2. Press F5 …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Double Finder version
+      description: The release tag, or the commit you built from.
+      placeholder: "1.0.8 / latest prerelease / built from a1b2c3d"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      placeholder: "macOS 15.5, Apple Silicon (M2)"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it happen
+      options:
+        - Local files
+        - Archives (zip / 7z / tar / rar …)
+        - SFTP
+        - S3-compatible storage
+        - SMB / NAS
+        - Android over USB (MTP)
+        - Viewer (F3 Lister)
+        - Settings, toolbar or shortcuts
+        - Somewhere else / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Optional. A screenshot of the failure, or console output.

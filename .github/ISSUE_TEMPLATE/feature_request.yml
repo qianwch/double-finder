@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest a capability Double Finder should have
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: Describe the task, not just the button you want.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should Double Finder do
+    validations:
+      required: true
+  - type: input
+    id: tc
+    attributes:
+      label: How does Total Commander do it
+      description: >
+        Optional but persuasive — this project deliberately follows TC's
+        workflow. Name the TC command or shortcut if there is one.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you tried instead
