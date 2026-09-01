@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # The project has no package-manager dependencies to track (SwiftPM pulls
+  # nothing; libarchive, libmtp and 7zz come from the system, Homebrew or a
+  # download at package time). Only the CI actions are version-pinned here.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"

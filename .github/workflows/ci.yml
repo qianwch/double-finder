@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    # Releases are tagged bare ("1.0.10"), not "v1.0.10" — the second pattern is
+    # the one that actually fires; "v*" only covers the very first tag ever cut.
+    tags: ["v*", "[0-9]*"]
   pull_request:
 
 # Needed to create/update releases and their tags.
@@ -83,7 +85,12 @@ jobs:
           - arch: x86_64
             runner: macos-15-intel
     steps:
+      # Full history + tags: package_app.sh stamps CFBundleShortVersionString from
+      # `git describe` and CFBundleVersion from the commit count, and a shallow
+      # clone has neither.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -94,6 +101,11 @@ jobs:
 
       - name: Package .dmg
         run: ./package_dmg.sh
+
+      - name: Show the stamped version
+        run: |
+          plutil -p ".dist/Double Finder.app/Contents/Info.plist" \
+            | grep -E "CFBundleShortVersionString|CFBundleVersion|DFGitRevision"
 
       # Name the artifact by architecture: the volume and the .app inside keep
       # their plain "Double Finder" names, only the download is disambiguated.
@@ -157,12 +169,18 @@ jobs:
 
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-            gh release create "$TAG" \
-              --title "$TAG" \
-              --notes "Release \`$TAG\`.
+            # The release may already exist (cut by hand before the tag was
+            # pushed) — attach the DMGs to it instead of failing.
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" dist/*.dmg --clobber
+            else
+              gh release create "$TAG" \
+                --title "$TAG" \
+                --notes "Release \`$TAG\`.
 
           $NOTES" \
-              dist/*.dmg
+                dist/*.dmg
+            fi
           else
             # Rolling prerelease: recreate it so both the tag and the DMGs track
             # the newest commit (delete is best-effort on the first ever run).
