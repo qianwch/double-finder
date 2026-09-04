@@ -8,7 +8,7 @@ final class PackSheet: NSWindowController {
         var format: ArchiveFormat
         var level: Int
         var password: String?
-        var volumeSize: String?   // 7zz -v token (e.g. "100m"); nil = no split
+        var volumeSize: Int64?    // bytes per volume; nil = no split
     }
     var onPack: ((Options) -> Void)?
 
@@ -134,11 +134,11 @@ final class PackSheet: NSWindowController {
         let base = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !base.isEmpty else { return }
 
-        var volumeToken: String? = nil
+        var volumeBytes: Int64? = nil
         if selectedFormat.supportsSplit {
             switch VolumeSize.parse(volumePopup.stringValue, noSplitLabel: tr("No split")) {
-            case .none:            volumeToken = nil
-            case .token(let t):    volumeToken = t
+            case .none:            volumeBytes = nil
+            case .bytes(let b):    volumeBytes = b
             case .invalid:
                 let alert = NSAlert()
                 alert.messageText = tr("Invalid volume size")
@@ -154,7 +154,7 @@ final class PackSheet: NSWindowController {
             format: selectedFormat,
             level: levels[levelPopup.indexOfSelectedItem].1,
             password: (encryptCheck.state == .on && selectedFormat.supportsEncryption) ? passwordField.stringValue : nil,
-            volumeSize: volumeToken
+            volumeSize: volumeBytes
         )
         window?.sheetParent?.endSheet(window!, returnCode: .OK)
         onPack?(opts)

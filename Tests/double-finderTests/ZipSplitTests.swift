@@ -1,20 +1,10 @@
 import XCTest
 @testable import double_finder
 
-/// Functional test for split-archive (.001) browsing/extraction via 7zz.
-/// Skips when no 7z-family tool is available on the machine.
+/// Functional test for split-archive (.001) browsing/extraction: the volumes
+/// are written by the in-process 7-Zip engine and read back as one stream.
 final class ZipSplitTests: XCTestCase {
-    private func anySevenZip() -> String? {
-        let candidates = [
-            FileManager.default.currentDirectoryPath + "/vendor/sevenzip/7zz",
-            "/opt/homebrew/bin/7zz", "/opt/homebrew/bin/7z", "/opt/homebrew/bin/7za",
-            "/usr/local/bin/7zz", "/usr/local/bin/7z", "/usr/local/bin/7za",
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-
     func testBrowseAndExtractSplit7z() throws {
-        guard let tool = anySevenZip() else { throw XCTSkip("no 7z tool available") }
         let fm = FileManager.default
         let dir = NSTemporaryDirectory() + "splitfs-\(ProcessInfo.processInfo.globallyUniqueString)"
         try fm.createDirectory(atPath: dir + "/src/sub", withIntermediateDirectories: true)
@@ -27,16 +17,16 @@ final class ZipSplitTests: XCTestCase {
         defer { try? fm.removeItem(atPath: dir) }
 
         // Split into 100k volumes → docs.7z.001, .002, .003, …
-        let p = Process(); p.executableURL = URL(fileURLWithPath: tool)
-        p.currentDirectoryURL = URL(fileURLWithPath: dir)
-        p.arguments = ["a", "-v100k", "docs.7z", "./src"]
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
+        try SevenZipEngine.create(sources: [(dir + "/src", "src")], to: dir + "/docs.7z",
+                                  level: 5, password: nil, volumeBytes: 100 * 1024)
+        XCTAssertFalse(fm.fileExists(atPath: dir + "/docs.7z"), "a split pack must not leave the single file")
         XCTAssertTrue(fm.fileExists(atPath: dir + "/docs.7z.001"), "split .001 not created")
         XCTAssertTrue(fm.fileExists(atPath: dir + "/docs.7z.002"), "expected multiple volumes")
 
         // The .001 is enterable; the listing comes back through 7zz with sizes.
         XCTAssertTrue(FileItem.isArchiveFileName("docs.7z.001"))
+        XCTAssertEqual(ZipFS.kind(of: dir + "/docs.7z.001"), .sevenZip)
+        XCTAssertEqual(SplitVolumes.set(forFirstVolume: dir + "/docs.7z.001").count, 3)
         let entries = try ZipFS.entryDetails(archivePath: dir + "/docs.7z.001", kind: .unknown)
         let paths = Set(entries.map { $0.path })
         XCTAssertTrue(paths.contains("src/a.txt"), "missing entries; got \(paths)")
@@ -44,10 +34,21 @@ final class ZipSplitTests: XCTestCase {
         XCTAssertTrue(paths.contains("src/big.bin"))
         XCTAssertEqual(entries.first { $0.path == "src/big.bin" }?.size, 256000)
 
-        // Extracting a single entry from the split set works.
+        // Extracting a single entry from the split set works, and — like the
+        // libarchive path — the entry lands flat under its own name: copying
+        // `src/a.txt` out of the archive must NOT recreate `src/` in the target.
         let out = dir + "/out"
         try ZipFS.extractEntry(archivePath: dir + "/docs.7z.001", entry: "src/a.txt", to: out, kind: .unknown)
-        XCTAssertEqual(try String(contentsOfFile: out + "/src/a.txt", encoding: .utf8), "alpha")
+        XCTAssertEqual(try String(contentsOfFile: out + "/a.txt", encoding: .utf8), "alpha")
+        XCTAssertFalse(fm.fileExists(atPath: out + "/src"), "parent folder must not be recreated")
+        XCTAssertFalse((try fm.contentsOfDirectory(atPath: out)).contains { $0.hasPrefix(".df-extract-") },
+                       "scratch directory must be cleaned up")
+
+        // A folder entry keeps its own subtree but still drops its parent path.
+        let out2 = dir + "/out2"
+        try ZipFS.extractEntry(archivePath: dir + "/docs.7z.001", entry: "src/sub", to: out2, kind: .unknown)
+        XCTAssertEqual(try String(contentsOfFile: out2 + "/sub/b.txt", encoding: .utf8), "beta")
+        XCTAssertFalse(fm.fileExists(atPath: out2 + "/src"))
     }
 
     /// An *incomplete* multi-volume set (the final volume — which holds the 7z
@@ -55,7 +56,6 @@ final class ZipSplitTests: XCTestCase {
     /// encryption error. Regression: a missing volume used to be misread as a
     /// password-protected archive, so double-clicking it prompted for a password.
     func testIncompleteSplitArchiveReportsOpenErrorNotPassword() throws {
-        guard anySevenZip() != nil else { throw XCTSkip("no 7z tool available") }
         let fm = FileManager.default
         let dir = NSTemporaryDirectory() + "splitbad-\(ProcessInfo.processInfo.globallyUniqueString)"
         try fm.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
@@ -64,11 +64,8 @@ final class ZipSplitTests: XCTestCase {
         try blob.write(to: URL(fileURLWithPath: dir + "/src/big.bin"))
         defer { try? fm.removeItem(atPath: dir) }
 
-        let p = Process(); p.executableURL = URL(fileURLWithPath: anySevenZip()!)
-        p.currentDirectoryURL = URL(fileURLWithPath: dir)
-        p.arguments = ["a", "-v100k", "docs.7z", "./src"]
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
+        try SevenZipEngine.create(sources: [(dir + "/src", "src")], to: dir + "/docs.7z",
+                                  level: 5, password: nil, volumeBytes: 100 * 1024)
 
         // Delete the last volume → the end-header is gone, so 7z can't open it.
         let vols = (try fm.contentsOfDirectory(atPath: dir))

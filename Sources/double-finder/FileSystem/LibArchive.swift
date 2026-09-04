@@ -39,8 +39,8 @@ enum LibArchive {
         archive_read_support_filter_all(a)
         archive_read_support_format_all(a)
         archive_read_support_format_raw(a)
-        let openR = archive_read_open_filename(a, archivePath, 10240)
-        out += "open_filename -> \(openR)" + (openR != OK ? " err='\(errString(a))'" : "") + "\n"
+        let openR = openInput(a, archivePath)
+        out += "open -> \(openR)" + (openR != OK ? " err='\(errString(a))'" : "") + "\n"
         if openR != OK { return out }
         let enc = detectArchiveEncoding(archivePath: archivePath, password: nil)
         out += "detected name charset -> \(enc.map { "\($0)" } ?? "UTF-8/none")\n"
@@ -186,12 +186,143 @@ enum LibArchive {
         archive_read_support_format_all(a)
         archive_read_support_format_raw(a)   // bare gz/bz2/xz/zst single streams
         if let pw = password, !pw.isEmpty { archive_read_add_passphrase(a, pw) }
-        if archive_read_open_filename(a, archivePath, 10240) != OK {
+        if openInput(a, archivePath) != OK {
             let msg = errString(a)
             archive_read_free(a)
             throw Failure(message: msg)
         }
         return a
+    }
+
+    /// Opens `archivePath` for reading. A split set's first volume ("x.7z.001")
+    /// is opened as ONE seekable stream over every `.NNN` volume in order —
+    /// 7-Zip's `-v` output is the plain archive byte stream cut into pieces, so
+    /// libarchive reads it like the whole file (any format: zip, 7z, tar…).
+    private static func openInput(_ a: OpaquePointer, _ archivePath: String) -> Int32 {
+        let volumes = SplitVolumes.set(forFirstVolume: archivePath)
+        guard volumes.count > 1 else { return archive_read_open_filename(a, archivePath, 10240) }
+        guard let input = VolumeSetInput(paths: volumes) else { return -30 }
+        let box = Unmanaged.passRetained(input)
+        archive_read_set_callback_data(a, box.toOpaque())
+        archive_read_set_read_callback(a) { _, data, buffer in
+            Unmanaged<VolumeSetInput>.fromOpaque(data!).takeUnretainedValue().read(into: buffer!)
+        }
+        archive_read_set_seek_callback(a) { _, data, offset, whence in
+            Unmanaged<VolumeSetInput>.fromOpaque(data!).takeUnretainedValue().seek(offset, whence: whence)
+        }
+        archive_read_set_close_callback(a) { _, data in
+            Unmanaged<VolumeSetInput>.fromOpaque(data!).release()
+            return 0
+        }
+        return archive_read_open1(a)
+    }
+
+    /// Reads a list of files as one concatenated, seekable stream (libarchive's
+    /// read/seek callbacks). The 7z reader seeks to the end header first, so
+    /// seeking across volume boundaries must be exact.
+    private final class VolumeSetInput {
+        private let fds: [Int32]
+        private let sizes: [Int64]
+        private let starts: [Int64]      // global offset where each volume begins
+        private let total: Int64
+        private var position: Int64 = 0
+        private let buffer: UnsafeMutableRawPointer
+        private let bufferSize = 256 * 1024
+
+        init?(paths: [String]) {
+            var fds: [Int32] = [], sizes: [Int64] = [], starts: [Int64] = []
+            var total: Int64 = 0
+            for p in paths {
+                let fd = open(p, O_RDONLY)
+                guard fd >= 0 else { fds.forEach { close($0) }; return nil }
+                let size = lseek(fd, 0, SEEK_END)
+                guard size >= 0 else { close(fd); fds.forEach { close($0) }; return nil }
+                fds.append(fd); sizes.append(size); starts.append(total)
+                total += size
+            }
+            self.fds = fds; self.sizes = sizes; self.starts = starts; self.total = total
+            buffer = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 16)
+        }
+
+        deinit {
+            fds.forEach { close($0) }
+            buffer.deallocate()
+        }
+
+        func read(into out: UnsafeMutablePointer<UnsafeRawPointer?>) -> Int {
+            guard position < total else { return 0 }
+            // Locate the volume holding `position`.
+            var i = 0
+            while i + 1 < fds.count, position >= starts[i + 1] { i += 1 }
+            let local = position - starts[i]
+            let want = min(Int64(bufferSize), sizes[i] - local)
+            guard want > 0 else { return 0 }
+            let n = pread(fds[i], buffer, Int(want), local)
+            guard n > 0 else { return n < 0 ? -30 : 0 }
+            position += Int64(n)
+            out.pointee = UnsafeRawPointer(buffer)
+            return n
+        }
+
+        func seek(_ offset: Int64, whence: Int32) -> Int64 {
+            let base: Int64
+            switch whence {
+            case SEEK_SET: base = 0
+            case SEEK_CUR: base = position
+            case SEEK_END: base = total
+            default: return -30
+            }
+            let target = base + offset
+            guard target >= 0, target <= total else { return -30 }
+            position = target
+            return position
+        }
+    }
+
+    /// Cuts an archive being written into `volumeBytes`-sized files
+    /// `<archivePath>.001`, `.002`, … (libarchive's write callback), the same
+    /// layout 7-Zip's `-v` produces, so the result opens as a split set here
+    /// and in 7-Zip alike.
+    private final class SplitOutput {
+        private let prefix: String
+        private let volumeBytes: Int64
+        private var fd: Int32 = -1
+        private var written: Int64 = 0
+        private var index = 0
+        var error: String?
+
+        init(archivePath: String, volumeBytes: Int64) {
+            prefix = archivePath + "."
+            self.volumeBytes = max(1, volumeBytes)
+        }
+
+        private func openNext() -> Bool {
+            closeCurrent()
+            index += 1
+            let path = prefix + String(format: "%03d", index)
+            fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+            written = 0
+            if fd < 0 { error = "Can't create \(path)" }
+            return fd >= 0
+        }
+
+        private func closeCurrent() {
+            if fd >= 0 { close(fd); fd = -1 }
+        }
+
+        func write(_ bytes: UnsafeRawPointer, _ length: Int) -> Int {
+            var done = 0
+            while done < length {
+                if fd < 0 || written >= volumeBytes { guard openNext() else { return -1 } }
+                let chunk = min(Int64(length - done), volumeBytes - written)
+                let n = Foundation.write(fd, bytes.advanced(by: done), Int(chunk))
+                if n <= 0 { error = "Write failed"; return -1 }
+                done += n; written += Int64(n)
+            }
+            return length
+        }
+
+        func finish() { closeCurrent() }
     }
 
     // MARK: - Listing
@@ -610,6 +741,7 @@ enum LibArchive {
     /// caller removes the half-written archive).
     static func create(sources: [(absPath: String, entryName: String)], to archivePath: String,
                        format: ArchiveFormat, level: Int, password: String?,
+                       volumeBytes: Int64? = nil,
                        onBytes: ((Int64) -> Void)? = nil,
                        shouldCancel: (() -> Bool)? = nil) throws {
         guard let a = archive_write_new() else { throw Failure(message: "archive_write_new failed") }
@@ -642,14 +774,29 @@ enum LibArchive {
         }
         if let pw = pw { archive_write_set_passphrase(a, pw) }
 
-        if archive_write_open_filename(a, archivePath) != OK {
+        var split: SplitOutput? = nil
+        if let volumeBytes = volumeBytes {
+            // Volumes: `<archivePath>.001/.002/…` instead of the single file.
+            let out = SplitOutput(archivePath: archivePath, volumeBytes: volumeBytes)
+            split = out
+            archive_write_set_bytes_in_last_block(a, 1)   // no padding after the last block
+            let box = Unmanaged.passUnretained(out)
+            let r = archive_write_open(a, box.toOpaque(), { _, _ in 0 }, { _, data, buffer, length in
+                Unmanaged<SplitOutput>.fromOpaque(data!).takeUnretainedValue().write(buffer!, length)
+            }, { _, data in
+                Unmanaged<SplitOutput>.fromOpaque(data!).takeUnretainedValue().finish()
+                return 0
+            })
+            if r != OK { throw Failure(message: out.error ?? errString(a)) }
+        } else if archive_write_open_filename(a, archivePath) != OK {
             throw Failure(message: errString(a))
         }
         for src in sources {
             try addToArchive(a, absPath: src.absPath, entryName: src.entryName,
                              onBytes: onBytes, shouldCancel: shouldCancel)
         }
-        if archive_write_close(a) != OK { throw Failure(message: errString(a)) }
+        if archive_write_close(a) != OK { throw Failure(message: split?.error ?? errString(a)) }
+        withExtendedLifetime(split) {}
     }
 
     private static func addToArchive(_ a: OpaquePointer, absPath: String, entryName: String,

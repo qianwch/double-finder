@@ -31,9 +31,38 @@ let package = Package(
                 .unsafeFlags(["-I/opt/homebrew/include", "-I/usr/local/include"])
             ]
         ),
+        // In-process 7-Zip engine (LGPL-2.1, vendored under 7zip/): only the 7z
+        // handler + its codecs (LZMA/LZMA2/PPMd/BCJ/BCJ2/Delta/AES), no Rar
+        // (unRAR licence) and no other formats — libarchive owns those. It is the
+        // one thing libarchive can't do: encrypted 7z read/write. The shim/ C
+        // façade is what Swift calls. Warnings are muted for the vendored code and
+        // it is always built -O2 (LZMA at -O0 is unusably slow in debug builds).
+        .target(
+            name: "CSevenZip",
+            path: "Sources/CSevenZip",
+            exclude: ["7zip/DOC", "README.md"],
+            cSettings: [
+                .define("NDEBUG"),
+                .define("_REENTRANT"),
+                .define("_FILE_OFFSET_BITS", to: "64"),
+                .define("_LARGEFILE_SOURCE"),
+                .define("Z7_DEFLATE_EXTRACT_ONLY"),
+                .define("Z7_BZIP2_EXTRACT_ONLY"),
+                .unsafeFlags(["-w", "-O2", "-fno-modules"])
+            ],
+            cxxSettings: [
+                .define("NDEBUG"),
+                .define("_REENTRANT"),
+                .define("_FILE_OFFSET_BITS", to: "64"),
+                .define("_LARGEFILE_SOURCE"),
+                .define("Z7_DEFLATE_EXTRACT_ONLY"),
+                .define("Z7_BZIP2_EXTRACT_ONLY"),
+                .unsafeFlags(["-w", "-O2", "-fno-modules"])
+            ]
+        ),
         .executableTarget(
             name: "double-finder",
-            dependencies: ["Clibarchive", "Clibmtp"],
+            dependencies: ["Clibarchive", "Clibmtp", "CSevenZip"],
             path: "Sources/double-finder",
             resources: [
                 .copy("Resources/Localization"),
@@ -88,5 +117,6 @@ let package = Package(
                               "-Xcc", "-I/usr/local/include"])
             ]
         )
-    ]
+    ],
+    cxxLanguageStandard: .cxx17
 )

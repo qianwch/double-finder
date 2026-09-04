@@ -14,17 +14,6 @@ struct ArchiveOpenError: LocalizedError {
     }
 }
 
-/// Thrown when the external command-line tool needed to read an archive isn't
-/// installed (e.g. `7z` missing on a fresh Intel mac). Distinct from
-/// `ArchiveEncryptedError` so we don't mistakenly prompt for a password.
-struct ArchiveToolMissingError: LocalizedError {
-    let tool: String
-    let hint: String
-    var errorDescription: String? {
-        "“\(tool)” is required to open this archive, but it was not found on this Mac.\n\n\(hint)"
-    }
-}
-
 /// Session cache of archive passwords (keyed by archive path on disk).
 enum ArchivePasswords {
     private static var map: [String: String] = [:]
@@ -32,10 +21,11 @@ enum ArchivePasswords {
     static func set(_ path: String, _ pw: String) { map[path] = pw }
 }
 
-/// Browses and extracts archives of many formats by dispatching to the right
-/// command-line tool (zip→unzip, tar family→tar, 7z→7z, rar→unrar). Listing is
-/// normalized to a flat list of internal paths, then a shared tree builder
-/// produces the per-directory view. (Class kept named `ZipFS` for call sites.)
+/// Browses and extracts archives of many formats: libarchive for everything,
+/// with the in-process 7-Zip engine (`SevenZipEngine`) for what libarchive
+/// can't do — encrypted 7z. Listing is normalized to a flat list of internal
+/// paths, then a shared tree builder produces the per-directory view. (Class
+/// kept named `ZipFS` for call sites.)
 class ZipFS: VirtualFS {
     let archivePath: String
     let password: String?
@@ -53,7 +43,9 @@ class ZipFS: VirtualFS {
     static let singleSuffixes = [".gz", ".bz2", ".xz", ".zst", ".lz4"]
 
     static func kind(of path: String) -> Kind {
-        let name = (path as NSString).lastPathComponent.lowercased()
+        var name = (path as NSString).lastPathComponent.lowercased()
+        // A split set's first volume ("docs.7z.001") is the archive it wraps.
+        if let base = FileItem.splitArchiveFirstPartBase(name) { name = base }
         let tarSuffixes = [".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2",
                            ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.z"]
         if tarSuffixes.contains(where: { name.hasSuffix($0) }) { return .tar }
@@ -102,9 +94,7 @@ class ZipFS: VirtualFS {
     /// Entries with size/mtime for display. Mirrors `entryPaths` but keeps the
     /// per-entry metadata — including on the encrypted-7z fallback.
     static func entryDetails(archivePath: String, kind: Kind, password: String? = nil) throws -> [LibArchive.Entry] {
-        if isSplitFirstVolume(archivePath) {
-            return try sevenZipListDetailed(tool: requireSevenZipTool(), archivePath: archivePath, password: password)
-        }
+        let kind = kind == .unknown ? Self.kind(of: archivePath) : kind   // "x.7z.001" → 7z
         if kind == .unknown { return [] }
         if kind == .single {
             let size = (try? FileManager.default.attributesOfItem(atPath: archivePath)[.size] as? Int64) ?? nil
@@ -114,19 +104,15 @@ class ZipFS: VirtualFS {
         do {
             return try LibArchive.listEntries(archivePath: archivePath, password: password)
         } catch is ArchiveEncryptedError {
-            // Use the -slt listing, not the path-only one: 7z entry paths carry no
-            // trailing slash, so directories can't be told apart from files that
-            // way (and every size would read as 0). `Folder = +` / `Size = …` do.
-            return try sevenZipEncryptedFallback(archivePath: archivePath, kind: kind) { tool in
-                try sevenZipListDetailed(tool: tool, archivePath: archivePath, password: password)
-            }
+            // libarchive can't decrypt 7z at all: the in-process 7-Zip engine can.
+            // zip/rar decrypt inside libarchive, so there it really is a bad password.
+            guard kind == .sevenZip else { throw ArchiveEncryptedError(archivePath: archivePath) }
+            return try SevenZipEngine.list(archivePath: archivePath, password: password)
         } catch {
-            // libarchive couldn't read it (exotic codec / edge case). For 7z/zip/rar
-            // retry the listing with 7zz (the 7-Zip/MacZip engine, keeps size/date).
-            // NOT for tarballs — `7z l foo.tar.gz` lists the outer `.tar`, not the
-            // real contents. No 7zz → surface the original libarchive error.
-            guard prefersSevenZip(kind), let tool = SevenZip.resolve() else { throw error }
-            return try sevenZipListDetailed(tool: tool, archivePath: archivePath, password: password)
+            // libarchive couldn't read it (exotic codec / edge case): a 7z gets a
+            // second chance on the reference engine; other formats surface the error.
+            guard kind == .sevenZip else { throw error }
+            return try SevenZipEngine.list(archivePath: archivePath, password: password)
         }
     }
 
@@ -136,6 +122,7 @@ class ZipFS: VirtualFS {
     static func entryPaths(archivePath: String, kind: Kind, password: String? = nil) throws -> [String] {
         // libarchive auto-detects the container, reads UTF-8 entry names, and
         // covers zip/tar*/7z/rar — no external tool needed.
+        let kind = kind == .unknown ? Self.kind(of: archivePath) : kind
         if kind == .unknown { return [] }
         // A bare .gz/.bz2/.xz/.zst holds exactly one file (its name minus the
         // suffix); show that single entry instead of decompressing externally.
@@ -143,47 +130,18 @@ class ZipFS: VirtualFS {
         do {
             return try LibArchive.list(archivePath: archivePath, password: password)
         } catch is ArchiveEncryptedError {
-            return try sevenZipEncryptedFallback(archivePath: archivePath, kind: kind) { tool in
-                try sevenZipList(tool: tool, archivePath: archivePath, password: password)
-            }
+            guard kind == .sevenZip else { throw ArchiveEncryptedError(archivePath: archivePath) }
+            return try SevenZipEngine.list(archivePath: archivePath, password: password).map { $0.path }
         } catch {
-            // libarchive failed (exotic codec / edge case): retry 7z/zip/rar listing
-            // with 7zz. Tarballs excluded (7z would list the outer `.tar`).
-            guard prefersSevenZip(kind), let tool = SevenZip.resolve() else { throw error }
-            return try sevenZipList(tool: tool, archivePath: archivePath, password: password)
+            guard kind == .sevenZip else { throw error }
+            return try SevenZipEngine.list(archivePath: archivePath, password: password).map { $0.path }
         }
     }
 
-    /// libarchive cannot decrypt 7z archives (data- or header-encrypted), so an
-    /// encrypted 7z routes here. Uses the external 7-Zip if available; otherwise
-    /// surfaces a clear "install 7z" message (for zip/rar, just re-prompts).
-    private static func sevenZipEncryptedFallback<T>(archivePath: String, kind: Kind,
-                                                     _ body: (String) throws -> T) throws -> T {
-        guard kind == .sevenZip else { throw ArchiveEncryptedError(archivePath: archivePath) }
-        guard let tool = sevenZipTool() else {
-            throw ArchiveToolMissingError(
-                tool: "7z",
-                hint: "Encrypted 7z archives need 7-Zip — libarchive can't decrypt them.\nInstall it with Homebrew:\n    brew install sevenzip")
-        }
-        return try body(tool)
-    }
-
-    private static func sevenZipTool() -> String? { SevenZip.resolve() }
-
-    /// True if `path` is the first volume of a split archive ("x.7z.001"). 7zz reads
-    /// the whole volume set natively when opened on the .001 (libarchive can't).
-    static func isSplitFirstVolume(_ path: String) -> Bool {
-        FileItem.splitArchiveFirstPartBase((path as NSString).lastPathComponent) != nil
-    }
-
-    private static func requireSevenZipTool() throws -> String {
-        guard let tool = sevenZipTool() else {
-            throw ArchiveToolMissingError(
-                tool: "7z",
-                hint: "Split (multi-volume) archives need 7-Zip.\nInstall it with Homebrew:\n    brew install sevenzip")
-        }
-        return tool
-    }
+    /// True if `path` is the first volume of a split archive ("x.7z.001"). Both
+    /// libarchive (`LibArchive.openInput`) and the 7-Zip engine read the whole
+    /// volume set when opened on the .001.
+    static func isSplitFirstVolume(_ path: String) -> Bool { SplitVolumes.isFirstVolume(path) }
 
     /// Prints a full diagnostic of how this build handles `archivePath`. Run with
     /// `NC_ARCHIVE_DIAG=/path/to/archive "Double Finder"` from Terminal.
@@ -192,7 +150,7 @@ class ZipFS: VirtualFS {
         print("path:", archivePath)
         print("exists:", FileManager.default.fileExists(atPath: archivePath))
         print("kind:", kind(of: archivePath))
-        print("external 7z:", SevenZip.resolve() ?? "(none)")
+        print("7-Zip engine:", SevenZipEngine.version)
         print("--- libarchive ---")
         print(LibArchive.diagnose(archivePath))
         print("--- entryDetails() (what the panel uses to enter) ---")
@@ -228,104 +186,6 @@ class ZipFS: VirtualFS {
             print("THREW \(type(of: error)):", error)
         }
         try? FileManager.default.removeItem(atPath: tmp)
-    }
-
-    /// The `-p` argument for a 7-Zip invocation — emitted *always*, even with no
-    /// password.
-    ///
-    /// Without `-p`, 7-Zip prompts for a password on stdin when it hits an
-    /// encrypted archive. We close stdin (see `runSevenZip`), so it dies with
-    /// "Break signaled" and none of the `Cannot open encrypted archive` /
-    /// `Wrong password` markers we key off — which read as a corrupt archive, so
-    /// an encrypted 7z showed "may be corrupt or incomplete" and never got its
-    /// password prompt. Passing an empty `-p` keeps 7-Zip non-interactive and
-    /// makes it report the real encryption error. It is harmless on archives that
-    /// aren't encrypted.
-    static func sevenZipPasswordArg(_ password: String?) -> String { "-p" + (password ?? "") }
-
-    /// `7z l -slt -ba` → parses the `Path = …` lines. Encryption failure (wrong
-    /// or missing password) becomes `ArchiveEncryptedError`.
-    private static func sevenZipList(tool: String, archivePath: String, password: String?) throws -> [String] {
-        var args = ["l", "-slt", "-ba"]
-        args.append(sevenZipPasswordArg(password))
-        args.append(archivePath)
-        let (status, out) = runSevenZip(tool, args)
-        if out.contains("Cannot open encrypted archive") || out.contains("Wrong password") {
-            throw ArchiveEncryptedError(archivePath: archivePath)
-        }
-        // A non-zero exit without an encryption marker means the archive is
-        // corrupt/incomplete — surface that, don't ask for a password.
-        if status != 0 { throw ArchiveOpenError(archivePath: archivePath) }
-        return out.split(separator: "\n").compactMap {
-            $0.hasPrefix("Path = ") ? String($0.dropFirst("Path = ".count)) : nil
-        }
-    }
-
-    /// `7z l -slt -ba` with size/date/folder parsing → full entries (used for split
-    /// archives, which 7zz reads natively). `-slt` emits a blank-line-separated
-    /// block per entry: `Path = …`, `Size = …`, `Modified = …`, `Folder = +/-`.
-    private static func sevenZipListDetailed(tool: String, archivePath: String, password: String?) throws -> [LibArchive.Entry] {
-        var args = ["l", "-slt", "-ba"]
-        args.append(sevenZipPasswordArg(password))
-        args.append(archivePath)
-        let (status, out) = runSevenZip(tool, args)
-        if out.contains("Cannot open encrypted archive") || out.contains("Wrong password") {
-            throw ArchiveEncryptedError(archivePath: archivePath)
-        }
-        // A non-zero exit without an encryption marker means the archive is
-        // corrupt/incomplete (e.g. a split set missing a volume) — surface that,
-        // don't ask for a password.
-        if status != 0 { throw ArchiveOpenError(archivePath: archivePath) }
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX"); df.timeZone = TimeZone(identifier: "UTC")
-        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        var entries: [LibArchive.Entry] = []
-        var path = "", size: Int64 = 0, isDir = false, mtime: Date? = nil
-        func flush() {
-            if !path.isEmpty { entries.append(LibArchive.Entry(path: path, size: size, mtime: mtime, isDir: isDir)) }
-            path = ""; size = 0; isDir = false; mtime = nil
-        }
-        for raw in out.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(raw)
-            if line.isEmpty { flush(); continue }
-            if line.hasPrefix("Path = ") { path = String(line.dropFirst(7)) }
-            else if line.hasPrefix("Size = ") { size = Int64(line.dropFirst(7).trimmingCharacters(in: .whitespaces)) ?? 0 }
-            else if line.hasPrefix("Folder = ") { isDir = line.dropFirst(9).trimmingCharacters(in: .whitespaces) == "+" }
-            else if line.hasPrefix("Attributes = ") { if line.contains("D") { isDir = true } }
-            else if line.hasPrefix("Modified = ") { mtime = df.date(from: String(line.dropFirst(11)).trimmingCharacters(in: .whitespaces)) }
-        }
-        flush()
-        return entries
-    }
-
-    /// `7z x` to extract a single entry (or the whole archive when `entry` is nil).
-    private static func sevenZipExtract(tool: String, archivePath: String, entry: String?,
-                                        to dest: String, password: String?) throws {
-        var args = ["x", "-y", "-o" + dest]
-        args.append(sevenZipPasswordArg(password))
-        args.append(archivePath)
-        if let entry = entry { args.append(entry) }
-        let (status, out) = runSevenZip(tool, args)
-        if status != 0 {
-            if out.contains("Cannot open encrypted archive") || out.contains("Wrong password") {
-                throw ArchiveEncryptedError(archivePath: archivePath)
-            }
-            throw FSUnsupportedError(message: out.isEmpty ? "Extraction failed" : out)
-        }
-    }
-
-    private static func runSevenZip(_ tool: String, _ args: [String]) -> (Int32, String) {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: tool)
-        proc.arguments = args
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        proc.standardInput = FileHandle.nullDevice   // never block on a password prompt
-        do { try proc.run() } catch { return (-1, "\(error)") }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        return (proc.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
     /// Path-only overload (remote archives, where size/mtime aren't available).
@@ -404,80 +264,45 @@ class ZipFS: VirtualFS {
         }
     }
 
-    /// Extracts a single internal entry (file, or folder + subtree) to `dest`.
-    /// Formats 7zz extracts cleanly in a single pass and is the reference engine for
-    /// (7z incl. solid/encrypted, zip, rar). **Tarballs and bare single-file
-    /// compressors are excluded** — `7z x foo.tar.gz` peels only the outer gz layer
-    /// (leaving a `.tar`), whereas libarchive does the whole thing in one step.
-    private static func prefersSevenZip(_ kind: Kind) -> Bool {
-        switch kind { case .sevenZip, .zip, .rar: return true; default: return false }
-    }
-
-    /// Extracts a SINGLE entry. Stays on libarchive: it strips the entry's parent
-    /// path so a copied file lands flat in `dest` the way the panel expects (7-Zip
-    /// would recreate the full archive-internal path). The solid-7z case is handled
-    /// inside `LibArchive` (read+discard preceding entries). Encrypted 7z, which
-    /// libarchive can't decrypt, still falls back to 7zz.
+    /// Extracts a SINGLE entry (file, or folder + subtree) so it lands flat in
+    /// `dest` under its own name. libarchive first (charset detection for legacy
+    /// zip names, solid-7z early stop); an encrypted 7z, which libarchive can't
+    /// decrypt, goes to the in-process 7-Zip engine.
     static func extractEntry(archivePath: String, entry: String, to dest: String, kind: Kind, password: String? = nil,
                              isCancelled: (() -> Bool)? = nil) throws {
-        if isSplitFirstVolume(archivePath) {
-            try sevenZipExtract(tool: requireSevenZipTool(), archivePath: archivePath, entry: entry, to: dest, password: password)
-            return
-        }
         do {
             try LibArchive.extractItem(archivePath: archivePath, entry: entry, to: dest, password: password,
                                        isCancelled: isCancelled)
         } catch is ArchiveEncryptedError {
-            try sevenZipEncryptedFallback(archivePath: archivePath, kind: kind) { tool in
-                try sevenZipExtract(tool: tool, archivePath: archivePath, entry: entry, to: dest, password: password)
-            }
+            guard kind == .sevenZip else { throw ArchiveEncryptedError(archivePath: archivePath) }
+            try SevenZipEngine.extract(archivePath: archivePath, entry: entry, to: dest, password: password,
+                                       isCancelled: isCancelled)
         }
     }
 
-    /// Extracts the whole archive to `dest` (the Extract command). **7zz-first** for
-    /// the formats it owns (7z/zip/rar) — the reliable 7-Zip/MacZip engine — with
-    /// in-process libarchive as the fallback when 7zz is absent or can't cope.
-    /// Tarballs and bare single-file compressors go straight to libarchive (one-step,
-    /// where 7-Zip would leave a `.tar`). Throws `ArchiveEncryptedError` for a
-    /// wrong/missing password so the caller can prompt.
-    static func extractAll(archivePath: String, to dest: String, password: String? = nil) throws {
-        if isSplitFirstVolume(archivePath) {
-            try sevenZipExtract(tool: requireSevenZipTool(), archivePath: archivePath, entry: nil, to: dest, password: password)
+    /// Extracts the whole archive to `dest` (the Extract command). A 7z goes to
+    /// the in-process 7-Zip engine first — the reference implementation for
+    /// solid / encrypted / multi-volume 7z — with libarchive as the fallback;
+    /// every other format (zip, rar, tarballs, bare single-file compressors) is
+    /// libarchive's, which decodes legacy zip names via charset detection.
+    /// Throws `ArchiveEncryptedError` for a wrong/missing password so the caller
+    /// can prompt.
+    static func extractAll(archivePath: String, to dest: String, password: String? = nil,
+                           isCancelled: (() -> Bool)? = nil) throws {
+        let k = kind(of: archivePath)
+        guard k == .sevenZip else {
+            try LibArchive.extractAll(archivePath: archivePath, to: dest, password: password)
             return
         }
-        let k = kind(of: archivePath)
-        if prefersSevenZip(k), let tool = SevenZip.resolve() {
-            // Windows zips without the UTF-8 flag store names in a legacy codepage
-            // (GBK / Shift-JIS / …). The macOS 7zz has no Windows codepage tables and
-            // mangles those names on disk; libarchive decodes them via per-archive
-            // charset detection — so keep such zips on libarchive. (7z/rar store
-            // Unicode names, so hasLegacyEntryNames is false there.)
-            if k == .zip, LibArchive.hasLegacyEntryNames(archivePath: archivePath, password: password) {
-                do {
-                    try LibArchive.extractAll(archivePath: archivePath, to: dest, password: password)
-                    return
-                } catch is ArchiveEncryptedError {
-                    throw ArchiveEncryptedError(archivePath: archivePath)   // → password prompt
-                } catch {
-                    // libarchive couldn't cope (exotic codec) — fall through to 7zz:
-                    // mangled names still beat a failed extraction.
-                }
-            }
-            do {
-                try sevenZipExtract(tool: tool, archivePath: archivePath, entry: nil, to: dest, password: password)
-            } catch is ArchiveEncryptedError {
-                throw ArchiveEncryptedError(archivePath: archivePath)   // → password prompt; don't mask with libarchive
-            } catch {
-                try LibArchive.extractAll(archivePath: archivePath, to: dest, password: password)   // last-resort
-            }
-        } else {
-            do {
-                try LibArchive.extractAll(archivePath: archivePath, to: dest, password: password)
-            } catch is ArchiveEncryptedError {
-                try sevenZipEncryptedFallback(archivePath: archivePath, kind: k) { tool in
-                    try sevenZipExtract(tool: tool, archivePath: archivePath, entry: nil, to: dest, password: password)
-                }
-            }
+        do {
+            try SevenZipEngine.extract(archivePath: archivePath, entry: nil, to: dest, password: password,
+                                       isCancelled: isCancelled)
+        } catch is ArchiveEncryptedError {
+            throw ArchiveEncryptedError(archivePath: archivePath)   // → password prompt
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try LibArchive.extractAll(archivePath: archivePath, to: dest, password: password)   // last resort
         }
     }
 

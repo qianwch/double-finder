@@ -10,20 +10,20 @@ final class VolumeSizeTests: XCTestCase {
     }
 
     func testPresetLabels() {
-        XCTAssertEqual(VolumeSize.parse("10 MB"), .token("10m"))
-        XCTAssertEqual(VolumeSize.parse("100 MB"), .token("100m"))
-        XCTAssertEqual(VolumeSize.parse("700 MB (CD)"), .token("700m"))    // parenthetical stripped
-        XCTAssertEqual(VolumeSize.parse("4480 MB (DVD)"), .token("4480m"))
+        XCTAssertEqual(VolumeSize.parse("10 MB"), .bytes(10485760))
+        XCTAssertEqual(VolumeSize.parse("100 MB"), .bytes(104857600))
+        XCTAssertEqual(VolumeSize.parse("700 MB (CD)"), .bytes(734003200))    // parenthetical stripped
+        XCTAssertEqual(VolumeSize.parse("4480 MB (DVD)"), .bytes(4697620480))
     }
 
     func testCustomForms() {
-        XCTAssertEqual(VolumeSize.parse("250m"), .token("250m"))
-        XCTAssertEqual(VolumeSize.parse("250M"), .token("250m"))          // unit case-insensitive
-        XCTAssertEqual(VolumeSize.parse("250mb"), .token("250m"))
-        XCTAssertEqual(VolumeSize.parse("250 mb"), .token("250m"))
-        XCTAssertEqual(VolumeSize.parse("1g"), .token("1g"))
-        XCTAssertEqual(VolumeSize.parse("512k"), .token("512k"))
-        XCTAssertEqual(VolumeSize.parse("1048576"), .token("1048576b"))   // bare number = bytes
+        XCTAssertEqual(VolumeSize.parse("250m"), .bytes(262144000))
+        XCTAssertEqual(VolumeSize.parse("250M"), .bytes(262144000))          // unit case-insensitive
+        XCTAssertEqual(VolumeSize.parse("250mb"), .bytes(262144000))
+        XCTAssertEqual(VolumeSize.parse("250 mb"), .bytes(262144000))
+        XCTAssertEqual(VolumeSize.parse("1g"), .bytes(1073741824))
+        XCTAssertEqual(VolumeSize.parse("512k"), .bytes(524288))
+        XCTAssertEqual(VolumeSize.parse("1048576"), .bytes(1048576))   // bare number = bytes
     }
 
     func testInvalid() {
@@ -46,8 +46,8 @@ final class VolumeSizeTests: XCTestCase {
 
     func testLabelOverloadStillParsesRealSizes() {
         // A real size is parsed normally even when a non-matching label is supplied.
-        XCTAssertEqual(VolumeSize.parse("100 MB", noSplitLabel: "不分卷"), .token("100m"))
-        XCTAssertEqual(VolumeSize.parse("250m", noSplitLabel: "Nicht teilen"), .token("250m"))
+        XCTAssertEqual(VolumeSize.parse("100 MB", noSplitLabel: "不分卷"), .bytes(104857600))
+        XCTAssertEqual(VolumeSize.parse("250m", noSplitLabel: "Nicht teilen"), .bytes(262144000))
         XCTAssertEqual(VolumeSize.parse("garbage", noSplitLabel: "不分卷"), .invalid)
     }
 }

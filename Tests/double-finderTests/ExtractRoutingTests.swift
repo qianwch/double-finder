@@ -1,14 +1,9 @@
 import XCTest
 @testable import double_finder
 
-/// Verifies extractAll routing: 7z/zip → 7zz (when available), tarballs → libarchive
-/// (one-step, NOT a leftover .tar). Builds archives with available tools.
+/// Verifies extractAll routing: 7z → the in-process 7-Zip engine, zip →
+/// libarchive, tarballs → libarchive (one-step, NOT a leftover .tar).
 final class ExtractRoutingTests: XCTestCase {
-    private func sevenZip() -> String? {
-        [FileManager.default.currentDirectoryPath + "/vendor/sevenzip/7zz",
-         "/opt/homebrew/bin/7zz", "/opt/homebrew/bin/7z", "/opt/homebrew/bin/7za"]
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
     private func mk(_ dir: String) throws {
         try FileManager.default.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
         try "alpha".write(toFile: dir + "/src/a.txt", atomically: true, encoding: .utf8)
@@ -30,8 +25,8 @@ final class ExtractRoutingTests: XCTestCase {
     }
 
     /// Windows-made zips without the UTF-8 flag store names in a legacy codepage
-    /// (GBK here). The macOS 7zz has no Windows codepage tables and mangles such
-    /// names, so extractAll must route these zips to libarchive (charset-detected).
+    /// (GBK here). extractAll keeps zips on libarchive, which decodes such names
+    /// through per-archive charset detection.
     func testLegacyGBKZipExtractsCorrectNames() throws {
         let dir = NSTemporaryDirectory() + "exr-gbk-\(ProcessInfo.processInfo.globallyUniqueString)"
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -67,15 +62,12 @@ final class ExtractRoutingTests: XCTestCase {
     }
 
     func testSevenZAndZipExtract() throws {
-        guard let zz = sevenZip() else { throw XCTSkip("no 7z tool") }
         let dir = NSTemporaryDirectory() + "exr-7z-\(ProcessInfo.processInfo.globallyUniqueString)"
         try mk(dir); defer { try? FileManager.default.removeItem(atPath: dir) }
-        for (ext, fmt) in [("7z", "-t7z"), ("zip", "-tzip")] {
-            let p = Process(); p.executableURL = URL(fileURLWithPath: zz)
-            p.currentDirectoryURL = URL(fileURLWithPath: dir + "/src")
-            p.arguments = ["a", fmt, dir + "/arc." + ext, "a.txt", "b.txt"]
-            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-            try p.run(); p.waitUntilExit()
+        let sources = [(dir + "/src/a.txt", "a.txt"), (dir + "/src/b.txt", "b.txt")]
+        try SevenZipEngine.create(sources: sources, to: dir + "/arc.7z", level: 5, password: nil)
+        try LibArchive.create(sources: sources, to: dir + "/arc.zip", format: .zip, level: 5, password: nil)
+        for ext in ["7z", "zip"] {
             let out = dir + "/out_" + ext
             try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
             try ZipFS.extractAll(archivePath: dir + "/arc." + ext, to: out)

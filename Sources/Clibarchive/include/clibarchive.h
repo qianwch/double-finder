@@ -28,6 +28,17 @@ int archive_read_support_format_all(struct archive *);
 int archive_read_support_format_raw(struct archive *);
 int archive_read_add_passphrase(struct archive *, const char *);
 int archive_read_open_filename(struct archive *, const char *_filename, size_t _block_size);
+/* Custom input (used to read a split ".001/.002/…" set as one stream). */
+typedef ssize_t archive_read_callback(struct archive *, void *_client_data, const void **_buffer);
+typedef int64_t archive_seek_callback(struct archive *, void *_client_data, int64_t _offset, int _whence);
+typedef int archive_close_callback(struct archive *, void *_client_data);
+typedef int archive_open_callback(struct archive *, void *_client_data);
+typedef ssize_t archive_write_callback(struct archive *, void *_client_data, const void *_buffer, size_t _length);
+int archive_read_set_read_callback(struct archive *, archive_read_callback *);
+int archive_read_set_seek_callback(struct archive *, archive_seek_callback *);
+int archive_read_set_close_callback(struct archive *, archive_close_callback *);
+int archive_read_set_callback_data(struct archive *, void *);
+int archive_read_open1(struct archive *);
 int archive_read_next_header(struct archive *, struct archive_entry **);
 int archive_read_data_skip(struct archive *);
 ssize_t archive_read_data(struct archive *, void *, size_t);
@@ -59,6 +70,9 @@ int archive_write_add_filter_none(struct archive *);
 int archive_write_set_options(struct archive *, const char *);
 int archive_write_set_passphrase(struct archive *, const char *);
 int archive_write_open_filename(struct archive *, const char *);
+/* Custom output (used to cut a zip into ".001/.002/…" volumes while writing). */
+int archive_write_open(struct archive *, void *_client_data, archive_open_callback *, archive_write_callback *, archive_close_callback *);
+int archive_write_set_bytes_in_last_block(struct archive *, int);
 int archive_write_header(struct archive *, struct archive_entry *);
 ssize_t archive_write_data(struct archive *, const void *, size_t);
 int archive_write_finish_entry(struct archive *);

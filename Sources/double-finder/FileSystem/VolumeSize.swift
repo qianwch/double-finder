@@ -1,9 +1,10 @@
 import Foundation
 
-/// Parses a Pack-dialog "Volume size" string into a 7zz `-v` suffix token
-/// (e.g. "100m"), or `.none` (no split) / `.invalid`. Pure logic — unit-tested.
+/// Parses a Pack-dialog "Volume size" string into a byte count (7-Zip units:
+/// k/m/g are powers of 1024, a bare number is bytes), or `.none` (no split) /
+/// `.invalid`. Pure logic — unit-tested.
 enum VolumeSize {
-    enum Parsed: Equatable { case none; case token(String); case invalid }
+    enum Parsed: Equatable { case none; case bytes(Int64); case invalid }
 
     static func parse(_ raw: String) -> Parsed {
         // Strip any parenthetical note like "(CD)" then trim.
@@ -16,16 +17,15 @@ enum VolumeSize {
         let digits = s.prefix { $0.isNumber }
         guard !digits.isEmpty, let n = Int(digits), n > 0 else { return .invalid }
         let unitRaw = s.dropFirst(digits.count).trimmingCharacters(in: .whitespaces).lowercased()
-        let unit: String
+        let multiplier: Int64
         switch unitRaw {
-        case "":            unit = "b"   // bare number = bytes (7zz semantics)
-        case "b":           unit = "b"
-        case "k", "kb":     unit = "k"
-        case "m", "mb":     unit = "m"
-        case "g", "gb":     unit = "g"
+        case "", "b":       multiplier = 1                      // bare number = bytes (7-Zip semantics)
+        case "k", "kb":     multiplier = 1024
+        case "m", "mb":     multiplier = 1024 * 1024
+        case "g", "gb":     multiplier = 1024 * 1024 * 1024
         default:            return .invalid
         }
-        return .token("\(n)\(unit)")
+        return .bytes(Int64(n) * multiplier)
     }
 
     /// Same as `parse(_:)` but also treats `noSplitLabel` (the localized "No

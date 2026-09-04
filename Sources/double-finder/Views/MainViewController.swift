@@ -1824,8 +1824,7 @@ class MainViewController: NSViewController {
                         baseDir: baseDir, volumeSize: opts.volumeSize,
                         totalSourceBytes: total,
                         progress: { op.reportBytes($0) },
-                        shouldCancel: { op.cancelRequested },
-                        onProcess: { op.processBox.process = $0 })
+                        shouldCancel: { op.cancelRequested })
                 } catch {
                     // Cancelled or failed: don't leave a half-written archive around.
                     LocalFS.removePackOutputs(archivePath: archivePath, split: split)

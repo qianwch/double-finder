@@ -2,33 +2,6 @@ import XCTest
 @testable import double_finder
 
 /// 7-Zip `-bsp1` progress-line parsing (pure logic).
-final class SevenZipProgressTests: XCTestCase {
-    func testParsesPercentLine() {
-        XCTAssertEqual(SevenZip.lastPercent(in: " 12% + big.bin"), 12)
-        XCTAssertEqual(SevenZip.lastPercent(in: "  0%"), 0)
-        XCTAssertEqual(SevenZip.lastPercent(in: "100% + a"), 100)
-    }
-
-    func testPicksLastPercentInChunk() {
-        // 7zz refreshes the progress line with \r — a read chunk can carry several.
-        XCTAssertEqual(SevenZip.lastPercent(in: "  5% + a\r 23% + b\r 47% + c"), 47)
-    }
-
-    func testNoPercent() {
-        XCTAssertNil(SevenZip.lastPercent(in: "7-Zip 23.01 (arm64)"))
-        XCTAssertNil(SevenZip.lastPercent(in: ""))
-        XCTAssertNil(SevenZip.lastPercent(in: "Compressing  big.bin"))
-    }
-
-    func testIgnoresPercentInFileNames() {
-        // A trailing digit run directly before '%' is a progress token even when
-        // file names appear around it; a bare "%" with no digits is not.
-        XCTAssertEqual(SevenZip.lastPercent(in: " 42% + weird%name.txt"), 42)
-        XCTAssertNil(SevenZip.lastPercent(in: "just a % sign"))
-    }
-}
-
-/// Byte-progress + cancel hooks of archive creation.
 final class PackProgressTests: XCTestCase {
     private var dir = ""
 
@@ -75,12 +48,11 @@ final class PackProgressTests: XCTestCase {
         }
     }
 
-    func testExternalSevenZipReportsFullTotal() async throws {
-        try XCTSkipIf(SevenZip.resolve() == nil, "needs 7z/7zz for the external-7z path")
+    func testSevenZipEngineReportsFullTotal() async throws {
         let out = dir + "/out.7z"
         let sum = Sum()
-        // .sevenZip prefers the external tool when present; progress comes from
-        // -bsp1 percent lines and is topped up to the full total on success.
+        // .sevenZip goes to the in-process 7-Zip engine; its cumulative byte
+        // counter is turned into the deltas the progress bar consumes.
         try await LocalFS().createArchive(sources: [dir + "/a.bin", dir + "/b.bin"], to: out,
                                           format: .sevenZip, level: 5, password: nil,
                                           totalSourceBytes: 150_000,

@@ -275,21 +275,20 @@ class LocalFS: VirtualFS {
     }
 
     /// Creates an archive of `sources` at `archivePath` in the chosen format, with
-    /// a compression level (0–9) and optional password (zip/7z only).
+    /// a compression level (0–9), optional password (zip/7z only) and optional
+    /// volume size in bytes (zip/7z: output becomes `<archivePath>.001/.002/…`).
     ///
-    /// Progress: `progress` receives source-byte deltas as data is packed —
-    /// libarchive reports written blocks directly; the external 7-Zip path maps
-    /// `-bsp1` percent lines onto `totalSourceBytes` (and tops up to the full
-    /// total on success, so the bar always closes). `shouldCancel` is polled by
-    /// the libarchive pack loop (true → `CancellationError`); `onProcess` hands
-    /// out the external 7z process so a cancel can terminate it.
+    /// 7z goes to the in-process 7-Zip engine (multi-threaded LZMA2, AES +
+    /// header encryption, native splitting); every other format is libarchive's
+    /// (zip AES-256 included; zip volumes are cut by `LibArchive.SplitOutput`).
+    /// `progress` receives source-byte deltas as data is packed; `shouldCancel`
+    /// is polled (true → `CancellationError`, partial output removed by the caller).
     func createArchive(sources: [String], to archivePath: String,
                        format: ArchiveFormat, level: Int, password: String?,
-                       baseDir: String? = nil, volumeSize: String? = nil,
+                       baseDir: String? = nil, volumeSize: Int64? = nil,
                        totalSourceBytes: Int64 = 0,
                        progress: (@Sendable (Int64) -> Void)? = nil,
-                       shouldCancel: (@Sendable () -> Bool)? = nil,
-                       onProcess: (@Sendable (Process) -> Void)? = nil) async throws {
+                       shouldCancel: (@Sendable () -> Bool)? = nil) async throws {
         try await Task.detached(priority: .userInitiated) {
             guard !sources.isEmpty else { return }
             // When baseDir is set, store each source by its path relative to it
@@ -300,48 +299,19 @@ class LocalFS: VirtualFS {
                 return (src, name)
             }
             let pw = (password?.isEmpty == false) ? password! : nil
-            try? FileManager.default.removeItem(atPath: archivePath)   // overwrite cleanly
+            let split = volumeSize != nil && format.supportsSplit
+            LocalFS.removePackOutputs(archivePath: archivePath, split: split)   // overwrite cleanly
 
-            // Split volumes require the external 7-Zip (libarchive can't split).
-            // For zip+split we route through 7zz too (extension drives the container).
-            if volumeSize != nil && format.supportsSplit {
-                guard let tool = LocalFS.find7z() else {
-                    throw ArchiveToolMissingError(
-                        tool: "7z",
-                        hint: "Creating a *split* archive needs 7-Zip.\nInstall it with Homebrew:\n    brew install sevenzip")
-                }
-                try LocalFS.createSevenZipExternal(tool: tool, entries: entries, baseDir: baseDir,
-                                                   to: archivePath, level: level, password: pw,
-                                                   format: format, volumeSize: volumeSize,
-                                                   totalSourceBytes: totalSourceBytes,
-                                                   progress: progress, shouldCancel: shouldCancel,
-                                                   onProcess: onProcess)
+            if format == .sevenZip {
+                try SevenZipEngine.create(sources: entries, to: archivePath,
+                                          level: level, password: pw, encryptHeaders: true,
+                                          volumeBytes: split ? volumeSize : nil,
+                                          onBytes: progress, shouldCancel: shouldCancel)
                 return
             }
-
-            // 7z creation: libarchive's 7z writer can't encrypt and compresses
-            // weaker, so prefer the external 7-Zip when present. An encrypted 7z
-            // *requires* it — fail clearly if it's missing.
-            if format == .sevenZip {
-                if let tool = LocalFS.find7z() {
-                    try LocalFS.createSevenZipExternal(tool: tool, entries: entries, baseDir: baseDir,
-                                                       to: archivePath, level: level, password: pw,
-                                                       format: format, volumeSize: nil,
-                                                       totalSourceBytes: totalSourceBytes,
-                                                       progress: progress, shouldCancel: shouldCancel,
-                                                       onProcess: onProcess)
-                    return
-                }
-                if pw != nil {
-                    throw ArchiveToolMissingError(
-                        tool: "7z",
-                        hint: "Creating an *encrypted* 7z archive needs 7-Zip.\nInstall it with Homebrew:\n    brew install sevenzip")
-                }
-                // No tool, no password → libarchive's basic (unencrypted) 7z.
-            }
-
             try LibArchive.create(sources: entries, to: archivePath,
                                   format: format, level: level, password: pw,
+                                  volumeBytes: split ? volumeSize : nil,
                                   onBytes: progress, shouldCancel: shouldCancel)
         }.value
     }
@@ -362,83 +332,6 @@ class LocalFS: VirtualFS {
         }
     }
 
-    /// Locates the external 7-Zip executable (user override or auto-detected).
-    private static func find7z() -> String? { SevenZip.resolve() }
-
-    /// Creates a 7z/zip with the external tool (full compression level + optional
-    /// AES + header encryption + `-v` split volumes), preserving folder hierarchy
-    /// via cwd=baseDir. Container (7z vs zip) is inferred from the archive extension.
-    private static func createSevenZipExternal(tool: String,
-                                               entries: [(absPath: String, entryName: String)],
-                                               baseDir: String?, to archivePath: String,
-                                               level: Int, password: String?,
-                                               format: ArchiveFormat, volumeSize: String?,
-                                               totalSourceBytes: Int64 = 0,
-                                               progress: (@Sendable (Int64) -> Void)? = nil,
-                                               shouldCancel: (@Sendable () -> Bool)? = nil,
-                                               onProcess: (@Sendable (Process) -> Void)? = nil) throws {
-        func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-        let parent = baseDir ?? (entries.first!.absPath as NSString).deletingLastPathComponent
-        let names = entries.map { q($0.entryName) }.joined(separator: " ")
-        // -bsp1 puts "  NN% + file" progress lines on stdout (works on both the
-        // official 7zz and Homebrew's p7zip 17.x).
-        var s = "\(q(tool)) a -y -bsp1 -mx=\(max(0, min(9, level)))"
-        if let v = volumeSize { s += " -v\(v)" }
-        if let pw = password {
-            // Header encryption (-mhe) is 7z-only; zip uses AES-256 via -mem.
-            s += format == .sevenZip ? " -p\(q(pw)) -mhe=on" : " -p\(q(pw)) -mem=AES256"
-        }
-        // Split output is archivePath.001/.002…; clean those, else the single file.
-        let cleanup = volumeSize != nil ? "rm -f \(q(archivePath)).[0-9]*" : "rm -f \(q(archivePath))"
-        let cmd = "\(cleanup); \(s) \(q(archivePath)) \(names)"
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
-        proc.arguments = ["-c", cmd]
-        proc.currentDirectoryURL = URL(fileURLWithPath: parent)
-        let out = Pipe()
-        proc.standardOutput = out; proc.standardError = Pipe()
-        proc.standardInput = FileHandle.nullDevice
-
-        // Map percent lines onto totalSourceBytes, feeding monotonic deltas.
-        // The handler runs on a pipe queue — keep its state locked.
-        let reported = NSLock()
-        var reportedBytes: Int64 = 0
-        if progress != nil, totalSourceBytes > 0 {
-            out.fileHandleForReading.readabilityHandler = { fh in
-                let data = fh.availableData
-                guard !data.isEmpty else { return }
-                // Lossy decode: a chunk may split a multi-byte file name, but the
-                // percent tokens themselves are plain ASCII.
-                let text = String(decoding: data, as: UTF8.self)
-                guard let pct = SevenZip.lastPercent(in: text) else { return }
-                let target = totalSourceBytes * Int64(pct) / 100
-                reported.lock()
-                let delta = target - reportedBytes
-                if delta > 0 { reportedBytes = target }
-                reported.unlock()
-                if delta > 0 { progress?(delta) }
-            }
-        }
-        defer { out.fileHandleForReading.readabilityHandler = nil }
-
-        try proc.run()
-        onProcess?(proc)   // lets a cancel terminate the running 7z
-        proc.waitUntilExit()
-        if shouldCancel?() == true { throw CancellationError() }
-        if proc.terminationStatus != 0 {
-            throw NSError(domain: "LocalFS", code: 5,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to create archive (status \(proc.terminationStatus))"])
-        }
-        // Close the bar: 7z may finish without printing 100%.
-        if totalSourceBytes > 0 {
-            reported.lock()
-            let remaining = totalSourceBytes - reportedBytes
-            reportedBytes = totalSourceBytes
-            reported.unlock()
-            if remaining > 0 { progress?(remaining) }
-        }
-    }
 
     func extractArchive(_ archivePath: String, to destination: String) async throws {
         try await Task.detached(priority: .userInitiated) {

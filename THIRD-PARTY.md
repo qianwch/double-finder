@@ -12,24 +12,25 @@ following third-party components, each under its own license.
 - `Sources/Clibarchive/` contains only vendored header declarations + a module
   map to link the system library; no libarchive source is redistributed.
 
-## 7-Zip (`7zz`)
+## 7-Zip (7z engine, compiled in)
 
-- **Use:** the official macOS command-line executable, **bundled** into the
-  packaged `.app` (`Contents/MacOS/7zz`) and invoked as a **separate child
-  process** — only for encrypted `.7z` archives, which libarchive cannot handle.
-  It is not linked into the Double Finder binary.
-- **License:** GNU LGPL-2.1, with parts under BSD-3-Clause and the unRAR
-  license restriction. The unRAR restriction concerns reverse-engineering RAR's
-  compression; Double Finder only *reads* RAR and never uses that code, so it is
-  unaffected. Because `7zz` is bundled and called as an independent executable
-  (not statically linked), its LGPL terms impose no copyleft on Double Finder.
-- **Bundled license text:** `vendor/sevenzip/License.txt` (copied into the app
-  as `Contents/Resources/sevenzip-License.txt`).
+- **Use:** a subset of the official 7-Zip sources — the `.7z` format handler,
+  its codecs (LZMA, LZMA2, PPMd, BCJ/BCJ2, branch filters, Delta) and 7zAES —
+  is vendored under `Sources/CSevenZip/7zip/` and **compiled into** the Double
+  Finder executable. It handles encrypted `.7z` archives (which libarchive
+  cannot decrypt) and creates `.7z` archives (encryption, header encryption,
+  multi-volume). The RAR code (`CPP/7zip/Compress/Rar*`), which carries the
+  unRAR licence restriction, and every other format handler are **not**
+  included; libarchive covers those.
+- **License:** GNU LGPL-2.1 (the AES code is BSD-3-Clause). Double Finder is
+  itself open source under Apache-2.0 with complete sources in this repository,
+  so LGPL §6 (the recipient can rebuild the work with a modified library) is
+  satisfied. The vendored files are unmodified; `Sources/CSevenZip/shim/` is
+  Double Finder's own C façade (Apache-2.0).
+- **Bundled license text:** `Sources/CSevenZip/7zip/DOC/License.txt` (copied
+  into the app as `Contents/Resources/sevenzip-License.txt`).
 - **Project:** https://www.7-zip.org/ — sources mirrored at
-  https://github.com/ip7z/7zip
-- The `7zz` binary is **not** committed to this repository. `package_app.sh`
-  downloads the official universal build at packaging time (or uses a local copy
-  placed at `vendor/sevenzip/7zz`). See `vendor/sevenzip/README.md`.
+  https://github.com/ip7z/7zip (vendored release: 26.02).
 
 ## Mermaid (`mermaid.min.js`)
 

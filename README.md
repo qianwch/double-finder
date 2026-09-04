@@ -28,10 +28,11 @@ SwiftUI), inspired by the Total Commander workflow.
   fetched on demand.
 - **Fast navigation:** drive bar & dropdown, favorites, command-line bar (⌘L
   with Tab completion), Go to Folder (⌘⇧G), in-place folder expansion.
-- **Archives (built-in, via libarchive):** browse / extract / create zip, tar
-  family, 7z, and read-only rar, iso, cpio, xar, and raw gz/bz2/xz/zst — no
-  external tools required. Encrypted zip is supported with a password.
-  Encrypted 7z uses a bundled `7zz` (see below).
+- **Archives (built-in, no external tools):** browse / extract / create zip,
+  tar family, 7z, and read-only rar, iso, cpio, xar, and raw gz/bz2/xz/zst via
+  libarchive; encrypted zip and 7z, header-encrypted 7z, solid 7z and
+  multi-volume (`.001`) sets via a 7-Zip engine compiled into the app (see
+  below).
 - **Connect to Server (⌘K):** one unified connection window for **SFTP**,
   **S3-compatible object storage**, and **SMB/NAS** — with live Bonjour
   discovery of servers on the local network and a saved address book.
@@ -95,8 +96,8 @@ swift build -c release
 ```
 
 This builds for **the architecture of the machine you run it on** (arm64 on
-Apple Silicon, x86_64 on Intel), draws the icon, bundles `7zz` (downloaded on
-first run) plus `libmtp`/`libusb`, and ad-hoc code-signs the bundle. It is no
+Apple Silicon, x86_64 on Intel), draws the icon, bundles `libmtp`/`libusb`,
+and ad-hoc code-signs the bundle. It is no
 longer universal: Homebrew ships a single arm64 bottle for libmtp and builds
 every other platform from source, so both halves of a universal dylib can't be
 obtained on one machine.
@@ -109,19 +110,14 @@ obtained on one machine.
 > xattr -dr com.apple.quarantine "/Applications/Double Finder.app"
 > ```
 
-## Encrypted 7z
+## Archive engines
 
-Everything archive-related runs through the system `libarchive` — **except**
-encrypted `.7z`, which libarchive cannot decrypt. For that one case Double
-Finder shells out to the official `7zz`:
-
-- The packaged `.app` **bundles** a universal `7zz` (fetched by
-  `package_app.sh`), so encrypted 7z works out of the box.
-- When running the bare dev binary (not packaged), install one if you need it:
-  `brew install sevenzip`. Double Finder finds it automatically (bundled copy
-  first, then `7z`/`7zz`/`7za` on `PATH`) — there is no path to configure.
-
-See `THIRD-PARTY.md` for licensing.
+Archives run through the system `libarchive` — **except** what it cannot do:
+decrypt `.7z`, or write encrypted / multi-volume `.7z`. For those Double Finder
+compiles in the 7z handler from the official 7-Zip sources
+(`Sources/CSevenZip`, LGPL-2.1) and calls it in-process. Nothing is downloaded
+at package time and nothing needs to be installed; the bare dev binary and the
+packaged `.app` behave the same. See `THIRD-PARTY.md` for licensing.
 
 ## Building & architecture
 

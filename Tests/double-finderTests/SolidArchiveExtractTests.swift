@@ -4,14 +4,9 @@ import XCTest
 /// Regression: extracting a single entry that is NOT the first one from a SOLID
 /// 7z used to fail with "Truncated 7-Zip file body" — `archive_read_data_skip`
 /// can't advance through a solid block, so the preceding entries must be
-/// read+discarded to keep the decompressor in sync. Needs a 7z tool to BUILD a
-/// solid archive (libarchive's 7z writer isn't solid); skips otherwise.
+/// read+discarded to keep the decompressor in sync. The solid fixture comes from
+/// the in-process 7-Zip engine (solid by default; libarchive's writer isn't).
 final class SolidArchiveExtractTests: XCTestCase {
-    private func anySevenZip() -> String? {
-        [FileManager.default.currentDirectoryPath + "/vendor/sevenzip/7zz",
-         "/opt/homebrew/bin/7zz", "/opt/homebrew/bin/7z", "/opt/homebrew/bin/7za",
-         "/usr/local/bin/7zz", "/usr/local/bin/7z"].first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
 
     /// Early-stop predicate: once the wanted FILE itself has been written there is
     /// nothing left to find, so the scan can stop instead of decompressing the rest
@@ -27,7 +22,6 @@ final class SolidArchiveExtractTests: XCTestCase {
     }
 
     func testExtractLaterEntryFromSolid7z() throws {
-        guard let tool = anySevenZip() else { throw XCTSkip("no 7z tool available") }
         let fm = FileManager.default
         let dir = NSTemporaryDirectory() + "solid-\(ProcessInfo.processInfo.globallyUniqueString)"
         try fm.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
@@ -41,12 +35,9 @@ final class SolidArchiveExtractTests: XCTestCase {
             contents[name] = d
             try d.write(to: URL(fileURLWithPath: dir + "/src/" + name))
         }
-        // Build a SOLID 7z (7zz is solid by default).
-        let p = Process(); p.executableURL = URL(fileURLWithPath: tool)
-        p.currentDirectoryURL = URL(fileURLWithPath: dir + "/src")
-        p.arguments = ["a", "-t7z", dir + "/arc.7z", "a.bin", "b.bin", "c.bin"]
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
+        // Build a SOLID 7z (the 7-Zip engine is solid by default).
+        try SevenZipEngine.create(sources: ["a.bin", "b.bin", "c.bin"].map { (dir + "/src/" + $0, $0) },
+                                  to: dir + "/arc.7z", level: 5, password: nil)
         XCTAssertTrue(fm.fileExists(atPath: dir + "/arc.7z"))
 
         // Extract each entry on its own (incl. the 2nd and 3rd, which sit behind
@@ -63,7 +54,6 @@ final class SolidArchiveExtractTests: XCTestCase {
     /// Builds a solid 7z holding `dir/one.bin`, `dir/two.bin` and a trailing
     /// `zz.bin`, and returns (archivePath, workDir, contents).
     private func makeSubtreeArchive() throws -> (archive: String, dir: String, contents: [String: Data]) {
-        guard let tool = anySevenZip() else { throw XCTSkip("no 7z tool available") }
         let fm = FileManager.default
         let dir = NSTemporaryDirectory() + "solidtree-\(ProcessInfo.processInfo.globallyUniqueString)"
         try fm.createDirectory(atPath: dir + "/src/dir", withIntermediateDirectories: true)
@@ -74,11 +64,8 @@ final class SolidArchiveExtractTests: XCTestCase {
             contents[rel] = d
             try d.write(to: URL(fileURLWithPath: dir + "/src/" + rel))
         }
-        let p = Process(); p.executableURL = URL(fileURLWithPath: tool)
-        p.currentDirectoryURL = URL(fileURLWithPath: dir + "/src")
-        p.arguments = ["a", "-t7z", dir + "/arc.7z", "dir", "zz.bin"]
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
+        try SevenZipEngine.create(sources: [(dir + "/src/dir", "dir"), (dir + "/src/zz.bin", "zz.bin")],
+                                  to: dir + "/arc.7z", level: 5, password: nil)
         return (dir + "/arc.7z", dir, contents)
     }
 

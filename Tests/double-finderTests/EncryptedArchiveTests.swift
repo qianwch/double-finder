@@ -2,16 +2,15 @@ import XCTest
 @testable import double_finder
 
 /// Encrypted-7z handling. libarchive cannot decrypt 7z at all, so these archives
-/// fall back to the external 7-Zip. The regression these cover: the fallback
-/// reported "corrupt or incomplete" instead of "needs a password", so the panel
-/// showed an error alert and backed out instead of prompting for the password.
+/// go to the in-process 7-Zip engine. The regression these cover: the fallback
+/// once reported "corrupt or incomplete" instead of "needs a password", so the
+/// panel showed an error alert and backed out instead of prompting.
 final class EncryptedArchiveTests: XCTestCase {
 
     private let password = "secret123"
     private var dir = ""
 
     override func setUpWithError() throws {
-        try XCTSkipIf(SevenZip.resolve() == nil, "needs 7z/7zz to build the fixtures")
         dir = NSTemporaryDirectory() + "enc7z-\(ProcessInfo.processInfo.globallyUniqueString)"
         try FileManager.default.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
         try "alpha".write(toFile: dir + "/src/a.txt", atomically: true, encoding: .utf8)
@@ -25,21 +24,15 @@ final class EncryptedArchiveTests: XCTestCase {
     /// needs the password — that is the case libarchive can't touch at all.
     private func makeArchive(headerEncrypted: Bool) throws -> String {
         let name = headerEncrypted ? "header.7z" : "data.7z"
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: SevenZip.resolve()!)
-        p.arguments = ["a", "-t7z", "-p" + password] + (headerEncrypted ? ["-mhe=on"] : []) + [name, "src"]
-        p.currentDirectoryURL = URL(fileURLWithPath: dir)
-        p.standardOutput = Pipe(); p.standardError = Pipe(); p.standardInput = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
-        XCTAssertEqual(p.terminationStatus, 0, "could not build the \(name) fixture")
+        try SevenZipEngine.create(sources: [(dir + "/src", "src")], to: dir + "/" + name,
+                                  level: 5, password: password, encryptHeaders: headerEncrypted)
         return dir + "/" + name
     }
 
     // MARK: - Listing (what double-clicking an archive in a panel does)
 
-    /// The bug: with no password yet, 7-Zip *prompts* on stdin unless `-p` is
-    /// passed. stdin is closed, so it died with "Break signaled" — no encryption
-    /// marker in the output — and that was misread as a corrupt archive.
+    /// With no password yet, the engine's open must report "encrypted", never
+    /// "corrupt" — the panel keys its password prompt off that.
     func testHeaderEncryptedListingReportsEncryptedNotCorrupt() throws {
         let archive = try makeArchive(headerEncrypted: true)
         XCTAssertThrowsError(try ZipFS.entryPaths(archivePath: archive, kind: .sevenZip)) { err in
@@ -115,14 +108,5 @@ final class EncryptedArchiveTests: XCTestCase {
         }
         try ZipFS.extractAll(archivePath: archive, to: out, password: password)
         XCTAssertEqual(try String(contentsOfFile: out + "/src/a.txt", encoding: .utf8), "alpha")
-    }
-
-    // MARK: - Argument building (pure)
-
-    /// `-p` must be present even with no password, or 7-Zip goes interactive.
-    func testPasswordArgIsAlwaysEmitted() {
-        XCTAssertEqual(ZipFS.sevenZipPasswordArg(nil), "-p")
-        XCTAssertEqual(ZipFS.sevenZipPasswordArg(""), "-p")
-        XCTAssertEqual(ZipFS.sevenZipPasswordArg("hunter2"), "-phunter2")
     }
 }

@@ -37,37 +37,8 @@ else
     exit 1
 fi
 
-echo "==> Bundle 7zz (for encrypted 7z; libarchive can't decrypt those)"
-SEVENZIP="vendor/sevenzip/7zz"
-# Not committed to git — fetch the official universal build on first package.
-SEVENZIP_VER="24.09"
-if [ ! -x "$SEVENZIP" ]; then
-    echo "    fetching official universal 7zz $SEVENZIP_VER (not in repo)…"
-    mkdir -p vendor/sevenzip
-    tmp="$(mktemp -d)"
-    url="https://github.com/ip7z/7zip/releases/download/${SEVENZIP_VER}/7z${SEVENZIP_VER//./}-mac.tar.xz"
-    if curl -fsSL --max-time 120 -o "$tmp/7z.tar.xz" "$url" && tar -xf "$tmp/7z.tar.xz" -C "$tmp" 2>/dev/null; then
-        cp "$tmp/7zz" "$SEVENZIP"; chmod +x "$SEVENZIP"
-        [ -f "$tmp/License.txt" ] && cp "$tmp/License.txt" vendor/sevenzip/License.txt
-        echo "    downloaded $(lipo -archs "$SEVENZIP")"
-    else
-        echo "    !! download failed — place a universal 7zz at $SEVENZIP manually (see vendor/sevenzip/README.md)"
-    fi
-    rm -rf "$tmp"
-fi
-if [ -x "$SEVENZIP" ]; then
-    cp "$SEVENZIP" "$APPDIR/Contents/MacOS/7zz"
-    chmod +x "$APPDIR/Contents/MacOS/7zz"
-    cp vendor/sevenzip/License.txt "$APPDIR/Contents/Resources/sevenzip-License.txt"
-    echo "    7zz archs: $(lipo -archs "$APPDIR/Contents/MacOS/7zz")"
-    case "$(lipo -archs "$APPDIR/Contents/MacOS/7zz")" in
-        *"$HOST_ARCH"*) : ;;   # covers this host — fine whether or not it's universal
-        *x86_64*arm64*|*arm64*x86_64*) : ;;
-        *) echo "    !! WARNING: bundled 7zz is NOT universal — encrypted 7z may need Rosetta" ;;
-    esac
-else
-    echo "    !! vendor/sevenzip/7zz missing — encrypted 7z will fall back to a system 7z (brew install sevenzip)"
-fi
+echo "==> 7-Zip licence (the 7z engine is compiled in from Sources/CSevenZip; LGPL text must ship)"
+cp Sources/CSevenZip/7zip/DOC/License.txt "$APPDIR/Contents/Resources/sevenzip-License.txt"
 
 echo "==> Bundle mermaid.min.js (Lister mermaid rendering; MIT)"
 MERMAID="vendor/mermaid/mermaid.min.js"

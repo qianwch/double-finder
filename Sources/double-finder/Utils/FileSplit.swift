@@ -10,16 +10,8 @@ enum FileSplit {
     /// "100 MB" / "250m" / "1g" → byte count. Reuses the Pack dialog's size
     /// grammar (VolumeSize); empty or invalid input → nil.
     static func parseSize(_ raw: String) -> Int64? {
-        guard case .token(let t) = VolumeSize.parse(raw) else { return nil }
-        let digits = t.prefix { $0.isNumber }
-        guard let n = Int64(digits), n > 0 else { return nil }
-        switch t.suffix(1) {
-        case "b": return n
-        case "k": return n << 10
-        case "m": return n << 20
-        case "g": return n << 30
-        default: return nil
-        }
+        guard case .bytes(let n) = VolumeSize.parse(raw), n > 0 else { return nil }
+        return n
     }
 
     static func partCount(fileSize: Int64, partSize: Int64) -> Int {

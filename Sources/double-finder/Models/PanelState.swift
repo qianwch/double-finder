@@ -625,10 +625,9 @@ class PanelState: ObservableObject {
                         self.allLoadedItems = []
                         self.rebuildItems(selectedNames: [], cursorName: nil, sizes: [:])
                         self.watcher.watch(path)
-                        // A missing archive tool (7z/unrar) or an unopenable archive
-                        // (corrupt / incomplete split set) leaves the listing empty;
-                        // tell the user why instead of just showing a blank panel.
-                        if error is ArchiveToolMissingError || error is ArchiveOpenError {
+                        // An unopenable archive (corrupt / incomplete split set) leaves
+                        // the listing empty; tell the user why instead of a blank panel.
+                        if error is ArchiveOpenError {
                             self.onError?(error)
                         }
                     }
