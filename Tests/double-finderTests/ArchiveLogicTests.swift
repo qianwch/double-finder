@@ -59,6 +59,23 @@ final class ArchiveLogicTests: XCTestCase {
         XCTAssertNil(FileItem.splitArchiveFirstPartBase("movie.001"))
     }
 
+    /// New-style RAR volumes: only "part1" is the archive; the rest are plain files.
+    func testRarVolumeNaming() {
+        XCTAssertEqual(FileItem.rarVolumeNumber("x.part1.rar"), 1)
+        XCTAssertEqual(FileItem.rarVolumeNumber("x.PART02.RAR"), 2)
+        XCTAssertEqual(FileItem.rarVolumeNumber("a.b.part12.rar"), 12)
+        XCTAssertNil(FileItem.rarVolumeNumber("x.rar"))
+        XCTAssertNil(FileItem.rarVolumeNumber("party.rar"))
+        XCTAssertNil(FileItem.rarVolumeNumber("x.part.rar"))
+        XCTAssertNil(FileItem.rarVolumeNumber("x.part1.zip"))
+        XCTAssertTrue(FileItem.isArchiveFileName("x.part1.rar"))
+        XCTAssertTrue(FileItem.isArchiveFileName("x.part01.rar"))
+        XCTAssertFalse(FileItem.isArchiveFileName("x.part2.rar"))
+        XCTAssertFalse(FileItem.isArchiveFileName("x.part02.rar"))
+        XCTAssertFalse(FileItem.isArchiveFileName("x.r00"))
+        XCTAssertTrue(FileItem.isArchiveFileName("x.rar"))
+    }
+
     // MARK: ArchiveFormat
 
     func testArchiveFormatExtensionMatchesRawValue() {

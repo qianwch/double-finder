@@ -198,9 +198,19 @@ enum LibArchive {
     /// is opened as ONE seekable stream over every `.NNN` volume in order —
     /// 7-Zip's `-v` output is the plain archive byte stream cut into pieces, so
     /// libarchive reads it like the whole file (any format: zip, 7z, tar…).
+    /// A RAR set ("x.part1.rar" + "x.part2.rar"…, or "x.rar" + "x.r00"…) is
+    /// different: each volume carries its own headers, so the whole file list
+    /// goes to libarchive, whose rar/rar5 readers switch volumes themselves.
     private static func openInput(_ a: OpaquePointer, _ archivePath: String) -> Int32 {
         let volumes = SplitVolumes.set(forFirstVolume: archivePath)
         guard volumes.count > 1 else { return archive_read_open_filename(a, archivePath, 10240) }
+        if SplitVolumes.isRarSet(archivePath) {
+            let cStrings = volumes.map { strdup($0) }
+            defer { cStrings.forEach { free($0) } }
+            var list: [UnsafePointer<CChar>?] = cStrings.map { UnsafePointer($0) }
+            list.append(nil)
+            return list.withUnsafeMutableBufferPointer { archive_read_open_filenames(a, $0.baseAddress, 10240) }
+        }
         guard let input = VolumeSetInput(paths: volumes) else { return -30 }
         let box = Unmanaged.passRetained(input)
         archive_read_set_callback_data(a, box.toOpaque())

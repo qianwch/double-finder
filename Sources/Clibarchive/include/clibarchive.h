@@ -28,6 +28,8 @@ int archive_read_support_format_all(struct archive *);
 int archive_read_support_format_raw(struct archive *);
 int archive_read_add_passphrase(struct archive *, const char *);
 int archive_read_open_filename(struct archive *, const char *_filename, size_t _block_size);
+/* NULL-terminated list; libarchive switches files itself (multi-volume rar). */
+int archive_read_open_filenames(struct archive *, const char **_filenames, size_t _block_size);
 /* Custom input (used to read a split ".001/.002/…" set as one stream). */
 typedef ssize_t archive_read_callback(struct archive *, void *_client_data, const void **_buffer);
 typedef int64_t archive_seek_callback(struct archive *, void *_client_data, int64_t _offset, int _whence);

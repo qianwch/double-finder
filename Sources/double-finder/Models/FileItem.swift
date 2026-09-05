@@ -88,8 +88,20 @@ struct FileItem: Identifiable, Hashable {
 
     static func isArchiveFileName(_ name: String) -> Bool {
         let lower = name.lowercased()
+        if rarVolumeNumber(lower).map({ $0 > 1 }) == true { return false }   // "x.part2.rar": continuation
         if archiveSuffixes.contains(where: { lower.hasSuffix($0) }) { return true }
         return splitArchiveFirstPartBase(name) != nil
+    }
+
+    /// N for a new-style RAR volume name "x.partN.rar" (any zero padding), nil
+    /// for any other name. Only part 1 is an enterable archive; libarchive
+    /// walks the rest of the set from there (see `SplitVolumes`).
+    static func rarVolumeNumber(_ name: String) -> Int? {
+        let lower = name.lowercased()
+        guard lower.hasSuffix(".rar"), let dot = lower.dropLast(4).lastIndex(of: ".") else { return nil }
+        let tag = lower[lower.index(after: dot)..<lower.index(lower.endIndex, offsetBy: -4)]
+        guard tag.hasPrefix("part"), tag.count > 4, tag.dropFirst(4).allSatisfy(\.isNumber) else { return nil }
+        return Int(tag.dropFirst(4))
     }
 
     /// For the FIRST volume of a split archive ("docs.7z.001"), returns the inner
