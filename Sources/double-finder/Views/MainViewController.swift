@@ -718,8 +718,10 @@ class MainViewController: NSViewController {
             return true
         }
 
-        // Cmd+M: multi-rename tool
-        if chars == "m" && flags.contains(.command) && KeyBindings.defaultActive(.multiRename) {
+        // Cmd+Shift+R: multi-rename tool (⌘M is the system's Minimize). Key code
+        // because charactersIgnoringModifiers is unreliable for Cmd+Shift+letter.
+        if keyCode == 15 && flags.contains(.command) && flags.contains(.shift)
+            && KeyBindings.defaultActive(.multiRename) {
             actionMultiRename()
             return true
         }
@@ -741,9 +743,10 @@ class MainViewController: NSViewController {
             activePanelVC.closeCurrentTab()
             return true
         }
-        // Ctrl+Tab: cycle tabs in the active panel (⌘Tab is the system switcher)
+        // Ctrl+Tab / Ctrl+Shift+Tab: cycle tabs in the active panel (⌘Tab is the
+        // system switcher)
         if keyCode == 48 && flags.contains(.control) {
-            activePanelVC.nextTab()
+            if flags.contains(.shift) { activePanelVC.previousTab() } else { activePanelVC.nextTab() }
             return true
         }
 

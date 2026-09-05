@@ -442,6 +442,13 @@ class PanelViewController: NSViewController {
         switchToActiveTab(load: false)
     }
 
+    func previousTab() {
+        ensureTabsInitialized()
+        guard tabs.count > 1 else { return }
+        activeTab = (activeTab + tabs.count - 1) % tabs.count
+        switchToActiveTab(load: false)
+    }
+
     func exportTabs() -> ([PanelState], Int) { ensureTabsInitialized(); return (tabs, activeTab) }
 
     func importTabs(_ newTabs: [PanelState], active: Int) {

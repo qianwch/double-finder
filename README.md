@@ -49,7 +49,7 @@ SwiftUI), inspired by the Total Commander workflow.
   it back (Total Commander–style write-back).
 - **File operations:** copy/move with a progress sheet and transfer queue,
   **overwrite/skip/cancel conflict prompts** on every backend (local, SFTP,
-  S3), in-place rename, batch rename (⌘M), cut/paste, drag & drop, Open With,
+  S3), in-place rename, batch rename (⌘⇧R), cut/paste, drag & drop, Open With,
   trash (⌘⌫) and permanent delete (F8).
 - **Power tools:** quick search (just start typing to filter the list —
   substring match plus Chinese pinyin initials; ⌘F opens the filter bar),

@@ -592,5 +592,17 @@
   "Reset All Settings…": "모든 설정 초기화…",
   "Restores every setting to its default; favorites and saved connections are kept": "모든 설정을 기본값으로 되돌립니다. 즐겨찾기와 저장된 연결은 유지됩니다",
   "Reset all settings to their defaults?": "모든 설정을 기본값으로 되돌릴까요?",
-  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "모양, 패널, 도구 막대, 단축키, 글꼴, 색상이 초기 상태로 돌아갑니다. 즐겨찾기, 저장된 서버 연결, 사용자 지정 도구 막대 명령은 유지됩니다."
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "모양, 패널, 도구 막대, 단축키, 글꼴, 색상이 초기 상태로 돌아갑니다. 즐겨찾기, 저장된 서버 연결, 사용자 지정 도구 막대 명령은 유지됩니다.",
+  "New Folder": "새 폴더",
+  "Cut": "오려두기",
+  "Hide Double Finder": "Double Finder 가리기",
+  "Hide Others": "기타 가리기",
+  "Show All": "모두 보기",
+  "Window": "윈도우",
+  "Minimize": "축소",
+  "Zoom": "확대/축소",
+  "Next Tab": "다음 탭",
+  "Previous Tab": "이전 탭",
+  "Bring All to Front": "모두 앞으로 가져오기",
+  "Enclosing Folder": "상위 폴더"
 }

@@ -592,5 +592,17 @@
   "Reset All Settings…": "すべての設定を初期化…",
   "Restores every setting to its default; favorites and saved connections are kept": "すべての設定を既定値に戻します。お気に入りと保存済みの接続は保持されます",
   "Reset all settings to their defaults?": "すべての設定を既定値に戻しますか？",
-  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "外観・パネル・ツールバー・ショートカット・フォント・配色が初期状態に戻ります。お気に入り、保存済みのサーバー接続、カスタムツールバーコマンドは保持されます。"
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "外観・パネル・ツールバー・ショートカット・フォント・配色が初期状態に戻ります。お気に入り、保存済みのサーバー接続、カスタムツールバーコマンドは保持されます。",
+  "New Folder": "新規フォルダ",
+  "Cut": "カット",
+  "Hide Double Finder": "Double Finder を隠す",
+  "Hide Others": "ほかを隠す",
+  "Show All": "すべてを表示",
+  "Window": "ウインドウ",
+  "Minimize": "しまう",
+  "Zoom": "拡大/縮小",
+  "Next Tab": "次のタブ",
+  "Previous Tab": "前のタブ",
+  "Bring All to Front": "すべてを手前に移動",
+  "Enclosing Folder": "内包しているフォルダ"
 }

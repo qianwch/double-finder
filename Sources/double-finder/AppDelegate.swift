@@ -8,6 +8,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var helpKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Double Finder runs its own folder tabs inside each panel; the system's
+        // window tabbing would otherwise inject "Show Tab Bar / Merge All
+        // Windows…" into the Window menu next to them.
+        NSWindow.allowsAutomaticWindowTabbing = false
         NSApp.applicationIconImage = AppIconRenderer.image(pixels: 512)
         // Tell the Services system we can SEND file URLs AND the legacy filenames
         // type. Without this, AppKit only queries text send types, so file/folder
@@ -88,244 +92,213 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // MARK: - Menu bar
+    //
+    // Layout follows the macOS HIG menu order (App · File · Edit · View · Go ·
+    // Commands · Favorites · Window · Help) with Total Commander's grouping
+    // inside: File = what you do to the selected files (TC "Files"), Edit =
+    // clipboard + marking (TC "Mark"), Go = navigation and the two-panel
+    // moves, Commands = the tools (TC "Commands"). Every item carries the
+    // shortcut the function-key bar / handleKeyDown already honours, so the
+    // menu doubles as the shortcut reference. Reserved system keys stay
+    // system: ⌘H hides, ⌘M minimizes, ⌘, opens Settings, ⌘? opens Help.
+
+    /// An item whose action goes to the app delegate (nil target = responder
+    /// chain, which for these selectors ends in AppDelegate).
+    @MainActor private func item(_ title: String, _ action: Selector?, _ key: String = "",
+                      _ mods: NSEvent.ModifierFlags = [.command], _ cmd: AppCommand? = nil) -> NSMenuItem {
+        let it = NSMenuItem(title: tr(title), action: action, keyEquivalent: key)
+        if !key.isEmpty { it.keyEquivalentModifierMask = mods }
+        if let cmd = cmd { applyDefaultKeyState(it, cmd) }
+        return it
+    }
+
+    private func fkey(_ n: Int) -> String {
+        let codes = [NSF1FunctionKey, NSF2FunctionKey, NSF3FunctionKey, NSF4FunctionKey, NSF5FunctionKey,
+                     NSF6FunctionKey, NSF7FunctionKey, NSF8FunctionKey]
+        return String(UnicodeScalar(codes[n - 1])!)
+    }
+
+    @MainActor private func toggle(_ title: String, _ action: Selector, on: Bool, key: String = "",
+                        mods: NSEvent.ModifierFlags = [.command]) -> NSMenuItem {
+        let it = item(title, action, key, mods)
+        it.state = on ? .on : .off
+        return it
+    }
+
     @MainActor private func setupMenus() {
         let mainMenu = NSMenu()
+        func top(_ title: String, _ menu: NSMenu) {
+            let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            holder.submenu = menu
+            mainMenu.addItem(holder)
+        }
 
-        // App menu
-        let appMenuItem = NSMenuItem()
-        mainMenu.addItem(appMenuItem)
+        // App menu — About, Settings, the shortcut editor (it is a settings pane),
+        // then the standard Hide / Quit block.
         let appMenu = NSMenu(title: "Double Finder")
-        appMenuItem.submenu = appMenu
-        appMenu.addItem(NSMenuItem(title: tr("About Double Finder"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(item("About Double Finder", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: tr("Settings…"), action: #selector(menuSettings), keyEquivalent: ","))
+        appMenu.addItem(item("Settings…", #selector(menuSettings), ","))
+        appMenu.addItem(item("Customize Shortcuts…", #selector(menuCustomizeShortcuts)))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: tr("Quit Double Finder"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(item("Hide Double Finder", #selector(NSApplication.hide(_:)), "h"))
+        appMenu.addItem(item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))
+        appMenu.addItem(item("Show All", #selector(NSApplication.unhideAllApplications(_:))))
+        appMenu.addItem(.separator())
+        appMenu.addItem(item("Quit Double Finder", #selector(NSApplication.terminate(_:)), "q"))
+        top("Double Finder", appMenu)
 
-        // File menu
-        let fileMenuItem = NSMenuItem(title: tr("File"), action: nil, keyEquivalent: "")
-        mainMenu.addItem(fileMenuItem)
+        // File — tabs, create, open/inspect, the F5–F8 operations, archives, tools.
         let fileMenu = NSMenu(title: tr("File"))
-        fileMenuItem.submenu = fileMenu
-        fileMenu.addItem(NSMenuItem(title: tr("New Directory"), action: #selector(menuNewDirectory), keyEquivalent: "d"))
-        let newFileItem = NSMenuItem(title: tr("New File…"), action: #selector(menuNewFile), keyEquivalent: String(UnicodeScalar(NSF4FunctionKey)!))
-        newFileItem.keyEquivalentModifierMask = [.shift]   // .function is rejected for custom items (macOS adds it for F-keys automatically)
-        fileMenu.addItem(newFileItem)
-        fileMenu.addItem(NSMenuItem(title: tr("Change Permissions…"), action: #selector(menuChangeAttributes), keyEquivalent: ""))
-        let packItem = NSMenuItem(title: tr("Pack to Other Panel…"), action: #selector(menuPack), keyEquivalent: String(UnicodeScalar(NSF5FunctionKey)!))
-        packItem.keyEquivalentModifierMask = [.option]
-        applyDefaultKeyState(packItem, .pack)
-        fileMenu.addItem(packItem)
-        let extractItem = NSMenuItem(title: tr("Extract to Other Panel"), action: #selector(menuExtract), keyEquivalent: String(UnicodeScalar(NSF6FunctionKey)!))
-        extractItem.keyEquivalentModifierMask = [.option]
-        applyDefaultKeyState(extractItem, .extract)
-        fileMenu.addItem(extractItem)
+        fileMenu.addItem(item("New Tab", #selector(menuNewTab), "t", [.command], .newTab))
+        fileMenu.addItem(item("Close Tab", #selector(menuCloseTab), "w", [.command], .closeTab))
         fileMenu.addItem(.separator())
-        fileMenu.addItem(NSMenuItem(title: tr("Create Checksum File…"),
-                                    action: #selector(menuCreateChecksum), keyEquivalent: ""))
-        fileMenu.addItem(NSMenuItem(title: tr("Verify Checksums"),
-                                    action: #selector(menuVerifyChecksums), keyEquivalent: ""))
-        fileMenu.addItem(NSMenuItem(title: tr("Split File…"),
-                                    action: #selector(menuSplitFile), keyEquivalent: ""))
-        fileMenu.addItem(NSMenuItem(title: tr("Combine Files…"),
-                                    action: #selector(menuCombineFiles), keyEquivalent: ""))
-        fileMenu.addItem(NSMenuItem(title: tr("Encode File…"),
-                                    action: #selector(menuEncodeFile), keyEquivalent: ""))
-        fileMenu.addItem(NSMenuItem(title: tr("Decode File"),
-                                    action: #selector(menuDecodeFile), keyEquivalent: ""))
+        fileMenu.addItem(item("New Folder", #selector(menuNewDirectory), "d", [.command], .newDir))
+        fileMenu.addItem(item("New File…", #selector(menuNewFile), fkey(4), [.shift]))
         fileMenu.addItem(.separator())
-        fileMenu.addItem(NSMenuItem(title: tr("Connect…"),
-                                    action: #selector(menuConnectServer), keyEquivalent: "k"))
+        fileMenu.addItem(item("Quick Look", #selector(menuQuickLook), fkey(3), [], .quickLook))
+        fileMenu.addItem(item("Edit", #selector(menuOpenInEditor), fkey(4), []))
+        fileMenu.addItem(item("Get Info", #selector(menuGetInfo), "i"))
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(item("Copy to Other Panel", #selector(menuCopy), fkey(5), [], .copy))
+        fileMenu.addItem(item("Move to Other Panel", #selector(menuMove), fkey(6), [], .move))
+        fileMenu.addItem(item("Rename…", #selector(menuRename)))
+        fileMenu.addItem(item("Move to Trash", #selector(menuMoveToTrash), "\u{8}"))
+        fileMenu.addItem(item("Delete Permanently…", #selector(menuDelete), fkey(8), [], .delete))
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(item("Pack to Other Panel…", #selector(menuPack), fkey(5), [.option], .pack))
+        fileMenu.addItem(item("Extract to Other Panel", #selector(menuExtract), fkey(6), [.option], .extract))
+        fileMenu.addItem(item("Change Permissions…", #selector(menuChangeAttributes)))
+        fileMenu.addItem(.separator())
+        let tools = NSMenu(title: tr("Tools"))
+        tools.addItem(item("Create Checksum File…", #selector(menuCreateChecksum)))
+        tools.addItem(item("Verify Checksums", #selector(menuVerifyChecksums)))
+        tools.addItem(.separator())
+        tools.addItem(item("Split File…", #selector(menuSplitFile)))
+        tools.addItem(item("Combine Files…", #selector(menuCombineFiles)))
+        tools.addItem(.separator())
+        tools.addItem(item("Encode File…", #selector(menuEncodeFile)))
+        tools.addItem(item("Decode File", #selector(menuDecodeFile)))
+        let toolsItem = NSMenuItem(title: tr("Tools"), action: nil, keyEquivalent: "")
+        toolsItem.submenu = tools
+        fileMenu.addItem(toolsItem)
+        top(tr("File"), fileMenu)
 
-        // Edit menu
-        let editMenuItem = NSMenuItem(title: tr("Edit"), action: nil, keyEquivalent: "")
-        mainMenu.addItem(editMenuItem)
+        // Edit — clipboard, marking, and the in-list filter.
         let editMenu = NSMenu(title: tr("Edit"))
-        editMenuItem.submenu = editMenu
-        // Clipboard copy/paste of files — interoperates with Finder. These use
-        // the standard copy:/paste: actions (target=nil → responder chain), so
-        // the file list copies/pastes files while a focused text field gets text
-        // copy/paste instead.
-        editMenu.addItem(NSMenuItem(title: tr("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: tr("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: tr("Cut Text"), action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        let copyPathItem = NSMenuItem(title: tr("Copy Path"), action: #selector(menuCopyPath), keyEquivalent: "c")
-        copyPathItem.keyEquivalentModifierMask = [.command, .shift]
-        editMenu.addItem(copyPathItem)
+        // Standard copy:/paste:/cut: with nil target walk the responder chain,
+        // so the file list copies/pastes files (Finder-compatible) while a
+        // focused text field gets text editing instead.
+        editMenu.addItem(item("Cut", #selector(NSText.cut(_:)), "x"))
+        editMenu.addItem(item("Copy", #selector(NSText.copy(_:)), "c"))
+        editMenu.addItem(item("Paste", #selector(NSText.paste(_:)), "v"))
+        editMenu.addItem(item("Copy Path", #selector(menuCopyPath), "c", [.command, .shift]))
         editMenu.addItem(.separator())
-        // nil target: selectAll: walks the responder chain (text field → its text;
-        // file list → MainViewController.selectAll). A direct mainVC call used to
-        // select every FILE while the user was typing ⌘A in a sheet's text box.
-        let selectAllItem = NSMenuItem(title: tr("Select All"), action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a")
-        applyDefaultKeyState(selectAllItem, .selectAll)
-        editMenu.addItem(selectAllItem)
-        let deselectItem = NSMenuItem(title: tr("Deselect All"), action: #selector(menuDeselectAll), keyEquivalent: "a")
-        deselectItem.keyEquivalentModifierMask = [.command, .shift]
-        editMenu.addItem(deselectItem)
-        editMenu.addItem(NSMenuItem(title: tr("Select by Pattern… (+)"), action: #selector(menuSelectPattern), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: tr("Unselect by Pattern… (−)"), action: #selector(menuUnselectPattern), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: tr("Invert Selection (*)"), action: #selector(menuInvertSelection), keyEquivalent: ""))
+        // selectAll: with nil target → a focused text field selects its text,
+        // the file list selects every file (MainViewController.selectAll).
+        editMenu.addItem(item("Select All", #selector(NSResponder.selectAll(_:)), "a", [.command], .selectAll))
+        editMenu.addItem(item("Deselect All", #selector(menuDeselectAll), "a", [.command, .shift]))
+        editMenu.addItem(item("Invert Selection (*)", #selector(menuInvertSelection)))
+        editMenu.addItem(item("Select by Pattern… (+)", #selector(menuSelectPattern)))
+        editMenu.addItem(item("Unselect by Pattern… (−)", #selector(menuUnselectPattern)))
         editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: tr("Rename…"), action: #selector(menuRename), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: tr("Copy to Other Panel"), action: #selector(menuCopy), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: tr("Move to Other Panel"), action: #selector(menuMove), keyEquivalent: ""))
-        editMenu.addItem(NSMenuItem(title: tr("Delete"), action: #selector(menuDelete), keyEquivalent: ""))
+        editMenu.addItem(item("Quick Filter…", #selector(menuFilter), "f", [.command], .filter))
+        top(tr("Edit"), editMenu)
 
-        // Go menu
-        let goMenuItem = NSMenuItem(title: tr("Go"), action: nil, keyEquivalent: "")
-        mainMenu.addItem(goMenuItem)
+        // View — list style, sorting/visibility toggles, side panes, chrome.
+        let viewMenu = NSMenu(title: tr("View"))
+        viewMenu.addItem(item("Full View", #selector(menuViewFull), "1", [.command], .viewFull))
+        viewMenu.addItem(item("Brief View", #selector(menuViewBrief), "2", [.command], .viewBrief))
+        viewMenu.addItem(item("Thumbnails", #selector(menuViewThumbnails), "3", [.command], .viewThumbnails))
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(toggle("Folders First", #selector(menuToggleFoldersFirst), on: AppSettings.foldersFirst))
+        viewMenu.addItem(toggle("Color by File Type", #selector(menuToggleColor), on: AppSettings.colorByType))
+        viewMenu.addItem(item("Show Hidden Files", #selector(menuToggleHidden), ".", [.command, .shift]))
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(item("Directory Tree", #selector(menuToggleTree), "d", [.command, .shift], .tree))
+        viewMenu.addItem(item("Branch View", #selector(menuBranchView), "b", [.command, .shift], .branch))
+        viewMenu.addItem(item("Quick View Panel", #selector(menuQuickViewPanel), "q", [.control]))
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(toggle("Show Drive Buttons", #selector(menuToggleDriveBar), on: AppSettings.showDriveBar))
+        viewMenu.addItem(toggle("Show Drive Dropdown", #selector(menuToggleDriveDropdown), on: AppSettings.showDriveDropdown))
+        // No key: ⌘L stays "focus the command line", which also reveals it for
+        // one command while this is off.
+        viewMenu.addItem(toggle("Show Command Line", #selector(menuToggleCommandLine), on: AppSettings.showCommandLine))
+        viewMenu.addItem(toggle("Show Function Key Bar", #selector(menuToggleFunctionKeyBar), on: AppSettings.showFunctionKeyBar))
+        viewMenu.addItem(item("Customize Toolbar…", #selector(menuCustomizeToolbar)))
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(item("Refresh", #selector(menuRefresh), "r", [.command], .refresh))
+        top(tr("View"), viewMenu)
+
+        // Go — history, places, the two-panel moves, servers.
         let goMenu = NSMenu(title: tr("Go"))
-        goMenuItem.submenu = goMenu
-        goMenu.addItem(NSMenuItem(title: tr("Home"), action: #selector(menuGoHome), keyEquivalent: "h"))
-        goMenu.addItem(NSMenuItem(title: tr("Back"), action: #selector(menuGoBack), keyEquivalent: "["))
-        goMenu.addItem(NSMenuItem(title: tr("Forward"), action: #selector(menuGoForward), keyEquivalent: "]"))
-        goMenu.addItem(NSMenuItem(title: tr("Parent Directory"), action: #selector(menuGoUp), keyEquivalent: ""))
-        goMenu.addItem(NSMenuItem.separator())
-        let goToFolderItem = NSMenuItem(title: tr("Go to Folder…"), action: #selector(menuGoToFolder), keyEquivalent: "g")
-        goToFolderItem.keyEquivalentModifierMask = [.command, .shift]
-        goMenu.addItem(goToFolderItem)
-
-        // Commands menu (panel operations)
-        let cmdMenuItem = NSMenuItem(title: tr("Commands"), action: nil, keyEquivalent: "")
-        mainMenu.addItem(cmdMenuItem)
-        let cmdMenu = NSMenu(title: tr("Commands"))
-        cmdMenuItem.submenu = cmdMenu
-        let newTabItem = NSMenuItem(title: tr("New Tab"), action: #selector(menuNewTab), keyEquivalent: "t")
-        newTabItem.keyEquivalentModifierMask = [.command]
-        applyDefaultKeyState(newTabItem, .newTab)
-        cmdMenu.addItem(newTabItem)
-        let closeTabItem = NSMenuItem(title: tr("Close Tab"), action: #selector(menuCloseTab), keyEquivalent: "w")
-        closeTabItem.keyEquivalentModifierMask = [.command]
-        applyDefaultKeyState(closeTabItem, .closeTab)
-        cmdMenu.addItem(closeTabItem)
-        cmdMenu.addItem(.separator())
-        cmdMenu.addItem(NSMenuItem(title: tr("Compare Directories"), action: #selector(menuCompareDirs), keyEquivalent: ""))
-        cmdMenu.addItem(NSMenuItem(title: tr("Compare by Content"), action: #selector(menuCompareContent), keyEquivalent: ""))
-        cmdMenu.addItem(NSMenuItem(title: tr("Synchronize Directories…"), action: #selector(menuSyncDirs), keyEquivalent: ""))
-        cmdMenu.addItem(.separator())
-        let swapItem = NSMenuItem(title: tr("Swap Panels"), action: #selector(menuSwapPanels), keyEquivalent: "u")
-        swapItem.keyEquivalentModifierMask = [.command]
-        applyDefaultKeyState(swapItem, .swap)
-        cmdMenu.addItem(swapItem)
-        let findItem = NSMenuItem(title: tr("Find Files…"), action: #selector(menuFindFiles), keyEquivalent: "f")
-        findItem.keyEquivalentModifierMask = [.command, .shift]
-        applyDefaultKeyState(findItem, .find)
-        cmdMenu.addItem(findItem)
-        let renameItem = NSMenuItem(title: tr("Multi-Rename Tool…"), action: #selector(menuMultiRename), keyEquivalent: "m")
-        renameItem.keyEquivalentModifierMask = [.command]
-        applyDefaultKeyState(renameItem, .multiRename)
-        cmdMenu.addItem(renameItem)
-        let openOtherItem = NSMenuItem(title: tr("Open Folder in Other Panel"), action: #selector(menuOpenInOther), keyEquivalent: "o")
-        openOtherItem.keyEquivalentModifierMask = [.command, .shift]
-        applyDefaultKeyState(openOtherItem, .openInOther)
-        cmdMenu.addItem(openOtherItem)
+        goMenu.addItem(item("Back", #selector(menuGoBack), "["))
+        goMenu.addItem(item("Forward", #selector(menuGoForward), "]"))
+        goMenu.addItem(item("Enclosing Folder", #selector(menuGoUp), String(UnicodeScalar(NSUpArrowFunctionKey)!)))
+        goMenu.addItem(.separator())
+        goMenu.addItem(item("Home", #selector(menuGoHome), "h", [.command, .shift]))
+        goMenu.addItem(item("Go to Folder…", #selector(menuGoToFolder), "g", [.command, .shift]))
+        goMenu.addItem(.separator())
+        goMenu.addItem(item("Open Folder in Other Panel", #selector(menuOpenInOther), "o", [.command, .shift], .openInOther))
         // ⌘= — TC-family "target = source" (Krusader Ctrl+=). The Lister window's
-        // ⌘= zoom is untouched: its local key monitor swallows the event before
-        // menu dispatch.
-        let matchOtherItem = NSMenuItem(title: tr("Same Folder as Active in Other Panel"), action: #selector(menuMatchOther), keyEquivalent: "=")
-        matchOtherItem.keyEquivalentModifierMask = [.command]
-        applyDefaultKeyState(matchOtherItem, .matchOther)
-        cmdMenu.addItem(matchOtherItem)
+        // ⌘= zoom is untouched: its local key monitor swallows the event first.
+        goMenu.addItem(item("Same Folder as Active in Other Panel", #selector(menuMatchOther), "=", [.command], .matchOther))
+        goMenu.addItem(item("Swap Panels", #selector(menuSwapPanels), "u", [.command], .swap))
+        goMenu.addItem(.separator())
+        goMenu.addItem(item("Connect to Server…", #selector(menuConnectServer), "k"))
+        goMenu.addItem(item("Clean Up Incomplete Uploads…", #selector(menuCleanupUploads)))
+        top(tr("Go"), goMenu)
+
+        // Commands — the tools that work on both panels or outside them.
+        let cmdMenu = NSMenu(title: tr("Commands"))
+        cmdMenu.addItem(item("Find Files…", #selector(menuFindFiles), "f", [.command, .shift], .find))
+        cmdMenu.addItem(item("Multi-Rename Tool…", #selector(menuMultiRename), "r", [.command, .shift], .multiRename))
         cmdMenu.addItem(.separator())
-        let termItem = NSMenuItem(title: tr("Open in Terminal"), action: #selector(menuOpenTerminal), keyEquivalent: "t")
-        termItem.keyEquivalentModifierMask = [.command, .shift]
-        cmdMenu.addItem(termItem)
+        cmdMenu.addItem(item("Compare Directories", #selector(menuCompareDirs)))
+        cmdMenu.addItem(item("Compare by Content", #selector(menuCompareContent)))
+        cmdMenu.addItem(item("Synchronize Directories…", #selector(menuSyncDirs)))
+        cmdMenu.addItem(.separator())
+        cmdMenu.addItem(item("Open in Terminal", #selector(menuOpenTerminal), "t", [.command, .shift]))
         let termAppItem = NSMenuItem(title: tr("Terminal App"), action: nil, keyEquivalent: "")
         let termAppMenu = NSMenu(title: tr("Terminal App"))
         termAppMenu.delegate = self                 // populated dynamically
         termAppItem.submenu = termAppMenu
         terminalAppMenu = termAppMenu
         cmdMenu.addItem(termAppItem)
-        cmdMenu.addItem(.separator())
-        let cmdLineItem = NSMenuItem(title: tr("Focus Command Line"), action: #selector(menuFocusCommandLine), keyEquivalent: "l")
-        applyDefaultKeyState(cmdLineItem, .commandLine)
-        cmdMenu.addItem(cmdLineItem)
-        cmdMenu.addItem(NSMenuItem(title: tr("Customize Shortcuts…"), action: #selector(menuCustomizeShortcuts), keyEquivalent: ""))
-        cmdMenu.addItem(.separator())
-        cmdMenu.addItem(NSMenuItem(title: tr("Clean Up Incomplete Uploads…"),
-                                   action: #selector(menuCleanupUploads), keyEquivalent: ""))
+        cmdMenu.addItem(item("Focus Command Line", #selector(menuFocusCommandLine), "l", [.command], .commandLine))
+        top(tr("Commands"), cmdMenu)
 
-        // Favorites menu (populated dynamically via menuNeedsUpdate)
-        let favMenuItem = NSMenuItem(title: tr("Favorites"), action: nil, keyEquivalent: "")
-        mainMenu.addItem(favMenuItem)
+        // Favorites — populated on demand (menuNeedsUpdate).
         let favMenu = NSMenu(title: tr("Favorites"))
         favMenu.delegate = self
-        favMenuItem.submenu = favMenu
         favoritesMenu = favMenu
+        top(tr("Favorites"), favMenu)
 
-        // View menu
-        let viewMenuItem = NSMenuItem(title: tr("View"), action: nil, keyEquivalent: "")
-        mainMenu.addItem(viewMenuItem)
-        let viewMenu = NSMenu(title: tr("View"))
-        viewMenuItem.submenu = viewMenu
-        viewMenu.addItem(NSMenuItem(title: tr("Quick Look"), action: #selector(menuQuickLook), keyEquivalent: ""))
-        let quickViewItem = NSMenuItem(title: tr("Quick View Panel"), action: #selector(menuQuickViewPanel), keyEquivalent: "q")
-        quickViewItem.keyEquivalentModifierMask = [.control]
-        viewMenu.addItem(quickViewItem)
-        let fullItem = NSMenuItem(title: tr("Full View"), action: #selector(menuViewFull), keyEquivalent: "1")
-        let briefItem = NSMenuItem(title: tr("Brief View"), action: #selector(menuViewBrief), keyEquivalent: "2")
-        let thumbItem = NSMenuItem(title: tr("Thumbnails"), action: #selector(menuViewThumbnails), keyEquivalent: "3")
-        applyDefaultKeyState(fullItem, .viewFull)
-        applyDefaultKeyState(briefItem, .viewBrief)
-        applyDefaultKeyState(thumbItem, .viewThumbnails)
-        viewMenu.addItem(fullItem); viewMenu.addItem(briefItem); viewMenu.addItem(thumbItem)
-        viewMenu.addItem(.separator())
-        let treeItem = NSMenuItem(title: tr("Directory Tree"), action: #selector(menuToggleTree), keyEquivalent: "d")
-        treeItem.keyEquivalentModifierMask = [.command, .shift]
-        applyDefaultKeyState(treeItem, .tree)
-        viewMenu.addItem(treeItem)
-        let filterItem = NSMenuItem(title: tr("Quick Filter…"), action: #selector(menuFilter), keyEquivalent: "f")
-        applyDefaultKeyState(filterItem, .filter)
-        viewMenu.addItem(filterItem)
-        let branchItem = NSMenuItem(title: tr("Branch View (flatten subtree)"), action: #selector(menuBranchView), keyEquivalent: "b")
-        branchItem.keyEquivalentModifierMask = [.command, .shift]
-        applyDefaultKeyState(branchItem, .branch)
-        viewMenu.addItem(branchItem)
-        let colorItem = NSMenuItem(title: tr("Color by File Type"), action: #selector(menuToggleColor), keyEquivalent: "")
-        colorItem.state = AppSettings.colorByType ? .on : .off
-        viewMenu.addItem(colorItem)
-        let foldersFirstItem = NSMenuItem(title: tr("Folders First"), action: #selector(menuToggleFoldersFirst), keyEquivalent: "")
-        foldersFirstItem.state = AppSettings.foldersFirst ? .on : .off
-        viewMenu.addItem(foldersFirstItem)
-        let hiddenItem = NSMenuItem(title: tr("Show Hidden Files"), action: #selector(menuToggleHidden), keyEquivalent: ".")
-        hiddenItem.keyEquivalentModifierMask = [.command, .shift]
-        viewMenu.addItem(hiddenItem)
-        viewMenu.addItem(.separator())
-        let driveDropItem = NSMenuItem(title: tr("Show Drive Dropdown"), action: #selector(menuToggleDriveDropdown), keyEquivalent: "")
-        driveDropItem.state = AppSettings.showDriveDropdown ? .on : .off
-        viewMenu.addItem(driveDropItem)
-        let driveBarItem = NSMenuItem(title: tr("Show Drive Buttons"), action: #selector(menuToggleDriveBar), keyEquivalent: "")
-        driveBarItem.state = AppSettings.showDriveBar ? .on : .off
-        viewMenu.addItem(driveBarItem)
-        // No key equivalent: Cmd+L stays "focus the command line", which also
-        // reveals it for one command while this is off.
-        let showCmdLineItem = NSMenuItem(title: tr("Show Command Line"), action: #selector(menuToggleCommandLine), keyEquivalent: "")
-        showCmdLineItem.state = AppSettings.showCommandLine ? .on : .off
-        viewMenu.addItem(showCmdLineItem)
-        let fkeyBarItem = NSMenuItem(title: tr("Show Function Key Bar"), action: #selector(menuToggleFunctionKeyBar), keyEquivalent: "")
-        fkeyBarItem.state = AppSettings.showFunctionKeyBar ? .on : .off
-        viewMenu.addItem(fkeyBarItem)
-        viewMenu.addItem(.separator())
-        let refreshItem = NSMenuItem(title: tr("Refresh"), action: #selector(menuRefresh), keyEquivalent: "r")
-        applyDefaultKeyState(refreshItem, .refresh)
-        viewMenu.addItem(refreshItem)
+        // Window — the standard block plus tab switching; AppKit appends the
+        // window list.
+        let windowMenu = NSMenu(title: tr("Window"))
+        windowMenu.addItem(item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"))
+        windowMenu.addItem(item("Zoom", #selector(NSWindow.performZoom(_:))))
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(item("Next Tab", #selector(menuNextTab), "\t", [.control]))
+        windowMenu.addItem(item("Previous Tab", #selector(menuPreviousTab), "\t", [.control, .shift]))
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))))
+        top(tr("Window"), windowMenu)
+        NSApp.windowsMenu = windowMenu
 
-        // Help menu
-        let helpMenuItem = NSMenuItem(title: tr("Help"), action: nil, keyEquivalent: "")
-        mainMenu.addItem(helpMenuItem)
+        // Help
         let helpMenu = NSMenu(title: tr("Help"))
-        helpMenuItem.submenu = helpMenu
         // Shown as ⌘? for reference only: macOS routes ⌘? to the Help menu's own
         // search field before any item's key equivalent is consulted, so the
         // actual shortcut is the local key monitor installed in
         // applicationDidFinishLaunching (helpKeyMonitor).
-        helpMenu.addItem(NSMenuItem(title: tr("Double Finder Help"),
-                                    action: #selector(menuShowHelp), keyEquivalent: "?"))
+        helpMenu.addItem(item("Double Finder Help", #selector(menuShowHelp), "?"))
         helpMenu.addItem(.separator())
-        helpMenu.addItem(NSMenuItem(title: tr("Project Page"),
-                                    action: #selector(menuProjectPage), keyEquivalent: ""))
-        helpMenu.addItem(NSMenuItem(title: tr("Report an Issue"),
-                                    action: #selector(menuReportIssue), keyEquivalent: ""))
+        helpMenu.addItem(item("Project Page", #selector(menuProjectPage)))
+        helpMenu.addItem(item("Report an Issue", #selector(menuReportIssue)))
+        top(tr("Help"), helpMenu)
         NSApp.helpMenu = helpMenu
 
         NSApplication.shared.mainMenu = mainMenu
@@ -494,6 +467,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainVC()?.perform(#selector(MainViewController.applyFunctionKeyBarVisibility_menu))
     }
     @objc private func menuNewFile() { mainVC()?.actionNewFile() }
+    @objc private func menuOpenInEditor() { mainVC()?.perform(#selector(MainViewController.actionOpenInEditor_menu)) }
+    @objc private func menuGetInfo() { mainVC()?.perform(#selector(MainViewController.actionGetInfo)) }
+    @objc private func menuMoveToTrash() { mainVC()?.perform(#selector(MainViewController.actionMoveToTrash_menu)) }
+    @objc private func menuNextTab() { mainVC()?.activePanelVC.nextTab() }
+    @objc private func menuPreviousTab() { mainVC()?.activePanelVC.previousTab() }
+    @objc private func menuCustomizeToolbar() { mainVC()?.perform(#selector(MainViewController.openSettingsToolbar)) }
     @objc private func menuChangeAttributes() { mainVC()?.actionChangeAttributes() }
     @objc private func menuPack() { mainVC()?.actionPackZip() }
     @objc private func menuExtract() { mainVC()?.actionExtractArchive() }

@@ -592,5 +592,17 @@
   "Reset All Settings…": "Réinitialiser tous les réglages…",
   "Restores every setting to its default; favorites and saved connections are kept": "Rétablit tous les réglages par défaut ; les favoris et les connexions enregistrées sont conservés",
   "Reset all settings to their defaults?": "Rétablir tous les réglages par défaut ?",
-  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "L'apparence, les panneaux, la barre d'outils, les raccourcis, les polices et les couleurs reviennent à l'état d'origine. Les favoris, les connexions serveur enregistrées et les commandes personnalisées sont conservés."
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "L'apparence, les panneaux, la barre d'outils, les raccourcis, les polices et les couleurs reviennent à l'état d'origine. Les favoris, les connexions serveur enregistrées et les commandes personnalisées sont conservés.",
+  "New Folder": "Nouveau dossier",
+  "Cut": "Couper",
+  "Hide Double Finder": "Masquer Double Finder",
+  "Hide Others": "Masquer les autres",
+  "Show All": "Tout afficher",
+  "Window": "Fenêtre",
+  "Minimize": "Placer dans le Dock",
+  "Zoom": "Réduire/agrandir",
+  "Next Tab": "Onglet suivant",
+  "Previous Tab": "Onglet précédent",
+  "Bring All to Front": "Tout ramener au premier plan",
+  "Enclosing Folder": "Dossier parent"
 }

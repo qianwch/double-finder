@@ -592,5 +592,17 @@
   "Reset All Settings…": "恢复全部默认设置…",
   "Restores every setting to its default; favorites and saved connections are kept": "把所有设置恢复为默认值；收藏夹与已保存的连接会保留",
   "Reset all settings to their defaults?": "恢复所有设置为默认值？",
-  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "外观、面板、工具栏、快捷键、字体与配色都会回到出厂状态。收藏夹、已保存的服务器连接和自定义工具栏命令会保留。"
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "外观、面板、工具栏、快捷键、字体与配色都会回到出厂状态。收藏夹、已保存的服务器连接和自定义工具栏命令会保留。",
+  "New Folder": "新建文件夹",
+  "Cut": "剪切",
+  "Hide Double Finder": "隐藏 Double Finder",
+  "Hide Others": "隐藏其他",
+  "Show All": "全部显示",
+  "Window": "窗口",
+  "Minimize": "最小化",
+  "Zoom": "缩放",
+  "Next Tab": "下一个标签页",
+  "Previous Tab": "上一个标签页",
+  "Bring All to Front": "前置全部窗口",
+  "Enclosing Folder": "上层文件夹"
 }

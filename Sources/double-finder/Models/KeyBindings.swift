@@ -99,7 +99,7 @@ enum AppCommand: String, CaseIterable {
         case .pack: return "⌥F5"
         case .extract: return "⌥F6"
         case .find: return "⌘⇧F"
-        case .multiRename: return "⌘M"
+        case .multiRename: return "⌘⇧R"
         case .sftp: return "⌘N"
         case .swap: return "⌘U"
         case .branch: return "⌘⇧B"

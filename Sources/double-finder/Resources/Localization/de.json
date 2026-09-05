@@ -592,5 +592,17 @@
   "Reset All Settings…": "Alle Einstellungen zurücksetzen…",
   "Restores every setting to its default; favorites and saved connections are kept": "Setzt alle Einstellungen zurück; Favoriten und gespeicherte Verbindungen bleiben erhalten",
   "Reset all settings to their defaults?": "Alle Einstellungen auf die Standardwerte zurücksetzen?",
-  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "Darstellung, Panels, Symbolleiste, Kurzbefehle, Schriften und Farben werden zurückgesetzt. Favoriten, gespeicherte Serververbindungen und eigene Symbolleistenbefehle bleiben erhalten."
+  "Appearance, panels, toolbar, shortcuts, fonts and colors go back to factory state. Favorites, saved server connections and custom toolbar commands are kept.": "Darstellung, Panels, Symbolleiste, Kurzbefehle, Schriften und Farben werden zurückgesetzt. Favoriten, gespeicherte Serververbindungen und eigene Symbolleistenbefehle bleiben erhalten.",
+  "New Folder": "Neuer Ordner",
+  "Cut": "Ausschneiden",
+  "Hide Double Finder": "Double Finder ausblenden",
+  "Hide Others": "Andere ausblenden",
+  "Show All": "Alle einblenden",
+  "Window": "Fenster",
+  "Minimize": "Im Dock ablegen",
+  "Zoom": "Zoomen",
+  "Next Tab": "Nächster Tab",
+  "Previous Tab": "Vorheriger Tab",
+  "Bring All to Front": "Alle nach vorne bringen",
+  "Enclosing Folder": "Übergeordneter Ordner"
 }
