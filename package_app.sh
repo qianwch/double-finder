@@ -90,6 +90,32 @@ echo "==> Info.plist"
 cp Info.plist "$APPDIR/Contents/Info.plist"
 plutil -replace CFBundleIconFile -string "AppIcon" "$APPDIR/Contents/Info.plist"
 
+# The repository Info.plist carries placeholders (0.0.0 / 0); the real version
+# is stamped from git here. CFBundleShortVersionString comes from the newest
+# release tag ("1.0.10" or "v1.0.10" — the rolling "latest" prerelease tag is
+# not a version and must not match), CFBundleVersion from the commit count
+# (monotonic, what macOS compares), DFGitRevision from the short sha.
+# DF_VERSION=x.y.z overrides the tag lookup for tarball builds with no git
+# history. Needs the full history + tags: CI checks out with fetch-depth 0.
+echo "==> Version stamp"
+if [ -n "${DF_VERSION:-}" ]; then
+    SHORT_VER="$DF_VERSION"
+else
+    SHORT_VER="$(git describe --tags --abbrev=0 --match '[0-9]*' --match 'v[0-9]*' 2>/dev/null || true)"
+    SHORT_VER="${SHORT_VER#v}"
+    if [ -z "$SHORT_VER" ]; then
+        echo "    !! no release tag reachable and DF_VERSION not set — keeping the 0.0.0 placeholder"
+        SHORT_VER="0.0.0"
+    fi
+fi
+BUILD_NUM="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+GIT_REV="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then GIT_REV="$GIT_REV-dirty"; fi
+plutil -replace CFBundleShortVersionString -string "$SHORT_VER" "$APPDIR/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$BUILD_NUM" "$APPDIR/Contents/Info.plist"
+plutil -replace DFGitRevision -string "$GIT_REV" "$APPDIR/Contents/Info.plist"
+echo "    $SHORT_VER ($BUILD_NUM) $GIT_REV"
+
 echo "==> App icon (.icns, drawn in code)"
 ICONSET="$DIST/AppIcon.iconset"
 PNG="$DIST/icon1024.png"
