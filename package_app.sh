@@ -37,8 +37,14 @@ else
     exit 1
 fi
 
-echo "==> 7-Zip licence (the 7z engine is compiled in from Sources/CSevenZip; LGPL text must ship)"
+echo "==> Project licence files (Apache-2.0 LICENSE + NOTICE + third-party attributions)"
+cp LICENSE "$APPDIR/Contents/Resources/LICENSE.txt"
+cp NOTICE "$APPDIR/Contents/Resources/NOTICE.txt"
+cp THIRD-PARTY.md "$APPDIR/Contents/Resources/THIRD-PARTY.md"
+
+echo "==> 7-Zip licence (the 7z engine is compiled in from Sources/CSevenZip; LGPL-2.1 §6 requires the full licence text)"
 cp Sources/CSevenZip/7zip/DOC/License.txt "$APPDIR/Contents/Resources/sevenzip-License.txt"
+cp Sources/CSevenZip/7zip/DOC/copying.txt "$APPDIR/Contents/Resources/sevenzip-LGPL-2.1.txt"
 
 echo "==> Bundle mermaid.min.js (Lister mermaid rendering; MIT)"
 MERMAID="vendor/mermaid/mermaid.min.js"
@@ -132,6 +138,30 @@ if [ -f "$MTP_LIB" ] && [ -f "$USB_LIB" ]; then
     for lic in "$USB_PREFIX/COPYING" "$USB_PREFIX/../../Cellar/libusb/"*/COPYING; do
         [ -f "$lic" ] && cp "$lic" "$APPDIR/Contents/Frameworks/libusb-COPYING.txt" && break
     done
+    # LGPL-2.1 §4: the shipped dylibs are unmodified Homebrew builds; record the
+    # exact upstream versions and where the corresponding source lives so a
+    # recipient can obtain (and rebuild / replace) them.
+    # Cellar directory names carry a "_N" revision suffix on formula rebuilds
+    # (e.g. 1.1.23_1) — the upstream tarball is named after the bare version.
+    MTP_VER="$(basename "$(readlink -f "$MTP_PREFIX")")"; MTP_VER="${MTP_VER%%_*}"
+    USB_VER="$(basename "$(readlink -f "$USB_PREFIX")")"; USB_VER="${USB_VER%%_*}"
+    cat > "$APPDIR/Contents/Frameworks/SOURCES.txt" <<EOF2
+The dynamic libraries in this folder are unmodified builds installed by
+Homebrew (https://brew.sh) and are licensed under the GNU LGPL 2.1 or later
+(see libmtp-COPYING.txt and libusb-COPYING.txt). Double Finder links them
+dynamically; you may replace them with your own build of the same library.
+
+libmtp ${MTP_VER}
+  https://downloads.sourceforge.net/project/libmtp/libmtp/${MTP_VER}/libmtp-${MTP_VER}.tar.gz
+  https://github.com/libmtp/libmtp
+  Homebrew formula: https://github.com/Homebrew/homebrew-core/blob/master/Formula/lib/libmtp.rb
+
+libusb ${USB_VER}
+  https://github.com/libusb/libusb/releases/download/v${USB_VER}/libusb-${USB_VER}.tar.bz2
+  https://github.com/libusb/libusb
+  Homebrew formula: https://github.com/Homebrew/homebrew-core/blob/master/Formula/lib/libusb.rb
+EOF2
+    echo "    recorded libmtp $MTP_VER + libusb $USB_VER sources in Frameworks/SOURCES.txt"
     echo "    bundled libmtp ($(lipo -archs "$APPDIR/Contents/Frameworks/libmtp.9.dylib")) + libusb"
     if ! lipo -archs "$APPDIR/Contents/Frameworks/libmtp.9.dylib" | grep -q "$HOST_ARCH"; then
         echo "    !! WARNING: bundled libmtp does not cover $HOST_ARCH — Android support will fail"

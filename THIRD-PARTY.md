@@ -1,7 +1,10 @@
 # Third-Party Software
 
 Double Finder itself is licensed under Apache-2.0 (see `LICENSE`). It uses the
-following third-party components, each under its own license.
+following third-party components, each under its own license. The packaged
+`.app` carries this file together with `LICENSE.txt`, `NOTICE.txt` and every
+third-party licence text in `Contents/Resources/` (and, for the dynamically
+linked libraries, `Contents/Frameworks/`); Help ▸ About opens them.
 
 ## libarchive
 
@@ -19,16 +22,23 @@ following third-party components, each under its own license.
   is vendored under `Sources/CSevenZip/7zip/` and **compiled into** the Double
   Finder executable. It handles encrypted `.7z` archives (which libarchive
   cannot decrypt) and creates `.7z` archives (encryption, header encryption,
-  multi-volume). The RAR code (`CPP/7zip/Compress/Rar*`), which carries the
-  unRAR licence restriction, and every other format handler are **not**
-  included; libarchive covers those.
-- **License:** GNU LGPL-2.1 (the AES code is BSD-3-Clause). Double Finder is
-  itself open source under Apache-2.0 with complete sources in this repository,
-  so LGPL §6 (the recipient can rebuild the work with a modified library) is
-  satisfied. The vendored files are unmodified; `Sources/CSevenZip/shim/` is
-  Double Finder's own C façade (Apache-2.0).
-- **Bundled license text:** `Sources/CSevenZip/7zip/DOC/License.txt` (copied
-  into the app as `Contents/Resources/sevenzip-License.txt`).
+  multi-volume). The RAR code (`CPP/7zip/Compress/Rar*`, `Crypto/Rar*`), which
+  carries the unRAR licence restriction, and every other format handler are
+  **not** included — not even their headers; libarchive covers those formats.
+  The BSD-licensed parts of 7-Zip (`LzfseDecoder.cpp`, `ZstdDec.c`, `Xxh64.c`)
+  are not included either.
+- **License:** GNU LGPL-2.1 (or later) for the C++ engine. Many of the C
+  files (LZMA SDK: `LzmaEnc.c`, `LzmaDec.c`, `Ppmd7*.c`, `Aes.c`, `AesOpt.c`,
+  `Sha256.c`, …) are marked "Igor Pavlov : Public domain" in their headers.
+  Double Finder is itself open source under Apache-2.0 with complete sources in
+  this repository, so LGPL §6 (the recipient can rebuild the work with a
+  modified library) is satisfied. The vendored files are byte-for-byte
+  identical to the upstream release; `Sources/CSevenZip/shim/` and
+  `include/` are Double Finder's own C façade (Apache-2.0).
+- **Bundled license text:** `Sources/CSevenZip/7zip/DOC/License.txt` (7-Zip's
+  per-file licence summary) and `DOC/copying.txt` (the full LGPL-2.1 text),
+  copied into the app as `Contents/Resources/sevenzip-License.txt` and
+  `sevenzip-LGPL-2.1.txt`.
 - **Project:** https://www.7-zip.org/ — sources mirrored at
   https://github.com/ip7z/7zip (vendored release: 26.02).
 
@@ -40,7 +50,13 @@ following third-party components, each under its own license.
   markdown preview to SVG (`Utils/Lister/DiagramRenderer.swift`). The main
   `ListerWebView` that displays the rendered page keeps JavaScript disabled;
   Mermaid's own JS runs only inside that separate, hidden web view.
-- **License:** MIT.
+- **License:** MIT. The single-file build also bundles Mermaid's runtime
+  dependencies, all under permissive licences: d3 (ISC), d3-sankey
+  (BSD-3-Clause), DOMPurify (MPL-2.0 OR Apache-2.0), and cytoscape,
+  cytoscape-cose-bilkent, cytoscape-fcose, dagre-d3-es, dayjs, es-toolkit,
+  KaTeX, khroma, marked, roughjs, stylis, ts-dedent, uuid, @braintree/sanitize-url,
+  @iconify/utils, @mermaid-js/parser, @upsetjs/venn.js (MIT). Their copyright
+  notices that survive minification remain inside `mermaid.min.js`.
 - **Bundled license text:** `vendor/mermaid/LICENSE` (copied into the app as
   `Contents/Resources/mermaid-License.txt`).
 - **Project:** https://mermaid.js.org/ — sources at
@@ -65,7 +81,13 @@ following third-party components, each under its own license.
   falls back to a source-code note, no dialog).
 - **License:** MIT (the `plantuml-mit` edition specifically; PlantUML's default
   release asset is GPLv2 and is deliberately **not** used, to keep this
-  Apache-2.0 project's bundled dependencies license-compatible).
+  Apache-2.0 project's bundled dependencies license-compatible). The jar also
+  contains **Smetana**, PlantUML's Java translation of the Graphviz layout
+  engine, which stays under Graphviz's **Eclipse Public License 1.0**, plus the
+  smaller components credited in the licence file (OpenIconic, Brotli, Twemoji,
+  ASCIIMathML, CafeUndZopfli, …). Because PlantUML runs as a separate process
+  and is never linked into Double Finder, none of this affects the licence of
+  the application itself.
 - **Bundled license text:** `vendor/plantuml/LICENSE` (copied into the app as
   `Contents/Resources/plantuml-License.txt`).
 - **Project:** https://plantuml.com/ — sources at
@@ -87,6 +109,10 @@ following third-party components, each under its own license.
   are free to replace them with your own build of the same library.
 - **Bundled license text:** `Contents/Frameworks/libmtp-COPYING.txt` and
   `libusb-COPYING.txt` (copied from the installed packages at packaging time).
+- **Corresponding source (LGPL §4):** the dylibs are unmodified Homebrew builds
+  of the upstream releases. `package_app.sh` records the exact versions that
+  went into each build, with the upstream source tarball URLs and the Homebrew
+  formula links, in `Contents/Frameworks/SOURCES.txt`.
 - **Project:** https://libmtp.sourceforge.net/ · https://libusb.info/
 - The dylibs are **not** committed to this repository; they come from
   `brew install libmtp` on the packaging machine.

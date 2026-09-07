@@ -10,14 +10,20 @@ Rar (unRAR licence), no zip/tar/… handlers — libarchive already covers those
 `shim/SevenZipShim.cpp` + `include/CSevenZip.h` are Double Finder's own C
 façade (open / list / extract / create) that Swift calls.
 
-Licence: GNU LGPL 2.1 (`7zip/DOC/License.txt`); the AES code is BSD. The
-whole application is Apache-2.0 open source, so static linking satisfies
-LGPL §6. See `THIRD-PARTY.md` at the repository root.
+Licence: GNU LGPL 2.1 or later (`7zip/DOC/License.txt` is 7-Zip's per-file
+summary, `7zip/DOC/copying.txt` the full LGPL text — both ship in the app);
+many of the C files (LZMA SDK, AES, SHA-256, …) are public domain as stated
+in their headers. No BSD-licensed or unRAR-restricted 7-Zip files are
+vendored, headers included. The whole application is Apache-2.0 open source,
+so static linking satisfies LGPL §6. See `THIRD-PARTY.md` at the repository
+root.
 
 ## Updating
 
 Download `7z<ver>-src.tar.xz`, then copy the same file set (the list lives in
-`spec/build.md`, "CSevenZip") over `7zip/`. The set mirrors
+`spec/build.md`, "CSevenZip") over `7zip/`, including `DOC/License.txt` and
+`DOC/copying.txt`. Do not copy stray headers from other handlers — in
+particular nothing named `Rar*` (unRAR licence restriction). The set mirrors
 `CPP/7zip/Bundles/Format7z/makefile` plus the POSIX bits from
 `Bundles/Alone2/makefile.gcc` (MyWindows.cpp, Threads.c, …) and
 `Archive/Common/MultiStream.*` / `Common/MultiOutStream.*` for split volumes.

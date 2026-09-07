@@ -14,8 +14,8 @@ PlantUML 的 GitHub release 里默认资产 `plantuml.jar` / `plantuml-gplv2-<ve
 授权（其余还有 LGPL / EPL / BSD 等多个 edition）。Double Finder 是 Apache-2.0 开源项目，随附
 分发 GPL 组件会引入不必要的授权兼容性问题；官方专门提供了 **`plantuml-mit-<ver>.jar`**
 （与其它 edition 功能等价，只是依赖组合限定为 MIT 兼容的库），随附这个不给整体授权添麻烦，
-与 THIRD-PARTY.md 的其它条目（libarchive BSD-2-Clause、7-Zip LGPL 但作为独立子进程调用）
-口径一致。
+与 THIRD-PARTY.md 的其它条目口径一致。注意 MIT 版 jar 内仍含 Smetana（Graphviz 布局引擎的
+Java 移植，EPL-1.0）等组件——作为独立子进程调用不影响本应用授权，但 THIRD-PARTY.md 里要如实写明。
 
 ## 需要系统 Java
 

@@ -4,6 +4,18 @@ import AppKit
 enum HelpContent {
     static let projectURL = URL(string: "https://github.com/qianwch/double-finder")!
     static let issuesURL = URL(string: "https://github.com/qianwch/double-finder/issues")!
+    /// THIRD-PARTY.md on GitHub — fallback for the bare dev binary, whose
+    /// resource folder has no copy of the licence files.
+    static let thirdPartyURL = URL(string: "https://github.com/qianwch/double-finder/blob/main/THIRD-PARTY.md")!
+
+    /// The THIRD-PARTY.md that package_app.sh drops into Contents/Resources next
+    /// to LICENSE.txt, NOTICE.txt and every third-party licence text; nil when
+    /// running the bare executable out of .build.
+    static var bundledThirdPartyFile: URL? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("THIRD-PARTY.md"),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
 
     /// App version string from Info.plist (embedded in the Mach-O), default "1.0".
     static var appVersion: String {

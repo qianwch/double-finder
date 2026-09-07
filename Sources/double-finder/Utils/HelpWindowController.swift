@@ -240,7 +240,25 @@ final class HelpWindowController: NSWindowController, NSTableViewDataSource, NST
                                             url: HelpContent.projectURL))
         stack.addArrangedSubview(linkButton(title: tr("Report an Issue"),
                                             url: HelpContent.issuesURL))
+        // LGPL §6 "prominent notice": the packaged app carries THIRD-PARTY.md
+        // and every third-party licence text in Contents/Resources — reveal
+        // that folder so all of them are visible at once. The bare dev binary
+        // has no such folder, so it opens THIRD-PARTY.md on GitHub instead.
+        let thirdParty = NSButton(title: tr("Third-Party Licenses"), target: self,
+                                  action: #selector(openThirdPartyLicenses(_:)))
+        thirdParty.bezelStyle = .inline
+        thirdParty.isBordered = false
+        thirdParty.contentTintColor = .linkColor
+        stack.addArrangedSubview(thirdParty)
         return stack
+    }
+
+    @objc private func openThirdPartyLicenses(_ sender: NSButton) {
+        if let file = HelpContent.bundledThirdPartyFile {
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        } else {
+            NSWorkspace.shared.open(HelpContent.thirdPartyURL)
+        }
     }
 
     private func linkButton(title: String, url: URL) -> NSButton {

@@ -33,5 +33,7 @@
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Weichun Qian and Double Finder contributors. Licensed under the Apache License 2.0.</string>
 </dict>
 </plist>
