@@ -3401,20 +3401,35 @@ extension MainViewController {
             .map { $0.name }
     }
 
-    /// Opens the configured terminal app at the active panel's folder.
+    /// Opens the configured terminal app at the folder the cursor points at:
+    /// a folder under the cursor is entered, a file opens its parent folder.
+    /// This matters in tree view, where the cursor row can sit several levels
+    /// below the panel's own folder; with no usable cursor item (empty list,
+    /// "..") it falls back to the panel's folder.
     @objc func actionOpenTerminal() {
         let panel = appState.activePanelState
         // Local folders only: S3/Android/SFTP paths and in-archive paths don't
         // exist on disk, so `open` would fail with no visible reaction.
-        guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
-            NSSound.beep(); return
-        }
-        let path = panel.currentPath
+        guard !panel.isRemote else { NSSound.beep(); return }
+        let path = Self.terminalFolder(for: activePanelVC.currentItem, in: panel.currentPath)
+        guard PanelState.archiveRoot(in: path) == nil else { NSSound.beep(); return }
         Self.openTerminal(AppSettings.terminalApp, at: path) { ok in
             // `open -a` exits non-zero when the configured app was removed or
             // renamed — fall back to Terminal rather than failing silently.
             if !ok { Self.openTerminal("Terminal", at: path, completion: nil) }
         }
+    }
+
+    /// Folder a terminal should start in for `item` (nil / ".." → `fallback`).
+    /// Symlinks are followed so an alias to a folder is entered like a folder.
+    static func terminalFolder(for item: FileItem?, in fallback: String) -> String {
+        guard let item, item.name != ".." else { return fallback }
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
+            return item.path
+        }
+        if item.isDirectory { return item.path }
+        return (item.path as NSString).deletingLastPathComponent
     }
 
     nonisolated private static func openTerminal(_ app: String, at path: String,
