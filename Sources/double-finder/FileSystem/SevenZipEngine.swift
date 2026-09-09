@@ -81,6 +81,34 @@ enum SevenZipEngine {
         try check(status, archivePath: archivePath, message: message)
     }
 
+    /// Extracts several file entries in one pass, each landing at
+    /// `destDir/<entry path>` (tree preserved) — the 7-Zip-engine twin of
+    /// `LibArchive.extractEntries`, used when the archive is an encrypted 7z that
+    /// libarchive can't decrypt. Unknown names are ignored.
+    static func extractEntries(archivePath: String, entries wanted: Set<String>, to destDir: String,
+                               password: String?, isCancelled: (() -> Bool)? = nil) throws {
+        guard !wanted.isEmpty else { return }
+        let handle = try open(archivePath: archivePath, password: password)
+        defer { sz_close(handle) }
+        var picked: [UInt32] = []
+        for i in 0..<sz_item_count(handle) {
+            var info = sz_item_info()
+            guard sz_item(handle, i, &info) == SZR_OK, let cPath = info.path else { continue }
+            if wanted.contains(String(cString: cPath)) { picked.append(i) }
+        }
+        guard !picked.isEmpty else { return }
+        let box = CallbackBox(progress: nil, isCancelled: isCancelled)
+        var message: UnsafeMutablePointer<CChar>? = nil
+        let status = withExtendedLifetime(box) { () -> sz_status in
+            let ctx = Unmanaged.passUnretained(box).toOpaque()
+            return picked.withUnsafeBufferPointer { buf in
+                sz_extract(handle, buf.baseAddress, UInt32(buf.count), destDir, "",
+                           CallbackBox.progressThunk, CallbackBox.cancelThunk, ctx, &message)
+            }
+        }
+        try check(status, archivePath: archivePath, message: message)
+    }
+
     // MARK: - Writing
 
     /// Creates a 7z archive from `sources` (each stored under its `entryName`;

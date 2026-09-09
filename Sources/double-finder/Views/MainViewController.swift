@@ -822,7 +822,12 @@ class MainViewController: NSViewController {
         let insideArchive = panel.remoteArchive != nil
             || PanelState.archiveRoot(in: panel.currentPath) != nil
         // A real on-disk path only exists when not remote and not inside an archive.
-        let trulyLocal = panel.sftp == nil && panel.s3 == nil && panel.android == nil && !insideArchive
+        // A local search listing can still hold entries found *inside* archives
+        // ("Search archives"): those rows are virtual even though the panel is local.
+        let archiveEntryRow = !insideArchive && panel.searchResultsIncludeArchiveEntries
+            && PanelState.isInsideArchive(item.path)
+        let trulyLocal = panel.sftp == nil && panel.s3 == nil && panel.android == nil
+            && !insideArchive && !archiveEntryRow
         if item.name == ".." {
             panel.goUp()
         } else if trulyLocal && item.isDirectory && Self.isLaunchablePackage(item.path) {
@@ -848,7 +853,7 @@ class MainViewController: NSViewController {
             panel.navigate(to: item.path)
         } else if trulyLocal {
             NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
-        } else if insideArchive {
+        } else if insideArchive || archiveEntryRow {
             // A plain file inside an archive has only a virtual path — extract it to a
             // temp copy first (via the panel's ZipFS / RemoteArchiveFS), then open it.
             openExtractedThenOpen(item, in: panelVC)
@@ -939,8 +944,13 @@ class MainViewController: NSViewController {
         let local = isLocalPanel(panel)
         let fs = panel.fs
         let viewerEntries: [ViewerEntry] = entries.map { item in
-            ViewerEntry(title: item.name, resolve: {
-                if local { return URL(fileURLWithPath: item.path) }
+            // A local search listing may hold entries found inside archives:
+            // those have no file on disk and must be extracted like any other
+            // archive entry (`fs` is then the per-path SearchResultsFS).
+            let virtual = !local || (panel.searchResultsIncludeArchiveEntries
+                                     && PanelState.isInsideArchive(item.path))
+            return ViewerEntry(title: item.name, resolve: {
+                if !virtual { return URL(fileURLWithPath: item.path) }
                 return await self.materializeOne(item, using: fs, useCache: true)
             })
         }
@@ -991,7 +1001,10 @@ class MainViewController: NSViewController {
             ? MaterializedCache.slug(path: item.path, size: item.size, modified: item.modified)
             : Self.tempSlug(for: item.path)
         let dir = (root as NSString).appendingPathComponent(slug)
-        let dest = (dir as NSString).appendingPathComponent(item.name)
+        // The leaf of the *path*, not `item.name`: a search-result / branch-view
+        // row is named by its relative path ("pack.zip/docs/guide.txt"), while
+        // the download / extract lands under the bare file name.
+        let dest = (dir as NSString).appendingPathComponent((item.path as NSString).lastPathComponent)
         if useCache, MaterializedCache.isFresh(localPath: dest, expectedSize: item.size) {
             return URL(fileURLWithPath: dest)
         }
@@ -1015,12 +1028,16 @@ class MainViewController: NSViewController {
         let items = activePanelVC.selectedOrCurrent.filter { !$0.isDirectory && $0.name != ".." }
         guard let item = items.first else { return }
         let panel = activePanelVC.panelState
-        if isLocalPanel(panel) {
+        let archiveEntryRow = panel.searchResultsIncludeArchiveEntries
+            && PanelState.isInsideArchive(item.path)
+        if isLocalPanel(panel) && !archiveEntryRow {
             openInEditor(URL(fileURLWithPath: item.path))
             return
         }
-        // Remote / inside-archive: download/extract a temp copy, then open it.
-        let fs = panel.fs
+        // Remote / inside-archive: download/extract a temp copy, then open it. An
+        // archive entry listed by a local search gets that archive's ZipFS, so
+        // the write-back path recognises it just as it does inside the archive.
+        let fs = archiveEntryRow ? PanelState.fileSystem(for: item.path) : panel.fs
         let s3 = panel.s3
         let sftpConn = panel.sftp
         let android = panel.android
@@ -1337,7 +1354,10 @@ class MainViewController: NSViewController {
         }
         if let conn = src.sftp { return SFTPTransferProvider(connection: conn, direction: .download) }
         if let conn = dst.sftp { return SFTPTransferProvider(connection: conn, direction: .upload) }
+        // Inside an archive, or a search listing holding archive entries: copy by
+        // extracting through the source FS (which routes per path in the latter).
         let archive = PanelState.archiveRoot(in: src.currentPath) != nil
+            || src.searchResultsIncludeArchiveEntries
         return LocalCopyProvider(srcFS: src.fs, archiveRoot: archive)
     }
 
@@ -1418,6 +1438,12 @@ class MainViewController: NSViewController {
                         moveDeletingWith: del)
             return
         } else {
+            // Entries found inside archives by a local search can't be removed
+            // from their archive — same refusal as F6 inside an archive.
+            if src.searchResultsIncludeArchiveEntries,
+               activePanelVC.selectedOrCurrent.contains(where: { PanelState.isInsideArchive($0.path) }) {
+                NSSound.beep(); return
+            }
             provider = LocalMoveProvider()
         }
         runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst, provider: provider)
@@ -1465,8 +1491,11 @@ class MainViewController: NSViewController {
         guard !items.isEmpty, let window = view.window else { return }
         let panel = activePanelVC.panelState
 
-        // Archive contents can't be modified in place.
-        if PanelState.archiveRoot(in: panel.currentPath) != nil {
+        // Archive contents can't be modified in place (nor can entries a local
+        // search listed from inside archives).
+        if PanelState.archiveRoot(in: panel.currentPath) != nil
+            || (panel.searchResultsIncludeArchiveEntries
+                && items.contains(where: { PanelState.isInsideArchive($0.path) })) {
             let a = NSAlert()
             a.messageText = tr("Can’t delete inside an archive")
             a.informativeText = tr("Extract the files first, then delete them.")
@@ -1594,9 +1623,9 @@ class MainViewController: NSViewController {
         }
     }
 
-    /// ⌘⇧F — searches the active panel's backend: the local tree, or the SFTP /
-    /// S3 connection it is browsing. Archives and Android phones have no search
-    /// backend, so the sheet isn't offered there.
+    /// ⌘⇧F — searches the active panel's backend: the local tree, the SFTP / S3 /
+    /// MTP connection it is browsing, or the archive it is inside. Only the S3
+    /// account root (no bucket yet) has nothing to search.
     func actionFindFiles() {
         guard let window = view.window else { return }
         let panel = appState.activePanelState
@@ -1614,35 +1643,42 @@ class MainViewController: NSViewController {
             self?.goToFile(path)
             self?.activeFindSheet = nil
         }
-        sheet.onFeed = { [weak self] paths, remoteMeta in
+        sheet.onFeed = { [weak self] paths, meta in
             guard let self = self else { return }
-            if let remoteMeta = remoteMeta {
-                // Remote results carry their own size/mtime — the panel can't
-                // stat a remote path, so it must be handed the metadata.
-                panel.feedRemoteSearchResults(paths.map { remoteMeta[$0] ?? SearchHit(path: $0) },
+            if endpoint.hitsAreVirtual {
+                // Remote / in-archive results carry their own size/mtime — the
+                // panel can't stat those paths, so it must be handed the metadata.
+                panel.feedRemoteSearchResults(paths.map { meta[$0] ?? SearchHit(path: $0) },
                                               base: startDir)
             } else {
-                panel.feedSearchResults(paths, base: startDir)
+                // A local listing may still hold entries found inside archives
+                // ("Search archives"); their metadata rides along the same way.
+                let archiveMeta = meta.filter { FileSearch.isArchiveHit($0.key) }
+                panel.feedSearchResults(paths, base: startDir, archiveMeta: archiveMeta)
             }
             self.activeFindSheet = nil
         }
         sheet.onEdit = { [weak self] url in self?.openInEditor(url) }
-        sheet.onViewRemote = { [weak self] hits in self?.viewRemoteSearchHits(hits, using: panel) }
+        sheet.onViewVirtual = { [weak self] hits in self?.viewVirtualSearchHits(hits, using: panel) }
         sheet.beginSheet(on: window)
     }
 
-    /// F3 / Space on a remote search result: reuse the panel's own filesystem to
-    /// download each hit on demand (cached by identity+size+mtime) and show it in
-    /// the internal viewer, exactly as F3 does inside a remote panel.
-    private func viewRemoteSearchHits(_ hits: [SearchHit], using panel: PanelState) {
+    /// F3 / Space on a search result that has no file on disk (remote, or inside
+    /// an archive): download / extract each hit on demand (cached by
+    /// identity+size+mtime) and show it in the internal viewer, exactly as F3
+    /// does inside a remote or archive panel. Hits inside an archive found by a
+    /// *local* search get that archive's ZipFS rather than the panel's LocalFS.
+    private func viewVirtualSearchHits(_ hits: [SearchHit], using panel: PanelState) {
         guard !hits.isEmpty else { return }
-        let fs = panel.fs
+        let panelFS = panel.fs
+        let local = isLocalPanel(panel)
         let entries = hits.map { hit -> ViewerEntry in
             let name = (hit.path as NSString).lastPathComponent
             let item = FileItem(id: UUID(), name: name, path: hit.path, isDirectory: false,
                                 isArchive: FileItem.isArchiveFileName(name), size: hit.size,
                                 modified: hit.modified, isHidden: false, isSymlink: false,
                                 permissions: "")
+            let fs = local ? PanelState.fileSystem(for: hit.path) : panelFS
             return ViewerEntry(title: name, resolve: {
                 await self.materializeOne(item, using: fs, useCache: true)
             })

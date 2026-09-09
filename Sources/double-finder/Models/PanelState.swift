@@ -114,7 +114,7 @@ class PanelState: ObservableObject {
         // Every exit from a search listing clears `searchResults`; hanging the
         // remote metadata off that assignment means none of those call sites can
         // forget to clear it too.
-        didSet { if searchResults == nil { searchRemoteMeta = nil } }
+        didSet { if searchResults == nil { searchRemoteMeta = nil; searchArchiveMeta = nil } }
     }
     private(set) var searchBase = ""
 
@@ -125,10 +125,20 @@ class PanelState: ObservableObject {
     /// silently drop the whole result set).
     private(set) var searchRemoteMeta: [String: SearchHit]?
 
+    /// Size + mtime for local results that live *inside archives* ("Search
+    /// archives"): those paths are virtual, so `searchResultItems` can't stat
+    /// them and builds their rows from this map instead. nil when the listing is
+    /// plain on-disk files.
+    private(set) var searchArchiveMeta: [String: SearchHit]?
+
+    /// True while the listing holds at least one entry found inside an archive.
+    var searchResultsIncludeArchiveEntries: Bool { searchArchiveMeta?.isEmpty == false }
+
     /// Feeds a set of result paths into this panel as a virtual listing the user
     /// can act on (copy/move/delete/Quick Look). Leaving (goUp / navigate) exits.
-    func feedSearchResults(_ paths: [String], base: String) {
-        feed(paths: paths, base: base, remoteMeta: nil)
+    /// `archiveMeta` carries the metadata of any hit found inside an archive.
+    func feedSearchResults(_ paths: [String], base: String, archiveMeta: [String: SearchHit]? = nil) {
+        feed(paths: paths, base: base, remoteMeta: nil, archiveMeta: archiveMeta)
     }
 
     /// Remote (SFTP / S3) variant: the hits carry their own size + mtime.
@@ -142,9 +152,11 @@ class PanelState: ObservableObject {
     /// One load, not two: the metadata must be in place *before* loadDirectory
     /// runs, or the first (metadata-less) pass would stat remote paths locally,
     /// find nothing, and briefly show an empty panel.
-    private func feed(paths: [String], base: String, remoteMeta: [String: SearchHit]?) {
+    private func feed(paths: [String], base: String, remoteMeta: [String: SearchHit]?,
+                      archiveMeta: [String: SearchHit]? = nil) {
         searchResults = paths
         searchRemoteMeta = remoteMeta
+        searchArchiveMeta = (archiveMeta?.isEmpty == false) ? archiveMeta : nil
         searchBase = base
         branchView = false
         currentPath = base
@@ -159,7 +171,8 @@ class PanelState: ObservableObject {
     /// With `remoteMeta` the paths live on a remote backend: no stat, no symlink
     /// resolution — size/date come from the map the searcher built.
     nonisolated static func searchResultItems(paths: [String], base: String, showHidden: Bool,
-                                              remoteMeta: [String: SearchHit]? = nil) -> [FileItem] {
+                                              remoteMeta: [String: SearchHit]? = nil,
+                                              archiveMeta: [String: SearchHit]? = nil) -> [FileItem] {
         if let remoteMeta = remoteMeta {
             return remoteSearchResultItems(paths: paths, base: base, meta: remoteMeta)
         }
@@ -170,7 +183,22 @@ class PanelState: ObservableObject {
         let fm = FileManager.default
         return paths.compactMap { full -> FileItem? in
             var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: full, isDirectory: &isDir) else { return nil }
+            guard fm.fileExists(atPath: full, isDirectory: &isDir) else {
+                // Not on disk: an entry inside an archive ("Search archives") is
+                // still listed, with the size/date the archive listing supplied.
+                guard let hit = archiveMeta?[full] else { return nil }
+                let leaf = (full as NSString).lastPathComponent
+                // Same symlink normalisation as the on-disk branch, applied to the
+                // part that exists (the archive file); the entry path is appended
+                // back verbatim — resolving a non-existent tail is a no-op.
+                guard isInsideArchive(full), let root = archiveRoot(in: full) else { return nil }
+                let rfull = (root as NSString).resolvingSymlinksInPath + full.dropFirst(root.count)
+                let rel = rfull.hasPrefix(prefix) ? String(rfull.dropFirst(prefix.count)) : leaf
+                return FileItem(
+                    id: UUID(), name: rel, path: full, isDirectory: false,
+                    isArchive: false, size: hit.size, modified: hit.modified,
+                    isHidden: false, isSymlink: false, permissions: "")
+            }
             let attrs = try? fm.attributesOfItem(atPath: full)
             let leaf = (full as NSString).lastPathComponent
             let rfull = (full as NSString).resolvingSymlinksInPath
@@ -234,6 +262,11 @@ class PanelState: ObservableObject {
         if let device = android { return AndroidFS(device: device, currentPath: currentPath) }
         if let conn = sftp { return SFTPFS(connection: conn) }
         if let conn = s3 { return S3FS(client: s3Client(conn), currentPath: currentPath) }
+        // A local search listing can mix on-disk files with entries found inside
+        // archives ("Search archives"): route each call by the path it names.
+        if searchResults != nil, searchArchiveMeta != nil {
+            return SearchResultsFS(currentPath: currentPath)
+        }
         return Self.fileSystem(for: currentPath)
     }
 
@@ -251,11 +284,10 @@ class PanelState: ObservableObject {
     }
 
     /// The Find Files backend for this panel: the connected remote when there is
-    /// one, the local tree otherwise. nil where there is nothing to search —
-    /// inside an archive (local or remote), or at the S3 account root (no bucket
-    /// yet, so no prefix to list).
+    /// one, the archive the panel is inside, the local tree otherwise. nil only at
+    /// the S3 account root (no bucket yet, so no prefix to list).
     var searchEndpoint: SearchEndpoint? {
-        if remoteArchive != nil { return nil }
+        if let ra = remoteArchive { return .remoteArchive(ra, base: currentPath) }
         if let device = android {
             // The device root lists storages rather than files; walking from
             // there is fine (it recurses into each storage).
@@ -268,7 +300,9 @@ class PanelState: ObservableObject {
             let prefix = (key.isEmpty || key.hasSuffix("/")) ? key : key + "/"
             return .s3(s3Client(conn), bucket: bucket, prefix: prefix, base: currentPath)
         }
-        if Self.archiveRoot(in: currentPath) != nil { return nil }
+        if let root = Self.archiveRoot(in: currentPath) {
+            return .archive(archivePath: root, password: ArchivePasswords.get(root), base: currentPath)
+        }
         return .local(base: currentPath)
     }
 
@@ -470,16 +504,25 @@ class PanelState: ObservableObject {
     /// surfacing — currently a missing archive tool (e.g. 7z not installed).
     var onError: ((Error) -> Void)?
 
-    static func fileSystem(for path: String) -> VirtualFS {
+    nonisolated static func fileSystem(for path: String) -> VirtualFS {
         if let archiveRoot = archiveRoot(in: path) {
             return ZipFS(archivePath: archiveRoot, password: ArchivePasswords.get(archiveRoot))
         }
         return LocalFS()
     }
 
+    /// True only for a path strictly *inside* an archive ("/a/foo.zip/x.txt"),
+    /// never for the archive file itself ("/a/foo.zip", for which `archiveRoot`
+    /// also answers) — the distinction a mixed search listing needs, where the
+    /// archive is a plain local file and its entries are virtual.
+    nonisolated static func isInsideArchive(_ path: String) -> Bool {
+        guard let root = archiveRoot(in: path) else { return false }
+        return root != path
+    }
+
     /// If `path` lies inside an archive file, returns the archive's real path on
     /// disk (e.g. "/a/b/foo.zip" for "/a/b/foo.zip/sub/file"). Otherwise nil.
-    static func archiveRoot(in path: String) -> String? {
+    nonisolated static func archiveRoot(in path: String) -> String? {
         var current = ""
         for comp in path.components(separatedBy: "/") where !comp.isEmpty {
             current += "/" + comp
@@ -552,6 +595,7 @@ class PanelState: ObservableObject {
         let searchPaths = searchResults
         let searchBaseDir = searchBase
         let searchMeta = searchRemoteMeta
+        let searchArchiveMetaSnapshot = searchArchiveMeta
         let showHiddenSnapshot = showHidden
         Task {
             do {
@@ -561,7 +605,8 @@ class PanelState: ObservableObject {
                     // (up to 5000 files) or the panel freezes while it lists results.
                     loaded = await Task.detached(priority: .userInitiated) {
                         Self.searchResultItems(paths: sp, base: searchBaseDir,
-                                               showHidden: showHiddenSnapshot, remoteMeta: searchMeta)
+                                               showHidden: showHiddenSnapshot, remoteMeta: searchMeta,
+                                               archiveMeta: searchArchiveMetaSnapshot)
                     }.value
                 } else if branch {
                     // Branch view recursively enumerates the whole tree (up to 20k

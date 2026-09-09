@@ -2,28 +2,35 @@ import AppKit
 
 /// Total Commander-style "Find Files": search by name (wildcard/regex) and
 /// optionally by file content, recursively, with a results list you can jump to.
-/// Runs against the active panel's backend — local, SFTP or S3 — and can be
-/// stopped mid-scan (the Search button becomes Stop).
+/// Runs against the active panel's backend — local, SFTP, S3, MTP, or the
+/// archive the panel is inside — and can be stopped mid-scan (the Search button
+/// becomes Stop). A local search can also look inside the archives it passes
+/// (TC "Search archives"), which yields virtual hit paths next to real ones.
 final class FindFilesSheet: NSWindowController {
     private let endpoint: SearchEndpoint
     private let startDir: String
+    /// Hits live on another machine: no local URL for the editor, no Spotlight.
     private let isRemote: Bool
+    /// Every hit is a virtual path (remote, or the panel is inside an archive).
+    private let allVirtual: Bool
     var onGoTo: ((String) -> Void)?
-    /// Called with all current results to display them in the active panel.
-    /// `remoteMeta` is non-nil for SFTP/S3 results (size + mtime the panel can't
-    /// stat for itself).
-    var onFeed: (([String], [String: SearchHit]?) -> Void)?
+    /// Called with all current results to display them in the active panel,
+    /// plus the size + mtime of every hit (the panel can't stat remote or
+    /// in-archive paths for itself).
+    var onFeed: (([String], [String: SearchHit]) -> Void)?
     /// F4 on a result: open it in the configured editor (wired to
     /// MainViewController.openInEditor, same app the panels' F4 uses).
     var onEdit: ((URL) -> Void)?
-    /// F3 / Space on a remote result: hand the hits to MainViewController, which
-    /// downloads them on demand and opens the internal viewer.
-    var onViewRemote: (([SearchHit]) -> Void)?
+    /// F3 / Space on a result with no file on disk (remote, or inside an
+    /// archive): hand the hits to MainViewController, which downloads / extracts
+    /// them on demand and opens the internal viewer.
+    var onViewVirtual: (([SearchHit]) -> Void)?
 
     private let nameField = NSTextField()
     private let contentField = NSTextField()
     private let subfoldersCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let regexCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let archivesCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let spotlightCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let dupCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let dupNameCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
@@ -34,8 +41,9 @@ final class FindFilesSheet: NSWindowController {
     private let searchBtn = NSButton(title: "", target: nil, action: nil)
     /// Display rows: full paths, plus "" separators between duplicate groups.
     private var results: [String] = []
-    /// Non-nil while the results came off a remote backend.
-    private var remoteMeta: [String: SearchHit]?
+    /// Size + mtime per hit path (empty for Spotlight / duplicate runs, which
+    /// only ever list files on disk).
+    private var hitMeta: [String: SearchHit] = [:]
     private var searchTask: Task<Void, Never>?
     /// Bumped per search so a superseded run's late progress is ignored.
     private var generation = 0
@@ -51,6 +59,7 @@ final class FindFilesSheet: NSWindowController {
         self.endpoint = endpoint
         self.startDir = endpoint.base
         self.isRemote = endpoint.isRemote
+        self.allVirtual = endpoint.hitsAreVirtual
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 510),
                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "\(tr("Find Files")) — \(endpoint.displayBase)"
@@ -69,7 +78,10 @@ final class FindFilesSheet: NSWindowController {
         let contentLbl = label(tr("Containing text:"))
         subfoldersCheck.title = tr("Search subfolders")
         regexCheck.title = tr("Regex name")
+        archivesCheck.title = tr("Search archives")
+        archivesCheck.toolTip = tr("Also look inside the zip / 7z / tar / rar archives found along the way")
         spotlightCheck.title = tr("Use Spotlight index (fast; also searches inside PDF / Office files)")
+        spotlightCheck.target = self; spotlightCheck.action = #selector(dupToggled)
         dupCheck.title = tr("Find duplicates:")
         dupNameCheck.title = tr("Same name")
         dupSizeCheck.title = tr("Same size")
@@ -82,10 +94,12 @@ final class FindFilesSheet: NSWindowController {
         subfoldersCheck.state = .on
         statusLabel.font = .systemFont(ofSize: 10); statusLabel.textColor = .secondaryLabelColor
         // Spotlight and the duplicate scan are both local-index / local-hash
-        // machinery with no remote equivalent — disable rather than mislead.
-        if isRemote {
-            let note = tr("Not available on a remote connection")
-            [spotlightCheck, dupCheck, dupNameCheck, dupSizeCheck, dupContentCheck].forEach {
+        // machinery with no remote or in-archive equivalent — disable rather
+        // than mislead. "Search archives" only makes sense on a local walk.
+        if allVirtual {
+            let note = isRemote ? tr("Not available on a remote connection")
+                                : tr("Not available inside an archive")
+            [spotlightCheck, dupCheck, dupNameCheck, dupSizeCheck, dupContentCheck, archivesCheck].forEach {
                 $0.state = .off; $0.isEnabled = false; $0.toolTip = note
             }
         }
@@ -116,7 +130,7 @@ final class FindFilesSheet: NSWindowController {
         closeBtn.bezelStyle = .rounded
 
         let views: [NSView] = [nameLbl, nameField, contentLbl, contentField, subfoldersCheck,
-                               regexCheck, spotlightCheck, dupCheck, dupNameCheck, dupSizeCheck,
+                               regexCheck, archivesCheck, spotlightCheck, dupCheck, dupNameCheck, dupSizeCheck,
                                dupContentCheck, scroll, statusLabel, searchBtn, feedBtn, goBtn, closeBtn]
         views.forEach { $0.translatesAutoresizingMaskIntoConstraints = false; content.addSubview($0) }
 
@@ -137,6 +151,8 @@ final class FindFilesSheet: NSWindowController {
             subfoldersCheck.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 120),
             regexCheck.centerYAnchor.constraint(equalTo: subfoldersCheck.centerYAnchor),
             regexCheck.leadingAnchor.constraint(equalTo: subfoldersCheck.trailingAnchor, constant: 20),
+            archivesCheck.centerYAnchor.constraint(equalTo: subfoldersCheck.centerYAnchor),
+            archivesCheck.leadingAnchor.constraint(equalTo: regexCheck.trailingAnchor, constant: 20),
 
             spotlightCheck.topAnchor.constraint(equalTo: subfoldersCheck.bottomAnchor, constant: 8),
             spotlightCheck.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 120),
@@ -174,10 +190,18 @@ final class FindFilesSheet: NSWindowController {
     @objc private func dupToggled() { updateDupAvailability() }
 
     private func updateDupAvailability() {
-        guard !isRemote else { return }   // everything stays as disabled as setupUI left it
+        guard !allVirtual else { return }   // everything stays as disabled as setupUI left it
         let dup = dupCheck.state == .on
         [dupNameCheck, dupSizeCheck, dupContentCheck].forEach { $0.isEnabled = dup }
         [contentField, regexCheck, spotlightCheck].forEach { $0.isEnabled = !dup }
+        // Spotlight and the duplicate scan never look inside archives.
+        archivesCheck.isEnabled = !dup && spotlightCheck.state != .on && endpoint.canSearchArchives
+    }
+
+    /// True when the row's path has no file on disk behind it — every hit of a
+    /// remote / in-archive search, or an archive entry found by a local one.
+    private func isVirtual(_ path: String) -> Bool {
+        allVirtual || (archivesCheck.state == .on && FileSearch.isArchiveHit(path))
     }
 
     // MARK: - Running a search
@@ -191,6 +215,7 @@ final class FindFilesSheet: NSWindowController {
         let sub = subfoldersCheck.state == .on
         let regex = regexCheck.state == .on
         let spotlight = spotlightCheck.state == .on
+        let archives = archivesCheck.isEnabled && archivesCheck.state == .on
         let start = startDir
 
         if dupCheck.state == .on {
@@ -214,7 +239,7 @@ final class FindFilesSheet: NSWindowController {
                         rows += group.map(\.path)
                     }
                     self.results = rows
-                    self.remoteMeta = nil
+                    self.hitMeta = [:]
                     self.table.reloadData()
                     let count = groups.reduce(0) { $0 + $1.count }
                     self.statusLabel.stringValue = stopped
@@ -236,7 +261,7 @@ final class FindFilesSheet: NSWindowController {
                 await MainActor.run { [weak self] in
                     guard let self, gen == self.generation else { return }
                     self.results = found
-                    self.remoteMeta = nil
+                    self.hitMeta = [:]
                     self.table.reloadData()
                     self.statusLabel.stringValue = stopped
                         ? tr("Stopped — %d matches", found.count)
@@ -252,9 +277,8 @@ final class FindFilesSheet: NSWindowController {
         // the main actor. Cancelling this task really stops the work — the walk
         // polls `Task.isCancelled`, the ssh process is killed, S3 requests abort.
         let query = FileSearchQuery(namePattern: name, content: text,
-                                    subfolders: sub, regexName: regex)
+                                    subfolders: sub, regexName: regex, searchArchives: archives)
         let endpoint = self.endpoint
-        let remote = isRemote
         beginRun()
         let gen = generation
         searchTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -262,7 +286,7 @@ final class FindFilesSheet: NSWindowController {
             do {
                 let hits = try await FileSearch.run(endpoint: endpoint, query: query) { hits, scanned in
                     Task { @MainActor [weak self] in
-                        self?.applyProgress(hits, scanned: scanned, generation: gen, remote: remote)
+                        self?.applyProgress(hits, scanned: scanned, generation: gen)
                     }
                 }
                 outcome = .done(hits)
@@ -272,7 +296,7 @@ final class FindFilesSheet: NSWindowController {
                 outcome = .failed(error)
             }
             await MainActor.run { [weak self] in
-                self?.finish(outcome, generation: gen, remote: remote)
+                self?.finish(outcome, generation: gen)
             }
         }
     }
@@ -287,7 +311,7 @@ final class FindFilesSheet: NSWindowController {
     private func beginRun() {
         generation &+= 1
         results = []
-        remoteMeta = nil
+        hitMeta = [:]
         table.reloadData()
         statusLabel.stringValue = tr("Searching…")
         searchBtn.title = tr("Stop")
@@ -300,18 +324,18 @@ final class FindFilesSheet: NSWindowController {
 
     /// Live update while a scan is running: remote scans can take a while, so the
     /// hits and the examined-file count land as they come instead of at the end.
-    private func applyProgress(_ hits: [SearchHit], scanned: Int, generation gen: Int, remote: Bool) {
+    private func applyProgress(_ hits: [SearchHit], scanned: Int, generation gen: Int) {
         guard gen == generation, isRunning else { return }
-        show(hits, remote: remote)
+        show(hits)
         statusLabel.stringValue = tr("Searching… %1$d scanned, %2$d found", scanned, hits.count)
     }
 
-    private func finish(_ outcome: Outcome, generation gen: Int, remote: Bool) {
+    private func finish(_ outcome: Outcome, generation gen: Int) {
         guard gen == generation else { return }
         endRun()
         switch outcome {
         case .done(let hits):
-            show(hits, remote: remote)
+            show(hits)
             statusLabel.stringValue = Self.matchCountText(hits.count)
         case .stopped:
             statusLabel.stringValue = tr("Stopped — %d matches", results.filter { !$0.isEmpty }.count)
@@ -320,11 +344,9 @@ final class FindFilesSheet: NSWindowController {
         }
     }
 
-    private func show(_ hits: [SearchHit], remote: Bool) {
+    private func show(_ hits: [SearchHit]) {
         results = hits.map(\.path)
-        remoteMeta = remote
-            ? Dictionary(hits.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
-            : nil
+        hitMeta = Dictionary(hits.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         table.reloadData()
     }
 
@@ -433,26 +455,29 @@ final class FindFilesSheet: NSWindowController {
     }
 
     /// Double-click: open the file with its default app (don't leave the search).
-    /// A remote hit has no local URL to open, so it jumps to the file instead.
+    /// A remote / in-archive hit has no local URL to open, so it jumps to the
+    /// file instead (into the archive, for an entry found inside one).
     @objc private func openSelected() {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard row >= 0, row < results.count, !results[row].isEmpty else { return }
-        if isRemote { goToSelected(); return }
+        if isVirtual(results[row]) { goToSelected(); return }
         NSWorkspace.shared.open(URL(fileURLWithPath: results[row]))
     }
 
     private var selectedHits: [SearchHit] {
         table.selectedRowIndexes
             .filter { $0 < results.count && !results[$0].isEmpty }
-            .map { remoteMeta?[results[$0]] ?? SearchHit(path: results[$0]) }
+            .map { hitMeta[results[$0]] ?? SearchHit(path: results[$0]) }
     }
 
     /// Space / F3: preview the selected result(s) in the internal viewer (Esc
-    /// closes it). Remote hits are downloaded on demand by MainViewController.
+    /// closes it). Hits with no file on disk (remote, inside an archive) are
+    /// downloaded / extracted on demand by MainViewController; a mixed
+    /// selection goes that way as a whole so the viewer gets one entry list.
     private func quickLookSelected() {
         let hits = selectedHits
         guard !hits.isEmpty else { return }
-        if isRemote { onViewRemote?(hits); return }
+        if hits.contains(where: { isVirtual($0.path) }) { onViewVirtual?(hits); return }
         let urls = hits.map { URL(fileURLWithPath: $0.path) }
         let entries = urls.map { url in ViewerEntry(title: url.lastPathComponent, resolve: { url }) }
         InternalViewerController.shared.show(entries: entries, start: 0, onIndexChange: nil)
@@ -460,15 +485,15 @@ final class FindFilesSheet: NSWindowController {
 
     /// F4: open the first selected non-directory result in the editor (same
     /// single-file semantics as the panels' F4; the sheet stays open). Remote
-    /// results have no local file to hand the editor — Feed to Panel, then F4
-    /// there, which sets up the download + write-back session properly.
+    /// and in-archive results have no local file to hand the editor — Feed to
+    /// Panel, then F4 there, which sets up the extract + write-back session.
     private func editSelected() {
-        guard !isRemote else { NSSound.beep(); return }
+        guard !allVirtual else { NSSound.beep(); return }
         var dir: ObjCBool = false
         let path = selectedHits
             .map(\.path)
             .first { FileManager.default.fileExists(atPath: $0, isDirectory: &dir) && !dir.boolValue }
-        guard let path else { return }
+        guard let path else { NSSound.beep(); return }
         onEdit?(URL(fileURLWithPath: path))
     }
 
@@ -477,7 +502,7 @@ final class FindFilesSheet: NSWindowController {
         let r = results.filter { !$0.isEmpty }   // drop duplicate-group separators
         guard !r.isEmpty else { return }
         window?.sheetParent?.endSheet(window!, returnCode: .OK)
-        onFeed?(r, remoteMeta)
+        onFeed?(r, hitMeta)
     }
 
     @objc private func closeClicked() {

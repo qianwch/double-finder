@@ -10,6 +10,11 @@ enum SearchEndpoint {
     case s3(S3Client, bucket: String, prefix: String, base: String)
     /// Android over MTP. `base` is a virtual `/[storage]/…` path.
     case android(AndroidDevice, label: String, base: String)
+    /// The panel is inside a local archive (ZipFS). `base` is the virtual panel
+    /// path (`archivePath` or `archivePath/sub/dir`); the search is scoped to it.
+    case archive(archivePath: String, password: String?, base: String)
+    /// The panel is inside an archive browsed in place on an SFTP host.
+    case remoteArchive(RemoteArchiveFS, base: String)
 
     var base: String {
         switch self {
@@ -17,12 +22,40 @@ enum SearchEndpoint {
         case .sftp(_, let b): return b
         case .s3(_, _, _, let b): return b
         case .android(_, _, let b): return b
+        case .archive(_, _, let b): return b
+        case .remoteArchive(_, let b): return b
         }
     }
 
+    /// True when the hits live on another machine (SFTP / S3 / MTP / a remote
+    /// archive) — F4 can't hand them to a local editor, Spotlight can't see them.
     var isRemote: Bool {
-        if case .local = self { return false }
-        return true
+        switch self {
+        case .local, .archive: return false
+        default: return true
+        }
+    }
+
+    /// True when the panel itself is inside an archive: every hit is a virtual
+    /// path with no file on disk behind it.
+    var isInsideArchive: Bool {
+        switch self {
+        case .archive, .remoteArchive: return true
+        default: return false
+        }
+    }
+
+    /// True when *every* hit is a virtual path (nothing to `NSWorkspace.open`, no
+    /// local URL for the editor): the sheet then routes viewing through the
+    /// panel's filesystem. A local search with "Search archives" on produces a
+    /// mix instead, decided per hit (`FileSearch.isArchiveHit`).
+    var hitsAreVirtual: Bool { isRemote || isInsideArchive }
+
+    /// Only a local folder walk can look inside the archives it passes; the other
+    /// backends either have no archive reader or already are one.
+    var canSearchArchives: Bool {
+        if case .local = self { return true }
+        return false
     }
 
     /// What the Find Files title bar shows — the remote cases name the host /
@@ -33,6 +66,8 @@ enum SearchEndpoint {
         case .sftp(let conn, let base): return "\(conn.user)@\(conn.host):\(base)"
         case .s3(_, _, _, let base): return base
         case .android(_, let label, let base): return "\(label):\(base)"
+        case .archive(_, _, let base): return base
+        case .remoteArchive(let ra, let base): return "\(ra.connection.user)@\(ra.connection.host):\(base)"
         }
     }
 }
@@ -57,6 +92,10 @@ struct FileSearchQuery {
     var content: String
     var subfolders: Bool
     var regexName: Bool
+    /// Local walk only (TC "Search archives"): archives met on the way are
+    /// opened and their entries matched too, yielding virtual hit paths
+    /// (`/dir/pack.zip/inner/file.txt`). Ignored by every other backend.
+    var searchArchives = false
 }
 
 // MARK: - Pure matching logic (shared by every backend)
@@ -239,6 +278,12 @@ enum FileSearch {
         case .android(let device, _, let base):
             try await runAndroid(device: device, base: base,
                                  query: query, matcher: matcher, progress: progress)
+        case .archive(let archivePath, let password, let base):
+            let prefix = base.hasPrefix(archivePath + "/") ? String(base.dropFirst(archivePath.count + 1)) : ""
+            try searchArchive(archivePath: archivePath, password: password, internalPrefix: prefix,
+                              query: query, matcher: matcher, progress: progress)
+        case .remoteArchive(let fs, let base):
+            try await runRemoteArchive(fs: fs, base: base, query: query, matcher: matcher, progress: progress)
         }
         progress.flush()
         return progress.hits.sorted { $0.path < $1.path }
@@ -253,8 +298,17 @@ enum FileSearch {
 
         func consider(_ url: URL) -> Bool {
             progress.bumpScanned()
-            guard matcher.matches(url.lastPathComponent) else { return true }
             let values = try? url.resourceValues(forKeys: Set(keys))
+            if query.searchArchives, values?.isRegularFile == true,
+               FileItem.isArchiveFileName(url.lastPathComponent) {
+                // TC "Search archives": look inside as well as at the file itself.
+                // An archive that can't be opened (encrypted, corrupt) is skipped
+                // — one bad container must not abort the whole walk.
+                try? searchArchive(archivePath: url.path, password: ArchivePasswords.get(url.path),
+                                   internalPrefix: "", query: query, matcher: matcher, progress: progress)
+                if progress.reachedLimit { return false }
+            }
+            guard matcher.matches(url.lastPathComponent) else { return true }
             if !query.content.isEmpty {
                 let size = Int64(values?.fileSize ?? 0)
                 guard size <= SearchContentMatcher.maxBytes,
@@ -279,6 +333,145 @@ enum FileSearch {
                 if Task.isCancelled { return }
                 if !consider(url) { return }
             }
+        }
+    }
+
+    // MARK: Archives (local)
+
+    /// True when `path` points inside an archive rather than at a file on disk
+    /// (only a local search with "Search archives" produces such hits).
+    nonisolated static func isArchiveHit(_ path: String) -> Bool {
+        PanelState.isInsideArchive(path)
+    }
+
+    /// Name-filters an archive's flat entry list into hits. Pure so the scoping
+    /// rules (files only, `internalPrefix` = the folder inside the archive the
+    /// panel is in, `subfolders` = one level below it) are unit-testable without
+    /// building archives. Hit paths are virtual: `archivePath/<entry path>`.
+    static func archiveCandidates(_ entries: [LibArchive.Entry], archivePath: String, internalPrefix: String,
+                                  matcher: SearchNameMatcher, subfolders: Bool) -> [SearchHit] {
+        let prefix = internalPrefix.isEmpty ? "" : internalPrefix + "/"
+        var hits: [SearchHit] = []
+        for e in entries where !e.isDir {
+            let clean = e.path.trimmingCharacters(in: .whitespaces)
+            guard !clean.isEmpty, !clean.hasSuffix("/"), clean.hasPrefix(prefix) else { continue }
+            let rel = String(clean.dropFirst(prefix.count))
+            guard !rel.isEmpty else { continue }
+            if !subfolders && rel.contains("/") { continue }
+            guard matcher.matches((rel as NSString).lastPathComponent) else { continue }
+            hits.append(SearchHit(path: archivePath + "/" + clean, size: e.size, modified: e.mtime ?? .distantPast))
+        }
+        return hits
+    }
+
+    /// Upper bound on how much one content-scan batch may extract to the temp
+    /// folder before it is scanned and deleted. Batches exist so a content search
+    /// over a 20 GB archive never needs 20 GB of free disk — and so a solid 7z is
+    /// decompressed once per *batch*, not once per candidate.
+    static let archiveScanBatchBytes: Int64 = 256 * 1024 * 1024
+
+    /// Groups candidates into batches of at most `archiveScanBatchBytes` (a
+    /// single oversized file still forms its own batch). Pure, for the tests.
+    static func archiveScanBatches(_ hits: [SearchHit], limit: Int64 = archiveScanBatchBytes) -> [[SearchHit]] {
+        var batches: [[SearchHit]] = []
+        var current: [SearchHit] = []
+        var bytes: Int64 = 0
+        for hit in hits {
+            if !current.isEmpty && bytes + hit.size > limit {
+                batches.append(current); current = []; bytes = 0
+            }
+            current.append(hit); bytes += hit.size
+        }
+        if !current.isEmpty { batches.append(current) }
+        return batches
+    }
+
+    /// Searches one local archive. The listing is read once (`ZipFS.entryDetails`
+    /// carries size + mtime), names are matched on the flat list, and a content
+    /// query extracts the surviving candidates in size-bounded batches — one pass
+    /// over the archive per batch — scanning and deleting each temp copy in turn.
+    /// Throws when the archive can't be opened at all (encrypted without a
+    /// password, corrupt); the caller decides whether that is fatal.
+    nonisolated static func searchArchive(archivePath: String, password: String?, internalPrefix: String,
+                                          query: FileSearchQuery, matcher: SearchNameMatcher,
+                                          progress: SearchProgress) throws {
+        let kind = ZipFS.kind(of: archivePath)
+        let entries = try ZipFS.entryDetails(archivePath: archivePath, kind: kind, password: password)
+        progress.bumpScanned(entries.reduce(0) { $0 + ($1.isDir ? 0 : 1) })
+        let candidates = archiveCandidates(entries, archivePath: archivePath, internalPrefix: internalPrefix,
+                                           matcher: matcher, subfolders: query.subfolders)
+        guard !query.content.isEmpty else {
+            for hit in candidates {
+                if progress.reachedLimit { return }
+                progress.add(hit)
+            }
+            return
+        }
+
+        let scannable = candidates.filter { $0.size <= SearchContentMatcher.maxBytes }
+        guard !scannable.isEmpty else { return }
+        let temp = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("DoubleFinder-Search-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(atPath: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: temp) }
+        let entryOf = { (hit: SearchHit) in String(hit.path.dropFirst(archivePath.count + 1)) }
+
+        for batch in archiveScanBatches(scannable) {
+            if Task.isCancelled || progress.reachedLimit { return }
+            let wanted = Set(batch.map(entryOf))
+            do {
+                try LibArchive.extractEntries(archivePath: archivePath, entries: wanted, to: temp,
+                                              password: password, isCancelled: { Task.isCancelled })
+            } catch is ArchiveEncryptedError where kind == .sevenZip {
+                // libarchive can't decrypt 7z; the in-process 7-Zip engine can.
+                try SevenZipEngine.extractEntries(archivePath: archivePath, entries: wanted, to: temp,
+                                                  password: password, isCancelled: { Task.isCancelled })
+            }
+            for hit in batch {
+                if Task.isCancelled || progress.reachedLimit { return }
+                let local = (temp as NSString).appendingPathComponent(entryOf(hit))
+                defer { try? FileManager.default.removeItem(atPath: local) }
+                guard let data = try? Data(contentsOf: URL(fileURLWithPath: local), options: .mappedIfSafe),
+                      SearchContentMatcher.matches(data, needle: query.content) else { continue }
+                progress.add(hit)
+            }
+        }
+    }
+
+    // MARK: Archive browsed in place on an SFTP host
+
+    /// `RemoteArchiveFS` lists the whole archive with one ssh call and caches it,
+    /// so the per-directory walk costs nothing after the first folder. Content
+    /// matching streams each candidate over ssh (`unzip -p` / `tar -O`) into a
+    /// temp file — serial, size-capped, deleted once scanned.
+    private nonisolated static func runRemoteArchive(fs: RemoteArchiveFS, base: String, query: FileSearchQuery,
+                                                     matcher: SearchNameMatcher,
+                                                     progress: SearchProgress) async throws {
+        let candidates = try await walk(base: base, subfolders: query.subfolders,
+                                        matcher: matcher, progress: progress) {
+            try await fs.listDirectory($0)
+        }
+        guard !query.content.isEmpty else {
+            for hit in candidates.prefix(maxResults) { progress.add(hit) }
+            return
+        }
+        let temp = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("DoubleFinder-Search-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(atPath: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: temp) }
+
+        // Remote listings carry no sizes (tar tf / unzip -Z1), so the cap is
+        // applied to what actually arrives rather than up front.
+        for hit in candidates {
+            try Task.checkCancellation()
+            if progress.reachedLimit { break }
+            let local = (temp as NSString).appendingPathComponent((hit.path as NSString).lastPathComponent)
+            defer { try? FileManager.default.removeItem(atPath: local) }
+            guard (try? await fs.copy(from: hit.path, to: temp)) != nil,
+                  let attrs = try? FileManager.default.attributesOfItem(atPath: local),
+                  ((attrs[.size] as? Int64) ?? 0) <= Int64(SearchContentMatcher.maxBytes),
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: local)) else { continue }
+            if SearchContentMatcher.matches(data, needle: query.content) { progress.add(hit) }
         }
     }
 

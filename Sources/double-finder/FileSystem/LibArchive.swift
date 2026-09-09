@@ -568,6 +568,27 @@ enum LibArchive {
         }
     }
 
+    /// Extracts a *set* of file entries in ONE pass over the archive, each landing
+    /// at `destDir/<entry path>` (tree preserved). Built for Find Files' content
+    /// scan inside archives: extracting candidates one `extractItem` at a time
+    /// would re-open (and, on a solid 7z, re-decompress) the archive per file.
+    /// Entries not in `wanted` are skipped; names that never turn up are
+    /// silently absent from disk — the caller checks what landed.
+    static func extractEntries(archivePath: String, entries wanted: Set<String>, to destDir: String,
+                               password: String?, isCancelled: (() -> Bool)? = nil) throws {
+        guard !wanted.isEmpty else { return }
+        var remaining = wanted
+        try extract(archivePath: archivePath, password: password,
+                    isCancelled: isCancelled,
+                    stopAfter: { name, _ in
+                        remaining.remove(name)
+                        return remaining.isEmpty      // everything wanted has been written
+                    }) { name in
+            guard wanted.contains(name) else { return nil }
+            return (destDir as NSString).appendingPathComponent(name)
+        }
+    }
+
     // MARK: - In-place rewrite (used for renaming entries)
 
     /// Rewrites the archive applying `rename` to each entry's path (return a new
