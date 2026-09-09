@@ -278,5 +278,45 @@ final class MarkdownToHTMLTests: XCTestCase {
         XCTAssertTrue(out.contains("<div class=\"diagram rendered\"><svg>ok</svg></div>"))
         XCTAssertFalse(out.contains("<div class=\"diagram\" data-idx=\"0\">"))
     }
-}
+    // MARK: UTF-8 byte scanner (2026-09-09 rewrite) — non-ASCII edge cases
 
+    func testCJKInsideEmphasisAndLink() {
+        let h = body("**中文加粗** *斜体テキスト* [链接文字](https://例子.测试/路径)")
+        XCTAssertTrue(h.contains("<strong>中文加粗</strong>"))
+        XCTAssertTrue(h.contains("<em>斜体テキスト</em>"))
+        XCTAssertTrue(h.contains("<a href=\"https://例子.测试/路径\">链接文字</a>"))
+    }
+
+    func testBackslashEscapeUnicodePunctuation() {
+        // Non-ASCII punctuation/symbol after a backslash is still an escape
+        // (Character.isPunctuation/isSymbol semantics); a CJK letter is not.
+        let h = body("a \\“b\\” \\€ \\中")
+        XCTAssertTrue(h.contains("a “b” € \\中"))
+    }
+
+    func testFullWidthSpaceTrimsLikeFoundation() {
+        // U+3000 (Zs) around a heading / a fence must still be trimmed.
+        let h = body("\u{3000}# 标题\u{00A0}\n\u{3000}```\ncode\n```")
+        XCTAssertTrue(h.contains("<h1>标题</h1>"))
+        XCTAssertTrue(h.contains("<pre><code>code</code></pre>"))
+    }
+
+    func testLoneCRLineBreaks() {
+        let h = body("# T\r---\rpara")
+        XCTAssertTrue(h.contains("<h1>T</h1>"))
+        XCTAssertTrue(h.contains("<hr>"))
+        XCTAssertTrue(h.contains("<p>para</p>"))
+    }
+
+    func testEscapeInsideMultibyteRuns() {
+        let h = body("中 < 文 & \"日\" > 本")
+        XCTAssertTrue(h.contains("中 &lt; 文 &amp; &quot;日&quot; &gt; 本"))
+    }
+
+    func testCancelledRenderReturnsEarly() {
+        let md = String(repeating: "line\n", count: 5000)
+        var polls = 0
+        let doc = MarkdownToHTML.renderDocument(md, baseDir: nil, isCancelled: { polls += 1; return polls > 1 })
+        XCTAssertLessThan(doc.html.utf8.count, md.utf8.count)   // abandoned well before the end
+    }
+}

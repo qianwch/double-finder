@@ -4,6 +4,15 @@ import Foundation
 /// subset + GFM tables/task lists. Raw HTML is always escaped (viewers open
 /// untrusted files). Never fails — worst case everything renders as escaped
 /// paragraphs. Local images inline as base64 data URIs (§4.2, Task 4).
+///
+/// Performance shape (matters: the Lister renders md up to tens of MB): the
+/// block scanner works on `Substring` lines sliced from the ORIGINAL string
+/// (no per-line String copies, no Foundation `trimmingCharacters`), and the
+/// inline parser scans raw UTF-8 bytes. Every markdown delimiter is ASCII and
+/// UTF-8 continuation bytes are ≥ 0x80, so byte comparison is exact and every
+/// slice boundary the scanner produces is a valid scalar boundary. Output is
+/// escaped in a single byte pass. Character-level (grapheme) scanning was ~5×
+/// slower; do not reintroduce `Array(text)`.
 enum MarkdownToHTML {
 
     /// Back-compat single-value entry (existing tests and callers that don't
@@ -15,21 +24,114 @@ enum MarkdownToHTML {
     /// Primary entry (design §4): the html contains a placeholder
     /// `<div class="diagram" data-idx="N">` (escaped source code inside) per
     /// diagram fence; `diagrams` lists them in data-idx order for async
-    /// rendering + substituteDiagrams.
-    static func renderDocument(_ markdown: String, baseDir: URL?) -> (html: String, diagrams: [DiagramBlock]) {
-        // Normalize CRLF and lone CR to LF first: lines are split on "\n" only,
-        // and a trailing \r would break hr detection ("---\r"), fence language
-        // lookup ("swift\r") and table-separator detection.
-        let normalized = markdown
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
+    /// rendering + substituteDiagrams. `isCancelled` is polled every few
+    /// hundred lines: a caller rendering off the main thread can abandon a
+    /// huge document early (the partial output is garbage, discard it).
+    static func renderDocument(_ markdown: String, baseDir: URL?,
+                               isCancelled: () -> Bool = { false }) -> (html: String, diagrams: [DiagramBlock]) {
         var diagrams: [DiagramBlock] = []
-        let bodyHTML = blocks(normalized.components(separatedBy: "\n"), baseDir: baseDir, diagrams: &diagrams)
-        let html = """
-        <!DOCTYPE html><html><head><meta charset="utf-8">
-        <style>\(css)</style></head><body>\(bodyHTML)</body></html>
-        """
-        return (html, diagrams)
+        // One byte buffer end-to-end: every block/inline emitter appends to it
+        // (no intermediate Strings), decoded to a String exactly once.
+        var out: [UInt8] = []
+        out.reserveCapacity(markdown.utf8.count * 2 + css.utf8.count + 256)
+        out.add("<!DOCTYPE html><html><head><meta charset=\"utf-8\">\n<style>\(css)</style></head><body>")
+        blocks(splitLines(markdown), baseDir: baseDir, diagrams: &diagrams, isCancelled: isCancelled, into: &out)
+        out.add("</body></html>")
+        return (String(decoding: out, as: UTF8.self), diagrams)
+    }
+
+    /// Splits on LF, CRLF and lone CR in one pass (replacing the old
+    /// normalize-then-components approach, which copied the whole document
+    /// twice). Line breaks are never part of a line, so `---\r` style
+    /// mis-detections cannot happen. A trailing terminator yields a final
+    /// empty line, exactly like `components(separatedBy: "\n")` did.
+    static func splitLines(_ s: String) -> [Substring] {
+        var lines: [Substring] = []
+        let u = s.utf8
+        var start = u.startIndex
+        var i = u.startIndex
+        while i < u.endIndex {
+            let b = u[i]
+            if b == 0x0A || b == 0x0D {
+                lines.append(s[start..<i])
+                var next = u.index(after: i)
+                if b == 0x0D, next < u.endIndex, u[next] == 0x0A { next = u.index(after: next) }
+                start = next; i = next
+            } else {
+                i = u.index(after: i)
+            }
+        }
+        lines.append(s[start..<u.endIndex])
+        return lines
+    }
+
+    // MARK: whitespace helpers (pure Swift — Foundation's trimmingCharacters
+    // bridges through NSString and dominated block-level scanning)
+
+    @inline(__always) private static func isSpaceByte(_ b: UInt8) -> Bool { b == 0x20 || b == 0x09 }
+
+    /// Same set as `CharacterSet.whitespaces`: space, tab and Unicode Zs
+    /// (U+00A0, U+3000 …). Only consulted for a non-ASCII edge character.
+    private static func isTrimmable(_ c: Character) -> Bool {
+        if c == " " || c == "\t" { return true }
+        guard let s = c.unicodeScalars.first, s.value >= 0x80 else { return false }
+        return s.properties.generalCategory == .spaceSeparator
+    }
+
+    /// Trims leading/trailing whitespace. ASCII fast path on the UTF-8 view;
+    /// a non-ASCII byte at either end takes the Character-level slow path so
+    /// full-width / no-break spaces still trim like they did with Foundation.
+    static func trim(_ s: Substring) -> Substring {
+        let u = s.utf8
+        var lo = u.startIndex, hi = u.endIndex
+        while lo < hi, isSpaceByte(u[lo]) { lo = u.index(after: lo) }
+        while hi > lo, isSpaceByte(u[u.index(before: hi)]) { hi = u.index(before: hi) }
+        var r = s[lo..<hi]
+        if let f = r.utf8.first, f >= 0x80, let c = r.first, isTrimmable(c) { r = trimSlow(r) }
+        else if let l = r.utf8.last, l >= 0x80, let c = r.last, isTrimmable(c) { r = trimSlow(r) }
+        return r
+    }
+
+    private static func trimSlow(_ s: Substring) -> Substring {
+        var r = s.drop(while: isTrimmable)
+        while let c = r.last, isTrimmable(c) { r = r.dropLast() }
+        return r
+    }
+
+
+    /// Byte-wise `hasPrefix` for Substrings. `StringProtocol.hasPrefix` on a
+    /// Substring compares Characters (grapheme breaking per call) — measured
+    /// as the dominant block-scanner cost. Every prefix we test is ASCII.
+    @inline(__always) private static func starts(_ s: Substring, with p: StaticString) -> Bool {
+        let u = s.utf8
+        guard u.count >= p.utf8CodeUnitCount else { return false }
+        return p.withUTF8Buffer { pb in
+            var idx = u.startIndex
+            for byte in pb {
+                if u[idx] != byte { return false }
+                idx = u.index(after: idx)
+            }
+            return true
+        }
+    }
+
+    /// Splits on `|` by byte (Substring.split(separator:) is Character-based).
+    private static func splitPipes(_ s: Substring, omittingEmpty: Bool) -> [Substring] {
+        var parts: [Substring] = []
+        let u = s.utf8
+        var start = u.startIndex
+        var i = start
+        while i < u.endIndex {
+            if u[i] == 0x7C {
+                let piece = s[start..<i]
+                if !omittingEmpty || !piece.isEmpty { parts.append(piece) }
+                start = u.index(after: i)
+            }
+            i = u.index(after: i)
+        }
+        let piece = s[start..<u.endIndex]
+        if !omittingEmpty || !piece.isEmpty { parts.append(piece) }
+        return parts
     }
 
     // MARK: block-level state machine
@@ -40,26 +142,32 @@ enum MarkdownToHTML {
     /// degrade to escaped paragraph text — ugly but safe ("Never fails").
     private static let maxQuoteDepth = 64
 
-    private static func blocks(_ lines: [String], baseDir: URL?, depth: Int = 0,
-                               diagrams: inout [DiagramBlock]) -> String {
-        var out = ""
+    private static func blocks(_ lines: [Substring], baseDir: URL?, depth: Int = 0,
+                               diagrams: inout [DiagramBlock], isCancelled: () -> Bool,
+                               into out: inout [UInt8]) {
         var i = 0
-        var paragraph: [String] = []
+        var paragraph: [Substring] = []
         func flushParagraph() {
             guard !paragraph.isEmpty else { return }
-            out += "<p>" + paragraph.map { inline($0, baseDir: baseDir) }.joined(separator: "\n") + "</p>\n"
+            out.add("<p>")
+            for (n, p) in paragraph.enumerated() {
+                if n > 0 { out.append(0x0A) }
+                inline(p, baseDir: baseDir, into: &out)
+            }
+            out.add("</p>\n")
             paragraph = []
         }
         while i < lines.count {
+            if i & 511 == 0, isCancelled() { return }
             let line = lines[i]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = trim(line)
             // fenced code block (highest priority)
-            if trimmed.hasPrefix("```") {
+            if starts(trimmed, with: "```") {
                 flushParagraph()
-                let lang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                var code: [String] = []
+                let lang = String(trim(trimmed.dropFirst(3)))
+                var code: [Substring] = []
                 i += 1
-                while i < lines.count, !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                while i < lines.count, !trim(lines[i]).hasPrefix("```") {
                     code.append(lines[i]); i += 1
                 }
                 i += 1   // skip closing fence (or EOF — unterminated runs to end)
@@ -67,33 +175,38 @@ enum MarkdownToHTML {
                 if let kind = DiagramKind(fenceLanguage: lang) {
                     // Diagram fence → placeholder (still a readable code block until
                     // the async SVG lands via substituteDiagrams, design §5).
-                    out += "<div class=\"diagram\" data-idx=\"\(diagrams.count)\"><pre><code>\(escapeHTML(joined))</code></pre></div>\n"
+                    out.add("<div class=\"diagram\" data-idx=\"\(diagrams.count)\"><pre><code>")
+                    appendEscaped(joined, into: &out)
+                    out.add("</code></pre></div>\n")
                     diagrams.append(DiagramBlock(kind: kind, source: joined))
                 } else {
-                    out += codeBlock(joined, language: lang)
+                    codeBlock(joined, language: lang, into: &out)
                 }
                 continue
             }
             // heading
             if let h = headingLevel(trimmed) {
                 flushParagraph()
-                let text = String(trimmed.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces)
-                out += "<h\(h)>\(inline(text, baseDir: baseDir))</h\(h)>\n"
+                let text = trim(trimmed.dropFirst(h))
+                out.add("<h\(h)>"); inline(text, baseDir: baseDir, into: &out); out.add("</h\(h)>\n")
                 i += 1; continue
             }
             // horizontal rule
-            if isHR(trimmed) { flushParagraph(); out += "<hr>\n"; i += 1; continue }
+            if isHR(trimmed) { flushParagraph(); out.add("<hr>\n"); i += 1; continue }
             // blockquote: gather consecutive > lines, strip one level, recurse
             // (depth-capped; over the cap the > lines fall through to a paragraph)
-            if trimmed.hasPrefix(">"), depth < maxQuoteDepth {
+            if starts(trimmed, with: ">"), depth < maxQuoteDepth {
                 flushParagraph()
-                var quoted: [String] = []
-                while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
-                    let t = lines[i].trimmingCharacters(in: .whitespaces)
-                    quoted.append(String(t.dropFirst(t.hasPrefix("> ") ? 2 : 1)))
+                var quoted: [Substring] = []
+                while i < lines.count {
+                    let t = trim(lines[i])
+                    guard starts(t, with: ">") else { break }
+                    quoted.append(t.dropFirst(starts(t, with: "> ") ? 2 : 1))
                     i += 1
                 }
-                out += "<blockquote>\(blocks(quoted, baseDir: baseDir, depth: depth + 1, diagrams: &diagrams))</blockquote>\n"
+                out.add("<blockquote>")
+                blocks(quoted, baseDir: baseDir, depth: depth + 1, diagrams: &diagrams, isCancelled: isCancelled, into: &out)
+                out.add("</blockquote>\n")
                 continue
             }
             // list (ordered/unordered/task, indent-nested) — collect the whole
@@ -101,20 +214,20 @@ enum MarkdownToHTML {
             // listMarker's indent rule: two spaces or one tab both count.
             if listMarker(line) != nil {
                 flushParagraph()
-                var block: [String] = []
-                while i < lines.count, listMarker(lines[i]) != nil || (isListContinuation(lines[i]) && !lines[i].trimmingCharacters(in: .whitespaces).isEmpty) {
+                var block: [Substring] = []
+                while i < lines.count, listMarker(lines[i]) != nil || (isListContinuation(lines[i]) && !trim(lines[i]).isEmpty) {
                     block.append(lines[i]); i += 1
                 }
-                out += listBlock(block, baseDir: baseDir)
+                listBlock(block, baseDir: baseDir, into: &out)
                 continue
             }
             // GFM table：当前行含 | 且下一行是分隔行
-            if line.contains("|"), i + 1 < lines.count, isTableSeparator(lines[i + 1]) {
+            if line.utf8.contains(0x7C), i + 1 < lines.count, isTableSeparator(lines[i + 1]) {
                 flushParagraph()
-                var rows: [String] = [line, lines[i + 1]]
+                var rows: [Substring] = [line, lines[i + 1]]
                 i += 2
-                while i < lines.count, lines[i].contains("|") { rows.append(lines[i]); i += 1 }
-                out += tableBlock(rows, baseDir: baseDir)
+                while i < lines.count, lines[i].utf8.contains(0x7C) { rows.append(lines[i]); i += 1 }
+                tableBlock(rows, baseDir: baseDir, into: &out)
                 continue
             }
             // blank → paragraph break
@@ -123,32 +236,37 @@ enum MarkdownToHTML {
             i += 1
         }
         flushParagraph()
-        return out
     }
 
     // MARK: helpers
 
     /// "#".."######" heading level, or nil. Requires at least one space (or
     /// end of line) after the hashes so "#tag" in a paragraph doesn't match.
-    private static func headingLevel(_ trimmed: String) -> Int? {
-        guard trimmed.hasPrefix("#") else { return nil }
+    private static func headingLevel(_ trimmed: Substring) -> Int? {
+        let u = trimmed.utf8
         var count = 0
-        for ch in trimmed {
-            if ch == "#" { count += 1 } else { break }
-        }
+        var idx = u.startIndex
+        while idx < u.endIndex, u[idx] == 0x23 { count += 1; idx = u.index(after: idx) }
         guard count >= 1, count <= 6 else { return nil }
-        let rest = trimmed.dropFirst(count)
-        guard rest.isEmpty || rest.hasPrefix(" ") else { return nil }
+        guard idx == u.endIndex || u[idx] == 0x20 else { return nil }
         return count
     }
 
     /// `---`, `***`, `___` (>= 3 identical chars, optionally space-separated).
-    private static func isHR(_ trimmed: String) -> Bool {
-        guard !trimmed.isEmpty else { return false }
-        let compact = trimmed.replacingOccurrences(of: " ", with: "")
-        guard compact.count >= 3, let first = compact.first else { return false }
-        guard first == "-" || first == "*" || first == "_" else { return false }
-        return compact.allSatisfy { $0 == first }
+    private static func isHR(_ trimmed: Substring) -> Bool {
+        var first: UInt8 = 0
+        var count = 0
+        for b in trimmed.utf8 {
+            if b == 0x20 { continue }
+            if count == 0 {
+                guard b == 0x2D || b == 0x2A || b == 0x5F else { return false }   // - * _
+                first = b
+            } else if b != first {
+                return false
+            }
+            count += 1
+        }
+        return count >= 3
     }
 
     /// Detects a list-item marker on a raw (un-indent-stripped) line: `- `,
@@ -159,29 +277,37 @@ enum MarkdownToHTML {
 
     /// A non-marker line continues the current list item when it is indented —
     /// two spaces or one tab, mirroring `listMarker`'s indent counting.
-    private static func isListContinuation(_ line: String) -> Bool {
-        line.hasPrefix("  ") || line.hasPrefix("\t")
+    private static func isListContinuation(_ line: Substring) -> Bool {
+        starts(line, with: "  ") || starts(line, with: "\t")
     }
 
-    private static func listMarker(_ line: String) -> ListMarkerInfo? {
+    private static func listMarker(_ line: Substring) -> ListMarkerInfo? {
+        let u = line.utf8
         var indent = 0
-        var idx = line.startIndex
-        while idx < line.endIndex {
-            if line[idx] == " " { indent += 1 } else if line[idx] == "\t" { indent += 2 } else { break }
-            idx = line.index(after: idx)
+        var idx = u.startIndex
+        while idx < u.endIndex {
+            let b = u[idx]
+            if b == 0x20 { indent += 1 } else if b == 0x09 { indent += 2 } else { break }
+            idx = u.index(after: idx)
         }
         let rest = line[idx...]
-        if rest.hasPrefix("- ") { return ListMarkerInfo(indent: indent, ordered: false, rest: rest.dropFirst(2)) }
-        if rest.hasPrefix("* ") { return ListMarkerInfo(indent: indent, ordered: false, rest: rest.dropFirst(2)) }
-        if rest.hasPrefix("+ ") { return ListMarkerInfo(indent: indent, ordered: false, rest: rest.dropFirst(2)) }
-        // ordered: digits then "." or ")" then space
+        let ru = rest.utf8
+        guard let m = ru.first else { return nil }
+        if m == 0x2D || m == 0x2A || m == 0x2B {                       // - * +
+            let second = ru.index(after: ru.startIndex)
+            if second < ru.endIndex, ru[second] == 0x20 {
+                return ListMarkerInfo(indent: indent, ordered: false, rest: rest[ru.index(after: second)...])
+            }
+            return nil
+        }
+        // ordered: ASCII digits then "." or ")" then space
         var digits = 0
-        var i = rest.startIndex
-        while i < rest.endIndex, rest[i].isNumber { digits += 1; i = rest.index(after: i) }
-        if digits > 0, i < rest.endIndex, (rest[i] == "." || rest[i] == ")") {
-            let after = rest.index(after: i)
-            if after < rest.endIndex, rest[after] == " " {
-                return ListMarkerInfo(indent: indent, ordered: true, rest: rest[rest.index(after: after)...])
+        var i = ru.startIndex
+        while i < ru.endIndex, ru[i] >= 0x30, ru[i] <= 0x39 { digits += 1; i = ru.index(after: i) }
+        if digits > 0, i < ru.endIndex, (ru[i] == 0x2E || ru[i] == 0x29) {
+            let after = ru.index(after: i)
+            if after < ru.endIndex, ru[after] == 0x20 {
+                return ListMarkerInfo(indent: indent, ordered: true, rest: rest[ru.index(after: after)...])
             }
         }
         return nil
@@ -191,19 +317,18 @@ enum MarkdownToHTML {
     /// indent stack: 2 spaces (or 1 tab) = one nesting level. Continuation
     /// lines indented under an item but without their own marker are appended
     /// to that item's text (lazy continuation).
-    private static func listBlock(_ lines: [String], baseDir: URL?) -> String {
+    private static func listBlock(_ lines: [Substring], baseDir: URL?, into out: inout [UInt8]) {
         struct Level { let indent: Int; let ordered: Bool; var openedLI: Bool }
-        var out = ""
         var stack: [Level] = []
         var i = 0
 
         func openList(indent: Int, ordered: Bool) {
             stack.append(Level(indent: indent, ordered: ordered, openedLI: false))
-            out += ordered ? "<ol>" : "<ul>"
+            out.add(ordered ? "<ol>" : "<ul>")
         }
         func closeTopLI() {
             if let top = stack.last, top.openedLI {
-                out += "</li>"
+                out.add("</li>")
                 stack[stack.count - 1].openedLI = false
             }
         }
@@ -214,7 +339,7 @@ enum MarkdownToHTML {
                 // Continuation line (indented, no marker) — append as plain text
                 // to the currently open item, if any.
                 if let top = stack.last, top.openedLI {
-                    out += "\n" + inline(line.trimmingCharacters(in: .whitespaces), baseDir: baseDir)
+                    out.append(0x0A); inline(trim(line), baseDir: baseDir, into: &out)
                 }
                 i += 1; continue
             }
@@ -223,7 +348,7 @@ enum MarkdownToHTML {
             while let top = stack.last, marker.indent < top.indent {
                 closeTopLI()
                 let level = stack.removeLast()
-                out += level.ordered ? "</ol>" : "</ul>"
+                out.add(level.ordered ? "</ol>" : "</ul>")
             }
             if stack.isEmpty || marker.indent > stack.last!.indent {
                 // New nested level. If the parent item is open, nest the new
@@ -233,66 +358,66 @@ enum MarkdownToHTML {
                 // Same indent but different list type: close and reopen.
                 closeTopLI()
                 let level = stack.removeLast()
-                out += level.ordered ? "</ol>" : "</ul>"
+                out.add(level.ordered ? "</ol>" : "</ul>")
                 openList(indent: marker.indent, ordered: marker.ordered)
             } else {
                 // Same level, next item.
                 closeTopLI()
             }
 
-            var text = String(marker.rest)
+            var text = marker.rest
             var checkbox = ""
-            if text.hasPrefix("[ ] ") {
+            if starts(text, with: "[ ] ") {
                 checkbox = "<input type=\"checkbox\" disabled>"
-                text = String(text.dropFirst(4))
-            } else if text.hasPrefix("[x] ") || text.hasPrefix("[X] ") {
+                text = text.dropFirst(4)
+            } else if starts(text, with: "[x] ") || starts(text, with: "[X] ") {
                 checkbox = "<input type=\"checkbox\" disabled checked>"
-                text = String(text.dropFirst(4))
+                text = text.dropFirst(4)
             }
-            out += "<li>" + checkbox + inline(text, baseDir: baseDir)
+            out.add("<li>"); out.add(checkbox); inline(text, baseDir: baseDir, into: &out)
             stack[stack.count - 1].openedLI = true
             i += 1
         }
         while !stack.isEmpty {
             closeTopLI()
             let level = stack.removeLast()
-            out += level.ordered ? "</ol>" : "</ul>"
+            out.add(level.ordered ? "</ol>" : "</ul>")
         }
-        return out + "\n"
+        out.append(0x0A)
     }
 
     /// GFM table separator row: `---|---` / `:--|--:` etc.
-    private static func isTableSeparator(_ line: String) -> Bool {
-        let t = line.trimmingCharacters(in: .whitespaces)
-        guard t.contains("-") else { return false }
-        let cells = t.split(separator: "|", omittingEmptySubsequences: true)
+    private static func isTableSeparator(_ line: Substring) -> Bool {
+        let t = trim(line)
+        guard t.utf8.contains(0x2D) else { return false }
+        let cells = splitPipes(t, omittingEmpty: true)
         guard !cells.isEmpty else { return false }
         return cells.allSatisfy { cell in
-            let c = cell.trimmingCharacters(in: .whitespaces)
+            let c = trim(cell)
             guard !c.isEmpty else { return false }
-            return c.allSatisfy { $0 == "-" || $0 == ":" }
+            return c.utf8.allSatisfy { $0 == 0x2D || $0 == 0x3A }   // - :
         }
     }
 
     /// Splits a table row on `|`, dropping one optional leading/trailing
     /// empty cell produced by a leading/trailing pipe (`| a | b |` → ["a",
     /// "b"], not ["", "a", "b", ""]).
-    private static func tableCells(_ row: String) -> [String] {
-        var cells = row.components(separatedBy: "|")
-        if let first = cells.first, first.trimmingCharacters(in: .whitespaces).isEmpty { cells.removeFirst() }
-        if let last = cells.last, last.trimmingCharacters(in: .whitespaces).isEmpty { cells.removeLast() }
-        return cells.map { $0.trimmingCharacters(in: .whitespaces) }
+    private static func tableCells(_ row: Substring) -> [Substring] {
+        var cells = splitPipes(row, omittingEmpty: false).map(trim)
+        if let first = cells.first, first.isEmpty { cells.removeFirst() }
+        if let last = cells.last, last.isEmpty { cells.removeLast() }
+        return cells
     }
 
     /// GFM table: `rows[0]` is the header, `rows[1]` the alignment row
     /// (`:--` left / `--:` right / `:-:` center / plain `-` no alignment),
     /// the rest are data rows. Cell content is inline-parsed.
-    private static func tableBlock(_ rows: [String], baseDir: URL?) -> String {
-        guard rows.count >= 2 else { return "" }
+    private static func tableBlock(_ rows: [Substring], baseDir: URL?, into out: inout [UInt8]) {
+        guard rows.count >= 2 else { return }
         let headerCells = tableCells(rows[0])
         let aligns: [String?] = tableCells(rows[1]).map { spec in
-            let left = spec.hasPrefix(":")
-            let right = spec.hasSuffix(":")
+            let left = starts(spec, with: ":")
+            let right = spec.utf8.last == 0x3A
             if left, right { return "center" }
             if left { return "left" }
             if right { return "right" }
@@ -302,20 +427,19 @@ enum MarkdownToHTML {
             guard index < aligns.count, let a = aligns[index] else { return "" }
             return " style=\"text-align:\(a)\""
         }
-        var out = "<table>\n<thead><tr>"
+        out.add("<table>\n<thead><tr>")
         for (idx, cell) in headerCells.enumerated() {
-            out += "<th\(alignAttr(idx))>\(inline(cell, baseDir: baseDir))</th>"
+            out.add("<th\(alignAttr(idx))>"); inline(cell, baseDir: baseDir, into: &out); out.add("</th>")
         }
-        out += "</tr></thead>\n<tbody>\n"
+        out.add("</tr></thead>\n<tbody>\n")
         for row in rows.dropFirst(2) {
-            out += "<tr>"
+            out.add("<tr>")
             for (idx, cell) in tableCells(row).enumerated() {
-                out += "<td\(alignAttr(idx))>\(inline(cell, baseDir: baseDir))</td>"
+                out.add("<td\(alignAttr(idx))>"); inline(cell, baseDir: baseDir, into: &out); out.add("</td>")
             }
-            out += "</tr>\n"
+            out.add("</tr>\n")
         }
-        out += "</tbody>\n</table>\n"
-        return out
+        out.add("</tbody>\n</table>\n")
     }
 
     /// Post-pass result per diagram index (design §4). `failureNote` text must
@@ -360,37 +484,52 @@ enum MarkdownToHTML {
     }
 
     /// Fenced code：语言可识别 → SyntaxHighlighter token 着色 <span class="kw|str|com|num">
-    private static func codeBlock(_ code: String, language: String) -> String {
-        let escaped: String
+    private static func codeBlock(_ code: String, language: String, into out: inout [UInt8]) {
+        out.add("<pre><code>")
         if let spec = LanguageSpec.language(forExtension: language) {
-            escaped = highlightedHTML(code, spec: spec)   // 逐 token 切片、每片 escapeHTML、token 片包 span
+            highlightedHTML(code, spec: spec, into: &out)   // 逐 token 切片、每片转义、token 片包 span
         } else {
-            escaped = escapeHTML(code)
+            appendEscaped(code, into: &out)
         }
-        return "<pre><code>\(escaped)</code></pre>\n"
+        out.add("</code></pre>\n")
     }
 
     /// Slices `code` by `SyntaxHighlighter` token ranges into alternating
     /// plain/colored segments (tokens are position-ordered, non-overlapping),
-    /// escaping every segment and wrapping colored ones in a `<span>`.
-    private static func highlightedHTML(_ code: String, spec: LanguageSpec) -> String {
+    /// escaping every segment and wrapping colored ones in a `<span>`. Token
+    /// ranges are UTF-16 (the highlighter also feeds NSTextStorage); they are
+    /// walked into UTF-8 offsets in one forward pass over the byte buffer —
+    /// no NSString substrings, no per-token String allocations.
+    private static func highlightedHTML(_ code: String, spec: LanguageSpec, into out: inout [UInt8]) {
         let tokens = SyntaxHighlighter.tokenize(code, spec: spec)
-        let ns = code as NSString
-        var out = ""
-        var cursor = 0
-        for token in tokens {
-            guard token.range.location >= cursor else { continue }   // defensive: skip overlap
-            if token.range.location > cursor {
-                out += escapeHTML(ns.substring(with: NSRange(location: cursor, length: token.range.location - cursor)))
+        var code = code
+        code.withUTF8 { b in
+            var u8 = 0, u16 = 0
+            // Advance to UTF-16 offset `target`, consuming whole scalars so u8
+            // always sits on a scalar boundary (4-byte scalars = 2 code units).
+            func advance(to target: Int) {
+                while u16 < target, u8 < b.count {
+                    let len = scalarLength(b[u8])
+                    u16 += len == 4 ? 2 : 1
+                    u8 += len
+                }
+                if u8 > b.count { u8 = b.count }   // truncated trailing scalar
             }
-            let text = ns.substring(with: token.range)
-            out += "<span class=\"\(cssClass(for: token.kind))\">\(escapeHTML(text))</span>"
-            cursor = NSMaxRange(token.range)
+            var cursor = 0
+            for token in tokens {
+                guard token.range.location >= cursor else { continue }   // defensive: skip overlap
+                let plainStart = u8
+                advance(to: token.range.location)
+                appendEscaped(b, from: plainStart, to: u8, into: &out)
+                let tokenStart = u8
+                advance(to: NSMaxRange(token.range))
+                out.add("<span class=\"\(cssClass(for: token.kind))\">")
+                appendEscaped(b, from: tokenStart, to: u8, into: &out)
+                out.add("</span>")
+                cursor = NSMaxRange(token.range)
+            }
+            appendEscaped(b, from: u8, to: b.count, into: &out)
         }
-        if cursor < ns.length {
-            out += escapeHTML(ns.substring(with: NSRange(location: cursor, length: ns.length - cursor)))
-        }
-        return out
     }
 
     /// Fixed kind → CSS class mapping (design-fixed, do not change).
@@ -403,151 +542,198 @@ enum MarkdownToHTML {
         }
     }
 
+    // MARK: inline parser (UTF-8 byte scanner)
+
     /// Inline parser (design §4.2). Order: backslash escape → inline code →
     /// image → link → strong (**/__) → em (*/_) → del (~~). Content inside
     /// strong/em/link text is parsed recursively; inline code is not.
     static func inline(_ text: String, baseDir: URL?) -> String {
-        var out = ""
-        let chars = Array(text)
-        var i = 0
-        // Start index of the current run of consecutive markup-free
-        // characters, or nil when no run is open. The run is sliced and
-        // escaped in one batch at flush — per-character escapeHTML(String(c))
-        // has a heavy constant factor (5.4s on a 2MB single line, vs. well
-        // under a second batched).
+        var out: [UInt8] = []
+        out.reserveCapacity(text.utf8.count + 32)
+        inline(Substring(text), baseDir: baseDir, into: &out)
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    /// Streams the parsed inline HTML into `out`, scanning the text's UTF-8
+    /// storage in place (`withUTF8` only copies for a bridged NSString).
+    static func inline(_ text: Substring, baseDir: URL?, into out: inout [UInt8]) {
+        var text = text
+        text.withUTF8 { b in
+            inlineBytes(b, from: 0, to: b.count, baseDir: baseDir, into: &out)
+        }
+    }
+
+    /// Core scanner over `b[lo..<hi]`, appending HTML bytes to `out`. Nested
+    /// content (emphasis / link labels) recurses on a sub-range of the same
+    /// buffer — no copies. All delimiters are ASCII; multibyte scalars only
+    /// ever appear inside plain runs (or after a backslash, handled below).
+    private static func inlineBytes(_ b: UnsafeBufferPointer<UInt8>, from lo: Int, to hi: Int,
+                                    baseDir: URL?, into out: inout [UInt8]) {
+        var i = lo
+        // Start of the current run of markup-free bytes, or nil when no run is
+        // open. Runs are escaped in one batch at flush.
         var runStart: Int? = nil
         func flushPlain() {
             guard let start = runStart else { return }
-            out += escapeHTML(String(chars[start..<i]))
+            appendEscaped(b, from: start, to: i, into: &out)
             runStart = nil
         }
-
-        // Element-wise comparison — building an Array slice per scanned
-        // position allocates and dominates runtime on large inputs.
-        func find(_ marker: [Character], from: Int) -> Int? {
-            let mc = marker.count
-            guard mc > 0, chars.count >= mc else { return nil }
+        func find(_ m0: UInt8, _ m1: UInt8?, from: Int) -> Int? {
             var j = from
-            while j <= chars.count - mc {
-                if chars[j] == marker[0] {
-                    var ok = true
-                    for k in 1..<mc where chars[j + k] != marker[k] { ok = false; break }
-                    if ok { return j }
-                }
+            let last = m1 == nil ? hi - 1 : hi - 2
+            while j <= last {
+                if b[j] == m0, m1 == nil || b[j + 1] == m1! { return j }
                 j += 1
             }
             return nil
         }
-
         // Tries to match a delimiter run (e.g. "**", "__", "~~", "*", "_") at
         // position `i`. On success, appends the wrapped, recursively-parsed
         // inner HTML to `out`, advances `i` past the closing delimiter and
         // returns true. On failure (no closer, or empty content) returns
         // false and leaves `out`/`i` untouched so the caller can try the
         // next marker.
-        func matchDelimited(_ marker: String, tag: String) -> Bool {
-            let m = Array(marker)
-            guard i + m.count <= chars.count else { return false }
-            for k in 0..<m.count where chars[i + k] != m[k] { return false }
-            guard var close = find(m, from: i + m.count), close > i + m.count else { return false }
+        func matchDelimited(_ m0: UInt8, _ m1: UInt8?, tag: StaticString) -> Bool {
+            let mlen = m1 == nil ? 1 : 2
+            guard i + mlen <= hi, b[i] == m0, m1 == nil || b[i + 1] == m1! else { return false }
+            guard var close = find(m0, m1, from: i + mlen), close > i + mlen else { return false }
             // Align the closing delimiter to the END of its run of identical
             // characters, so "**bold *and em***" closes the outer "**" on the
             // last two "*" of the trailing "***" run — leaving "bold *and em*"
             // as the inner content, whose single "*" pair recurses into <em>.
-            while close + m.count < chars.count, chars[close + m.count] == m[0] { close += 1 }
-            let inner = String(chars[(i + m.count)..<close])
+            while close + mlen < hi, b[close + mlen] == m0 { close += 1 }
             flushPlain()
-            out += "<\(tag)>" + inline(inner, baseDir: baseDir) + "</\(tag)>"
-            i = close + m.count
+            out.append(0x3C); out.add(tag); out.append(0x3E)                     // <tag>
+            inlineBytes(b, from: i + mlen, to: close, baseDir: baseDir, into: &out)
+            out.append(0x3C); out.append(0x2F); out.add(tag); out.append(0x3E)   // </tag>
+            i = close + mlen
             return true
         }
 
-        while i < chars.count {
-            let c = chars[i]
-            // Backslash escape: \ + punctuation/symbol → literal character.
-            // Flush the run up to the backslash, then resume the run AT the
-            // escaped character (skipping only the backslash itself) so it
-            // still gets batch-escaped with whatever plain text follows.
-            if c == "\\", i + 1 < chars.count, (chars[i + 1].isPunctuation || chars[i + 1].isSymbol) {
-                flushPlain()
-                runStart = i + 1
-                i += 2; continue
-            }
-            // Inline code — content is NOT parsed further.
-            if c == "`", let close = find(["`"], from: i + 1) {
-                flushPlain()
-                out += "<code>" + escapeHTML(String(chars[(i + 1)..<close])) + "</code>"
-                i = close + 1; continue
-            }
-            // Image.
-            if c == "!", i + 1 < chars.count, chars[i + 1] == "[",
-               let (alt, url, next) = bracketPair(chars, from: i + 1) {
-                flushPlain()
-                out += imageHTML(alt: alt, src: url, baseDir: baseDir); i = next; continue
-            }
-            // Link.
-            if c == "[", let (label, url, next) = bracketPair(chars, from: i) {
-                flushPlain()
-                out += "<a href=\"\(escapeHTML(url))\">\(inline(label, baseDir: baseDir))</a>"
-                i = next; continue
-            }
+        while i < hi {
+            let c = b[i]
+            switch c {
+            case 0x5C:   // backslash escape: \ + punctuation/symbol → literal character.
+                // Flush the run up to the backslash, then resume the run AT the
+                // escaped character (skipping only the backslash itself) so it
+                // still gets batch-escaped with whatever plain text follows.
+                if i + 1 < hi, isPunctuationOrSymbol(b, at: i + 1, end: hi) {
+                    flushPlain()
+                    runStart = i + 1
+                    i += 1 + scalarLength(b[i + 1]); continue
+                }
+            case 0x60:   // ` inline code — content is NOT parsed further.
+                if let close = find(0x60, nil, from: i + 1) {
+                    flushPlain()
+                    out.add("<code>")
+                    appendEscaped(b, from: i + 1, to: close, into: &out)
+                    out.add("</code>")
+                    i = close + 1; continue
+                }
+            case 0x21:   // ![alt](src)
+                if i + 1 < hi, b[i + 1] == 0x5B, let pair = bracketPair(b, from: i + 1, end: hi) {
+                    flushPlain()
+                    out.add(imageHTML(alt: String(decoding: UnsafeBufferPointer(rebasing: b[pair.label]), as: UTF8.self),
+                                      src: String(decoding: UnsafeBufferPointer(rebasing: b[pair.url]), as: UTF8.self),
+                                      baseDir: baseDir))
+                    i = pair.next; continue
+                }
+            case 0x5B:   // [label](url)
+                if let pair = bracketPair(b, from: i, end: hi) {
+                    flushPlain()
+                    out.add("<a href=\"")
+                    appendEscaped(b, from: pair.url.lowerBound, to: pair.url.upperBound, into: &out)
+                    out.add("\">")
+                    inlineBytes(b, from: pair.label.lowerBound, to: pair.label.upperBound, baseDir: baseDir, into: &out)
+                    out.add("</a>")
+                    i = pair.next; continue
+                }
             // Strong / del must be checked before single-char em, since "**"
-            // begins with a character that also has a single-char meaning
-            // ("*"); "__" likewise must precede "_". Dispatch on the first
-            // character so ordinary text skips all delimiter machinery —
-            // calling matchDelimited 5x per character dominated large inputs.
-            if c == "*" {
-                if matchDelimited("**", tag: "strong") { continue }
-                if matchDelimited("*", tag: "em") { continue }
-            } else if c == "_" {
-                if matchDelimited("__", tag: "strong") { continue }
-                if matchDelimited("_", tag: "em") { continue }
-            } else if c == "~" {
-                if matchDelimited("~~", tag: "del") { continue }
+            // begins with a byte that also has a single-char meaning ("*");
+            // "__" likewise must precede "_". Dispatching on the byte keeps
+            // ordinary text clear of all delimiter machinery.
+            case 0x2A:   // *
+                if matchDelimited(0x2A, 0x2A, tag: "strong") { continue }
+                if matchDelimited(0x2A, nil, tag: "em") { continue }
+            case 0x5F:   // _
+                if matchDelimited(0x5F, 0x5F, tag: "strong") { continue }
+                if matchDelimited(0x5F, nil, tag: "em") { continue }
+            case 0x7E:   // ~
+                if matchDelimited(0x7E, 0x7E, tag: "del") { continue }
+            default:
+                break
             }
             if runStart == nil { runStart = i }
             i += 1
         }
         flushPlain()
-        return out
+    }
+
+    /// Byte length of the UTF-8 scalar starting with `lead` (1 for ASCII and,
+    /// defensively, for a stray continuation byte).
+    @inline(__always) private static func scalarLength(_ lead: UInt8) -> Int {
+        if lead < 0x80 { return 1 }
+        if lead >= 0xF0 { return 4 }
+        if lead >= 0xE0 { return 3 }
+        if lead >= 0xC0 { return 2 }
+        return 1
+    }
+
+    /// `Character.isPunctuation || Character.isSymbol` for the scalar at `at`.
+    /// ASCII: every printable non-alphanumeric is one or the other. Non-ASCII
+    /// (rare after a backslash): decode the scalar and ask Unicode.
+    private static func isPunctuationOrSymbol(_ b: UnsafeBufferPointer<UInt8>, at: Int, end: Int) -> Bool {
+        let c = b[at]
+        if c < 0x80 {
+            return (c >= 0x21 && c <= 0x2F) || (c >= 0x3A && c <= 0x40)
+                || (c >= 0x5B && c <= 0x60) || (c >= 0x7B && c <= 0x7E)
+        }
+        let len = scalarLength(c)
+        guard at + len <= end,
+              let scalar = String(decoding: UnsafeBufferPointer(rebasing: b[at..<(at + len)]), as: UTF8.self).unicodeScalars.first
+        else { return false }
+        switch scalar.properties.generalCategory {
+        case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
+             .initialPunctuation, .finalPunctuation, .otherPunctuation,
+             .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
+            return true
+        default:
+            return false
+        }
     }
 
     /// Scan caps for `bracketPair`. Without them a flood of `[` characters
     /// makes every position run a failing O(n) scan — quadratic overall
     /// (measured: 50K `[` took 41s; a 2MB file extrapolates to hours, on the
     /// main thread). 999 is the CommonMark link-label limit; 4096 is a
-    /// generous URL bound. Past the cap the pattern fails fast and the `[`
+    /// generous URL bound. Both count UTF-8 bytes (not characters) since the
+    /// scanner is byte-based. Past the cap the pattern fails fast and the `[`
     /// renders literally — flood inputs are linear again.
     private static let maxLinkLabelLength = 999
     private static let maxLinkURLLength = 4096
 
     /// Parses `[label](url)` starting at `from` (which must point at the
     /// opening `[`). No nested brackets/parens are supported inside label or
-    /// url (accepted degradation). Returns (label, url, index just past the
-    /// closing `)`), or nil if the pattern doesn't match.
-    private static func bracketPair(_ chars: [Character], from: Int) -> (String, String, Int)? {
-        // Hoisted out of the scan loops: building a Character from a literal
-        // per iteration is a measurable constant in unoptimized builds.
-        let closeBracket: Character = "]"
-        let closeParen: Character = ")"
-        guard from < chars.count, chars[from] == "[" else { return nil }
+    /// url (accepted degradation). Returns the label and url byte ranges plus
+    /// the index just past the closing `)`, or nil if the pattern doesn't match.
+    private static func bracketPair(_ b: UnsafeBufferPointer<UInt8>, from: Int, end: Int)
+        -> (label: Range<Int>, url: Range<Int>, next: Int)? {
+        guard from < end, b[from] == 0x5B else { return nil }
         var j = from + 1
         let labelStart = j
-        // Length caps use index arithmetic, NOT String.count (which is O(n)
-        // and would reintroduce quadratic cost inside the capped scan). The
-        // scan window is also bounded up front so the cap costs one min().
-        var limit = min(chars.count, labelStart + maxLinkLabelLength + 1)
-        while j < limit, chars[j] != closeBracket { j += 1 }
-        guard j < chars.count, chars[j] == closeBracket, j - labelStart <= maxLinkLabelLength else { return nil }
-        let label = String(chars[labelStart..<j])
+        // The scan window is bounded up front so the cap costs one min().
+        var limit = min(end, labelStart + maxLinkLabelLength + 1)
+        while j < limit, b[j] != 0x5D { j += 1 }
+        guard j < end, b[j] == 0x5D, j - labelStart <= maxLinkLabelLength else { return nil }
+        let label = labelStart..<j
         j += 1
-        guard j < chars.count, chars[j] == "(" else { return nil }
+        guard j < end, b[j] == 0x28 else { return nil }
         j += 1
         let urlStart = j
-        limit = min(chars.count, urlStart + maxLinkURLLength + 1)
-        while j < limit, chars[j] != closeParen { j += 1 }
-        guard j < chars.count, chars[j] == closeParen, j - urlStart <= maxLinkURLLength else { return nil }
-        let url = String(chars[urlStart..<j])
+        limit = min(end, urlStart + maxLinkURLLength + 1)
+        while j < limit, b[j] != 0x29 { j += 1 }
+        guard j < end, b[j] == 0x29, j - urlStart <= maxLinkURLLength else { return nil }
+        let url = urlStart..<j
         j += 1
         return (label, url, j)
     }
@@ -604,11 +790,44 @@ enum MarkdownToHTML {
         return "<img src=\"data:\(mime);base64,\(base64)\" alt=\"\(altEscaped)\">"
     }
 
+    // MARK: escaping
+
+    /// Single-pass HTML escape of `b[lo..<hi]` appended to `out`. Only the
+    /// four bytes that matter (`& < > "`) are rewritten; everything else,
+    /// multibyte scalars included, is copied through untouched.
+    private static func appendEscaped(_ b: UnsafeBufferPointer<UInt8>, from lo: Int, to hi: Int, into out: inout [UInt8]) {
+        var runStart = lo
+        var i = lo
+        while i < hi {
+            let entity: StaticString
+            switch b[i] {
+            case 0x26: entity = "&amp;"
+            case 0x3C: entity = "&lt;"
+            case 0x3E: entity = "&gt;"
+            case 0x22: entity = "&quot;"
+            default: i += 1; continue
+            }
+            if runStart < i { out.append(contentsOf: UnsafeBufferPointer(rebasing: b[runStart..<i])) }
+            out.add(entity)
+            i += 1
+            runStart = i
+        }
+        if runStart < hi { out.append(contentsOf: UnsafeBufferPointer(rebasing: b[runStart..<hi])) }
+    }
+
+    private static func appendEscaped(_ s: String, into out: inout [UInt8]) {
+        var s = s
+        s.withUTF8 { appendEscaped($0, from: 0, to: $0.count, into: &out) }
+    }
+
     static func escapeHTML(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;")
-         .replacingOccurrences(of: "<", with: "&lt;")
-         .replacingOccurrences(of: ">", with: "&gt;")
-         .replacingOccurrences(of: "\"", with: "&quot;")
+        // Fast reject: most fragments (alt texts, notes) contain nothing to
+        // escape — skip the copy entirely.
+        guard s.utf8.contains(where: { $0 == 0x26 || $0 == 0x3C || $0 == 0x3E || $0 == 0x22 }) else { return s }
+        var out: [UInt8] = []
+        out.reserveCapacity(s.utf8.count + 16)
+        appendEscaped(s, into: &out)
+        return String(decoding: out, as: UTF8.self)
     }
 
     /// Embedded CSS: light/dark via `prefers-color-scheme`, monospace code,
@@ -642,4 +861,11 @@ enum MarkdownToHTML {
     .diagram-plantuml.rendered { background: #ffffff; border-radius: 6px; padding: 8px; display: inline-block; }
     .diagram-note { font-style: italic; color: #6b7280; font-size: 0.85em; margin-bottom: 0.3em; }
     """
+}
+
+/// Output-buffer sugar for the converter: HTML is assembled as UTF-8 bytes and
+/// decoded to a String once at the end.
+private extension Array where Element == UInt8 {
+    @inline(__always) mutating func add(_ s: String) { append(contentsOf: s.utf8) }
+    @inline(__always) mutating func add(_ s: StaticString) { s.withUTF8Buffer { append(contentsOf: $0) } }
 }

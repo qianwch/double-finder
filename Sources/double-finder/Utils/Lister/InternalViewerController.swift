@@ -76,7 +76,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// too, but a second press-3 must re-attempt the render, not jump to QL.
     private var mdRenderFellBack = false
     /// Max markdown size we read fully into memory to render (design §4.1).
-    private let mdRenderMaxBytes: UInt64 = 2 << 20
+    private let mdRenderMaxBytes: UInt64 = 50 << 20
+    /// In-flight background markdown render: read + decode + convert run in a
+    /// detached task so a multi-MB file never freezes the window. Cancelled by
+    /// any mode switch, file change or close; completion is additionally gated
+    /// on `diagramGeneration` so a late result can never land on another page.
+    private var mdRenderTask: Task<Void, Never>?
     /// Bumped on every setMode/close — a late diagram-SVG substitution must not
     /// reload a page the user already left (design §5, generation token).
     private var diagramGeneration = 0
@@ -575,6 +580,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private func setMode(_ mode: ViewerMode, auto: Bool, preserveSearch: Bool = false) {
         if !preserveSearch, !auto { cancelSearch(clearQuery: true) }   // manual switch clears the search (design §6)
         diagramGeneration += 1                       // leaving/reloading a page voids in-flight diagram results
+        cancelMarkdownRender()                       // …and any render still converting for the previous page
         // Manual same-file switches keep the reading position by byte offset
         // (same anchoring as encoding changes; TC behavior).
         let anchor: UInt64 = (!auto && mode != .preview) ? currentTopByteOffset() : 0
@@ -601,33 +607,15 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         case .preview:
             if shouldShowWeb(), let source {
                 // Size-before-read (order is critical: never read a huge md fully
-                // into memory). Oversize/read-error redirect to source WITHOUT
-                // setting mdRenderFellBack — that flag is crash-only, and setting
-                // it here would make a second press-3 wrongly jump to QL.
+                // into memory). Oversize redirects to source WITHOUT setting
+                // mdRenderFellBack — that flag is crash-only, and setting it here
+                // would make a second press-3 wrongly jump to QL.
                 if source.length > mdRenderMaxBytes {
                     setMode(.text, auto: true)
                     showStatusNote(tr("Markdown too large — showing source"))
                     return
                 }
-                guard let data = source.read(offset: 0, count: Int(source.length)) else {
-                    setMode(.text, auto: true)
-                    showStatusNote(tr("Read error — cannot access the file"))
-                    return
-                }
-                var decoder = TextChunkDecoder(encoding: currentEncoding)
-                let text = decoder.decode(data, isFinal: true)
-                if let kind = diagramKind(of: currentURL) {
-                    // Standalone .mmd/.puml = a synthesized one-fence document, so
-                    // phase 1 (source visible) and phase 2 (SVG) reuse the md path.
-                    let fence = kind == .mermaid ? "mermaid" : "plantuml"
-                    let doc = MarkdownToHTML.renderDocument("```\(fence)\n\(text)\n```", baseDir: nil)
-                    mdWebView?.loadHTML(doc.html)
-                    resolveDiagrams(doc, standalone: true)
-                } else {
-                    let doc = MarkdownToHTML.renderDocument(text, baseDir: currentURL?.deletingLastPathComponent())
-                    mdWebView?.loadHTML(doc.html)
-                    if !doc.diagrams.isEmpty { resolveDiagrams(doc, standalone: false) }
-                }
+                startMarkdownRender(source: source)
                 mdWebView?.focus()
             } else {
                 previewView?.previewItem = currentURL as NSURL?
@@ -807,6 +795,67 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         updatePositionLabel()
     }
 
+    // MARK: Markdown rendering (phase 1 of the markdown preview, off-main)
+
+    /// Reads, decodes and converts the current file on a detached task, then
+    /// hands the HTML to the web view on the main actor. The loading overlay
+    /// only appears if the render outlasts its 250ms grace (small files never
+    /// flash it). Read errors fall back to source mode exactly like before.
+    private func startMarkdownRender(source: ListerSource) {
+        let gen = diagramGeneration
+        let encoding = currentEncoding
+        let kind = diagramKind(of: currentURL)
+        let baseDir = currentURL?.deletingLastPathComponent()
+        let length = Int(source.length)
+        mdWebView?.focus()                           // keyboard goes to the page area right away
+        beginLoadingIndicator()
+        mdRenderTask = Task.detached(priority: .userInitiated) { [weak self] in
+            var rendered: (html: String, diagrams: [DiagramBlock])?
+            if let data = source.read(offset: 0, count: length) {
+                var decoder = TextChunkDecoder(encoding: encoding)
+                let text = decoder.decode(data, isFinal: true)
+                if let kind {
+                    // Standalone .mmd/.puml = a synthesized one-fence document, so
+                    // phase 1 (source visible) and phase 2 (SVG) reuse the md path.
+                    let fence = kind == .mermaid ? "mermaid" : "plantuml"
+                    rendered = MarkdownToHTML.renderDocument("```\(fence)\n\(text)\n```", baseDir: nil,
+                                                             isCancelled: { Task.isCancelled })
+                } else {
+                    rendered = MarkdownToHTML.renderDocument(text, baseDir: baseDir,
+                                                             isCancelled: { Task.isCancelled })
+                }
+            }
+            guard !Task.isCancelled else { return }
+            let result = rendered                    // immutable copy for the Sendable hop
+            await MainActor.run { [weak self] in
+                guard let self, !Task.isCancelled, self.diagramGeneration == gen else { return }
+                self.mdRenderTask = nil
+                self.endLoadingIndicator()
+                guard let doc = result else {
+                    self.setMode(.text, auto: true)
+                    self.showStatusNote(tr("Read error — cannot access the file"))
+                    return
+                }
+                self.mdWebView?.loadHTML(doc.html)
+                if kind != nil {
+                    self.resolveDiagrams(doc, standalone: true)
+                } else if !doc.diagrams.isEmpty {
+                    self.resolveDiagrams(doc, standalone: false)
+                }
+                self.mdWebView?.focus()
+            }
+        }
+    }
+
+    /// Stops an in-flight render (the converter polls `Task.isCancelled` and
+    /// bails within a few hundred lines) and drops its loading overlay.
+    private func cancelMarkdownRender() {
+        guard let task = mdRenderTask else { return }
+        task.cancel()
+        mdRenderTask = nil
+        endLoadingIndicator()
+    }
+
     // MARK: Diagram rendering (phase 2 of the markdown preview)
 
     /// Phase 2 of the markdown preview (design §5): render every diagram block
@@ -934,6 +983,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         // Esc/close must actually STOP the work, not just ignore its result: a solid-7z
         // pass would otherwise keep a core busy long after the window is gone.
         resolveTask?.cancel(); resolveTask = nil
+        cancelMarkdownRender()
         endLoadingIndicator()
         searchTask?.cancel(); searchTask = nil
         // The cancelled task's MainActor.run exits at its isCancelled guard and
