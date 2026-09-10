@@ -608,5 +608,6 @@
   "Previous Tab": "Vorheriger Tab",
   "Bring All to Front": "Alle nach vorne bringen",
   "Enclosing Folder": "Übergeordneter Ordner",
-  "Third-Party Licenses": "Lizenzen von Drittanbietern"
+  "Third-Party Licenses": "Lizenzen von Drittanbietern",
+  "Includes 7-Zip %@ © Igor Pavlov, GNU LGPL 2.1 or later.": "Enthält 7-Zip %@ © Igor Pavlov, GNU LGPL 2.1 oder neuer."
 }

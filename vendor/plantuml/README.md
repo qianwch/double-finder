@@ -1,61 +1,77 @@
 # Vendored PlantUML (`plantuml.jar`, MIT edition)
 
-捆绑进 `.app` 的官方 PlantUML jar，用于 Lister markdown 预览里 ` ```plantuml ` / ` ```puml `
-围栏的渲染——本机起子进程 `java -jar plantuml.jar -tsvg -pipe`，源码从 stdin 喂、SVG 从
-stdout 收，不联网（`Utils/Lister/DiagramRenderer.swift` + `Utils/PlantUML.swift`，见
-`spec/ui.md`）。
+The official PlantUML jar, bundled into the `.app` to render ` ```plantuml ` /
+` ```puml ` fences in the Lister markdown preview. It runs as a local child
+process (`java -jar plantuml.jar -tsvg -pipe`): the diagram source is fed on
+stdin, the SVG collected from stdout, nothing goes over the network
+(`Utils/Lister/DiagramRenderer.swift` + `Utils/PlantUML.swift`, see
+`spec/ui.md`).
 
-- `plantuml.jar`：官方 GitHub release 的 **MIT edition**（资产名 `plantuml-mit-<ver>.jar`）。
-- `LICENSE`：MIT（`plantuml-mit` 子模块的 `mit-license.txt`）。
+- `plantuml.jar`: the **MIT edition** from the official GitHub release (asset
+  name `plantuml-mit-<ver>.jar`).
+- `LICENSE`: MIT (`mit-license.txt` from the `plantuml-mit` module).
 
-## 为什么不用默认版（GPL）
+## Why not the default (GPL) build
 
-PlantUML 的 GitHub release 里默认资产 `plantuml.jar` / `plantuml-gplv2-<ver>.jar` 是 GPLv2
-授权（其余还有 LGPL / EPL / BSD 等多个 edition）。Double Finder 是 Apache-2.0 开源项目，随附
-分发 GPL 组件会引入不必要的授权兼容性问题；官方专门提供了 **`plantuml-mit-<ver>.jar`**
-（与其它 edition 功能等价，只是依赖组合限定为 MIT 兼容的库），随附这个不给整体授权添麻烦，
-与 THIRD-PARTY.md 的其它条目口径一致。注意 MIT 版 jar 内仍含 Smetana（Graphviz 布局引擎的
-Java 移植，EPL-1.0）等组件——作为独立子进程调用不影响本应用授权，但 THIRD-PARTY.md 里要如实写明。
+The default assets of a PlantUML GitHub release, `plantuml.jar` /
+`plantuml-gplv2-<ver>.jar`, are GPLv2 (other editions exist under LGPL, EPL,
+BSD, …). Double Finder is an Apache-2.0 project; shipping a GPL component
+alongside it would add licence-compatibility questions for no benefit. The
+project publishes **`plantuml-mit-<ver>.jar`** specifically — functionally
+equivalent, with its dependency set restricted to MIT-compatible libraries —
+so bundling that one keeps the picture simple and consistent with the other
+entries in `THIRD-PARTY.md`. Note that the MIT jar still contains Smetana
+(the Java port of the Graphviz layout engine, EPL-1.0) and a few other
+components; as a separate child process this does not affect the licence of
+the application itself, but `THIRD-PARTY.md` must state it.
 
-## 需要系统 Java
+## Needs a system Java
 
-`plantuml.jar` 只是字节码，**不含 JRE**——Double Finder 不捆绑 JRE（明确不做，见
-`spec/roadmap.md`）。运行时靠 `/usr/libexec/java_home` 探测一个可用的 Java（`/usr/bin/java`
-在没装 JDK 的机器上也存在、只是个提示装 JDK 的桩，不能只测文件存在性，见 `Utils/PlantUML.swift`）。
-本机没有 Java 时 plantuml 块保留代码块 + "PlantUML 渲染需要 Java——已显示源码" 提示，不弹框。
+`plantuml.jar` is bytecode only — it contains **no JRE**, and Double Finder
+does not bundle one (deliberately; see `spec/roadmap.md`). At run time a
+usable Java is located through `/usr/libexec/java_home` (`/usr/bin/java`
+exists even on machines without a JDK as a stub that only offers to install
+one, so testing for the file is not enough — see `Utils/PlantUML.swift`).
+Without Java, plantuml fences stay as code blocks with a "PlantUML rendering
+needs Java — showing source" note; no dialog.
 
-## 当前版本
+## Current version
 
 - 1.2026.6
 
-## 来源 / 更新方法
+## Source / how to update
 
 ```bash
 curl -s "https://api.github.com/repos/plantuml/plantuml/releases/latest" \
-  | grep -o '"name": *"plantuml-mit-[^"]*jar"'   # 确认资产名与版本号，排除 -javadoc/-sources 变体
+  | grep -o '"name": *"plantuml-mit-[^"]*jar"'   # confirm the asset name + version; skip -javadoc / -sources variants
 
 ver="1.2026.6"
 curl -fsSL -o "<repo>/vendor/plantuml/plantuml.jar" \
   "https://github.com/plantuml/plantuml/releases/download/v${ver}/plantuml-mit-${ver}.jar"
 ```
 
-许可证文本同步更新（PlantUML 仓库 `plantuml-mit/mit-license.txt`，随 jar 内 `META-INF` 附带的
-同一份文本）：
+Refresh the licence text alongside it (`plantuml-mit/mit-license.txt` in the
+PlantUML repository — the same text the jar carries under `META-INF`):
 
 ```bash
 curl -fsSL -o "<repo>/vendor/plantuml/LICENSE" \
   "https://raw.githubusercontent.com/plantuml/plantuml/master/plantuml-mit/mit-license.txt"
 ```
 
-若某个版本官方**没有**提供 MIT edition 资产，退而求其次用 `plantuml-asl-<ver>.jar`
-（Apache-2.0）——**绝不用默认/GPL 版**。换用 ASL 版时要同步改这份 README、
-`package_app.sh` 里的资产名与注释、`THIRD-PARTY.md` 的许可描述，三处都不能漏。
+If a release ships **no** MIT-edition asset, fall back to
+`plantuml-asl-<ver>.jar` (Apache-2.0) — **never** the default / GPL build.
+Switching to the ASL edition means updating this README, the asset name and
+comments in `package_app.sh`, and the licence description in
+`THIRD-PARTY.md`; none of the three may be skipped.
 
-`package_app.sh` 打包时会把这个 `plantuml.jar` 复制进 `Contents/Resources/plantuml.jar`
-（不走 SwiftPM 资源机制，与捆绑 7zz 同一套路：固定相对路径，运行时
-`PlantUML.bundledJarPath()` 按 `Bundle.main.resourcePath` 解析）。
+`package_app.sh` copies this `plantuml.jar` into
+`Contents/Resources/plantuml.jar` (a fixed relative path, not the SwiftPM
+resource mechanism); at run time `PlantUML.bundledJarPath()` resolves it from
+`Bundle.main.resourcePath`.
 
-> **开发裸跑**（不打 .app）时没有捆绑资源，`DiagramSupport.devVendorPath()` 会探测仓库根的
-> `vendor/plantuml/plantuml.jar`（需要手工 `curl` 到位，见上）；两处都没有时会继续尝试
-> Homebrew（`brew install plantuml`）与 PATH 上的 `plantuml` 包装脚本，全部找不到才提示
-> "未找到 PlantUML——已显示源码"，不弹框。
+> When running the **bare dev binary** (no `.app`) there are no bundled
+> resources, so `DiagramSupport.devVendorPath()` looks for
+> `vendor/plantuml/plantuml.jar` at the repository root (fetch it by hand with
+> the `curl` above). If that is missing too, it tries Homebrew
+> (`brew install plantuml`) and a `plantuml` wrapper on `PATH`; only when all
+> of those fail does it show "PlantUML not found — showing source". No dialog.

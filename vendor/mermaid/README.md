@@ -1,44 +1,51 @@
 # Vendored Mermaid (`mermaid.min.js`)
 
-捆绑进 `.app` 的官方 Mermaid UMD 构建，用于 Lister markdown 预览里 ` ```mermaid ` 围栏的
-**离屏渲染**（`Utils/Lister/DiagramRenderer.swift` 里一个隐藏 `WKWebView` 加载它、跑
-`mermaid.render()` 产出 SVG，再回填进主页面；主 `ListerWebView` 的 JS 全程保持关闭，见
-`spec/ui.md`）。
+The official single-file Mermaid UMD build, bundled into the `.app` to render
+` ```mermaid ` fences in the Lister markdown preview **off-screen**: a hidden
+`WKWebView` in `Utils/Lister/DiagramRenderer.swift` loads it, runs
+`mermaid.render()`, and the resulting SVG is spliced into the main page. The
+main `ListerWebView` keeps JavaScript disabled throughout (see `spec/ui.md`).
 
-- `mermaid.min.js`：官方 npm 包 `mermaid` 的 `dist/mermaid.min.js`（单文件 UMD bundle，浏览器
-  可直接 `<script>`/`evaluateJavaScript` 跑，无需打包工具）。
-- `LICENSE`：MIT。
+- `mermaid.min.js`: `dist/mermaid.min.js` from the official `mermaid` npm
+  package (single-file UMD bundle, runnable via `<script>` /
+  `evaluateJavaScript` with no bundler).
+- `LICENSE`: MIT.
 
-## 当前版本
+## Current version
 
 - 11.16.1
 
-## 来源 / 更新方法
+## Source / how to update
 
-走 jsdelivr CDN（`@11` 这种 major-only 标签会重定向到该 major 下的最新版，响应头
-`x-jsd-version` 里能看到解析到的确切版本）：
+Via the jsdelivr CDN (a major-only tag such as `@11` redirects to the newest
+release of that major; the `x-jsd-version` response header shows the exact
+version it resolved to):
 
 ```bash
 curl -sI "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js" | grep -i '^x-jsd-version'
-# 记下确切版本号，例如 11.16.1，然后固定拉取该版本：
+# note the exact version, e.g. 11.16.1, then pin it:
 curl -fsSL -o "<repo>/vendor/mermaid/mermaid.min.js" \
   "https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"
 ```
 
-许可证文本同步更新（mermaid 仓库根 `LICENSE`，MIT）：
+Refresh the licence text alongside it (root `LICENSE` of the mermaid repo, MIT):
 
 ```bash
 curl -fsSL -o "<repo>/vendor/mermaid/LICENSE" \
   "https://raw.githubusercontent.com/mermaid-js/mermaid/develop/LICENSE"
 ```
 
-升级大版本号前先看 mermaid 的 changelog 有无渲染 API（`mermaid.initialize`/`mermaid.render`）
-破坏性变更，再同步改 `package_app.sh` 里的 `MERMAID_VER`。
+Before bumping the major version, check the Mermaid changelog for breaking
+changes to the rendering API (`mermaid.initialize` / `mermaid.render`), then
+update `MERMAID_VER` in `package_app.sh` to match.
 
-`package_app.sh` 打包时会把这个 `mermaid.min.js` 复制进 `Contents/Resources/mermaid.min.js`
-（不走 SwiftPM 资源机制，与捆绑 7zz 同一套路：固定相对路径，运行时
-`DiagramRenderer.mermaidJSPath()` 按 `Bundle.main.resourcePath` 解析）。
+`package_app.sh` copies this `mermaid.min.js` into
+`Contents/Resources/mermaid.min.js` (a fixed relative path, not the SwiftPM
+resource mechanism); at run time `DiagramRenderer.mermaidJSPath()` resolves it
+from `Bundle.main.resourcePath`.
 
-> **开发裸跑**（不打 .app）时没有捆绑资源，`DiagramSupport.devVendorPath()` 会探测仓库根的
-> `vendor/mermaid/mermaid.min.js`（需要手工 `curl` 到位，见上）；两处都没有则 mermaid 块保留
-> 代码块 + "Mermaid 渲染器不可用——已显示源码" 提示，不弹框。
+> When running the **bare dev binary** (no `.app`) there are no bundled
+> resources, so `DiagramSupport.devVendorPath()` looks for
+> `vendor/mermaid/mermaid.min.js` at the repository root (fetch it by hand with
+> the `curl` above). If neither exists, mermaid fences stay as code blocks with
+> a "Mermaid renderer unavailable — showing source" note; no dialog.

@@ -15,7 +15,7 @@ final class HelpContentTests: XCTestCase {
         var keys: [String] = ["Help", "Double Finder Help", "Overview",
                               "Keyboard Shortcuts", "About", "Version", "License",
                               "Project Page", "Report an Issue", "Third-Party Licenses",
-                              HelpContent.customizeHintKey]
+                              HelpContent.customizeHintKey, HelpContent.sevenZipCreditKey]
         for group in HelpContent.shortcutGroups {
             keys.append(group.titleKey)
             keys.append(contentsOf: group.shortcuts.map { $0.nameKey })

@@ -608,5 +608,6 @@
   "Previous Tab": "上一个标签页",
   "Bring All to Front": "前置全部窗口",
   "Enclosing Folder": "上层文件夹",
-  "Third-Party Licenses": "第三方许可证"
+  "Third-Party Licenses": "第三方许可证",
+  "Includes 7-Zip %@ © Igor Pavlov, GNU LGPL 2.1 or later.": "内含 7-Zip %@ © Igor Pavlov，GNU LGPL 2.1 或更高版本。"
 }

@@ -132,6 +132,31 @@ jobs:
           path: .dist/Double-Finder-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
+      # LGPL-2.1 §4: the DMG ships libmtp + libusb as dylibs, so the
+      # corresponding source must be obtainable "from the same place" as the
+      # binaries — a pointer to sourceforge/GitHub in Frameworks/SOURCES.txt is
+      # not enough on its own. Fetch the exact upstream tarballs Homebrew built
+      # the bundled dylibs from (same formula, same version, checksum-verified
+      # against the formula) and attach them to the release next to the DMGs.
+      - name: Collect LGPL corresponding source (libmtp, libusb)
+        run: |
+          set -euo pipefail
+          mkdir -p .dist/lgpl-src
+          for f in libmtp libusb; do
+            url="$(brew info --json=v1 "$f" | jq -r '.[0].urls.stable.url')"
+            sum="$(brew info --json=v1 "$f" | jq -r '.[0].urls.stable.checksum')"
+            out=".dist/lgpl-src/$(basename "$url")"
+            curl -fsSL --retry 3 -o "$out" "$url"
+            echo "$sum  $out" | shasum -a 256 -c -
+          done
+          ls -l .dist/lgpl-src
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lgpl-src-${{ matrix.arch }}
+          path: .dist/lgpl-src/*
+          if-no-files-found: error
+
   # Both DMGs land on one release. Kept in a separate job so the two package
   # jobs never race to create/delete the same release.
   release:
@@ -143,6 +168,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: dmg-*
+          merge-multiple: true
+          path: dist
+
+      # The LGPL source tarballs; both package jobs fetch the same files, so
+      # merging them into one folder just de-duplicates.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lgpl-src-*
           merge-multiple: true
           path: dist
 
@@ -165,21 +198,23 @@ jobs:
 
           They are separate rather than universal because the Android/MTP backend links libmtp, and Homebrew publishes it for arm64 only — the other half of a universal library can't be produced on a single machine.
 
-          Drag **Double Finder.app** to /Applications. The build is ad-hoc signed, so on first launch right-click the app → **Open** to bypass Gatekeeper."
+          Drag **Double Finder.app** to /Applications. The build is ad-hoc signed, so on first launch right-click the app → **Open** to bypass Gatekeeper.
+
+          The \`libmtp-*.tar.gz\` and \`libusb-*.tar.bz2\` assets are the unmodified upstream sources of the two LGPL-2.1 libraries bundled inside the app (Android/MTP support), provided here as required by the LGPL. See \`THIRD-PARTY.md\` in the app's Resources folder."
 
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
             # The release may already exist (cut by hand before the tag was
             # pushed) — attach the DMGs to it instead of failing.
             if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release upload "$TAG" dist/*.dmg --clobber
+              gh release upload "$TAG" dist/* --clobber
             else
               gh release create "$TAG" \
                 --title "$TAG" \
                 --notes "Release \`$TAG\`.
 
           $NOTES" \
-                dist/*.dmg
+                dist/*
             fi
           else
             # Rolling prerelease: recreate it so both the tag and the DMGs track
@@ -192,5 +227,5 @@ jobs:
               --notes "Automated build of \`${GITHUB_SHA:0:7}\`.
 
           $NOTES" \
-              dist/*.dmg
+              dist/*
           fi

@@ -608,5 +608,6 @@
   "Previous Tab": "Onglet précédent",
   "Bring All to Front": "Tout ramener au premier plan",
   "Enclosing Folder": "Dossier parent",
-  "Third-Party Licenses": "Licences tierces"
+  "Third-Party Licenses": "Licences tierces",
+  "Includes 7-Zip %@ © Igor Pavlov, GNU LGPL 2.1 or later.": "Inclut 7-Zip %@ © Igor Pavlov, GNU LGPL 2.1 ou ultérieure."
 }

@@ -22,6 +22,18 @@ enum HelpContent {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
+    /// The project's own copyright line — NSHumanReadableCopyright from Info.plist
+    /// (embedded in the Mach-O, so the bare dev binary has it too).
+    static var copyrightLine: String {
+        Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String
+            ?? "Copyright © 2026 Weichun Qian and Double Finder contributors."
+    }
+
+    /// Translation key for the 7-Zip credit shown under the copyright line. LGPL
+    /// 2.1 §6: a work that displays copyright notices must include the Library's
+    /// among them — the 7z engine is compiled in, so 7-Zip's goes here.
+    static let sevenZipCreditKey = "Includes 7-Zip %@ © Igor Pavlov, GNU LGPL 2.1 or later."
+
     /// Translation key for the line pointing users at the shortcut editor.
     static let customizeHintKey = "To customize shortcuts, use Commands ▸ Customize Shortcuts…"
 

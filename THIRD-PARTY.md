@@ -32,9 +32,12 @@ linked libraries, `Contents/Frameworks/`); Help ▸ About opens them.
   `Sha256.c`, …) are marked "Igor Pavlov : Public domain" in their headers.
   Double Finder is itself open source under Apache-2.0 with complete sources in
   this repository, so LGPL §6 (the recipient can rebuild the work with a
-  modified library) is satisfied. The vendored files are byte-for-byte
-  identical to the upstream release; `Sources/CSevenZip/shim/` and
-  `include/` are Double Finder's own C façade (Apache-2.0).
+  modified library) is satisfied. The vendored files are unmodified copies
+  from the official source archive (`7z2602-src.tar.xz`, CRLF line endings
+  and all; the GitHub mirror stores the same content with LF endings), and
+  `Sources/CSevenZip/shim/` and `include/` are Double Finder's own C façade
+  (Apache-2.0). Help ▸ About shows 7-Zip's copyright notice next to Double
+  Finder's own.
 - **Bundled license text:** `Sources/CSevenZip/7zip/DOC/License.txt` (7-Zip's
   per-file licence summary) and `DOC/copying.txt` (the full LGPL-2.1 text),
   copied into the app as `Contents/Resources/sevenzip-License.txt` and
@@ -112,7 +115,11 @@ linked libraries, `Contents/Frameworks/`); Help ▸ About opens them.
 - **Corresponding source (LGPL §4):** the dylibs are unmodified Homebrew builds
   of the upstream releases. `package_app.sh` records the exact versions that
   went into each build, with the upstream source tarball URLs and the Homebrew
-  formula links, in `Contents/Frameworks/SOURCES.txt`.
+  formula links, in `Contents/Frameworks/SOURCES.txt`, and every GitHub
+  release carries the two upstream source tarballs (`libmtp-<ver>.tar.gz`,
+  `libusb-<ver>.tar.bz2`, checksum-verified against the Homebrew formula)
+  next to the DMGs, so the source is available from the same place as the
+  binaries.
 - **Project:** https://libmtp.sourceforge.net/ · https://libusb.info/
 - The dylibs are **not** committed to this repository; they come from
   `brew install libmtp` on the packaging machine.

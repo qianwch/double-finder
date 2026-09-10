@@ -233,6 +233,18 @@ final class HelpWindowController: NSWindowController, NSTableViewDataSource, NST
         lib.textColor = .secondaryLabelColor
         stack.addArrangedSubview(lib)
 
+        let copyright = NSTextField(labelWithString: HelpContent.copyrightLine)
+        copyright.font = NSFont.systemFont(ofSize: 11)
+        copyright.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(copyright)
+
+        // Third-party copyright notices displayed alongside our own (LGPL §6).
+        let sevenZip = NSTextField(labelWithString: String(
+            format: tr(HelpContent.sevenZipCreditKey), SevenZipEngine.version))
+        sevenZip.font = NSFont.systemFont(ofSize: 11)
+        sevenZip.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(sevenZip)
+
         let license = NSTextField(labelWithString: "\(tr("License")): Apache-2.0")
         stack.addArrangedSubview(license)
 

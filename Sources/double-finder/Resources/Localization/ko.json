@@ -608,5 +608,6 @@
   "Previous Tab": "이전 탭",
   "Bring All to Front": "모두 앞으로 가져오기",
   "Enclosing Folder": "상위 폴더",
-  "Third-Party Licenses": "서드파티 라이선스"
+  "Third-Party Licenses": "서드파티 라이선스",
+  "Includes 7-Zip %@ © Igor Pavlov, GNU LGPL 2.1 or later.": "7-Zip %@ © Igor Pavlov 포함 (GNU LGPL 2.1 이상)."
 }
