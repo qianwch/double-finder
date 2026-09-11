@@ -119,6 +119,27 @@ compiles in the 7z handler from the official 7-Zip sources
 at package time and nothing needs to be installed; the bare dev binary and the
 packaged `.app` behave the same. See `THIRD-PARTY.md` for licensing.
 
+## Plugins
+
+Double Finder has a Total Commander-style plugin API (`PluginKit/`, module
+`DoubleFinderPluginKit`): **file-system plugins** add a drive to the drive bar
+(like TC's WFX), **viewer plugins** add a Lister mode for a file type (WLX),
+**packer plugins** make a new archive format browsable and extractable (WCX,
+read-only), **content plugins** add columns to the file list (WDX), and
+**command plugins** add an entry to the Plugins menu, the toolbar and the
+shortcut editor. A plugin is a `.dfplugin`
+bundle dropped into `~/Library/Application Support/Double Finder/Plugins`;
+manage them in Settings ▸ Plugins.
+
+To write one, read the [plugin development guide](docs/plugin-development.md)
+([中文](docs/plugin-development.zh-Hans.md)), scaffold a package with
+`Tools/new-plugin.sh MyPlugin com.example.myplugin`, and build it with the
+generated `build.sh --install`. Every release ships the SDK as
+`DoubleFinderPluginKit-SDK-<version>.zip` (the `PluginKit` package, template,
+scaffolder, guide and sample) for plugin authors who don't want the whole
+source tree; `./package_sdk.sh` builds the same zip locally. `Examples/SamplePlugin` is
+a complete plugin implementing every extension point.
+
 ## Building & architecture
 
 Pure AppKit: `NSApplication` → `AppDelegate` → `MainWindowController` →

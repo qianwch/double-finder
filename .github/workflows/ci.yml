@@ -157,11 +157,62 @@ jobs:
           path: .dist/lgpl-src/*
           if-no-files-found: error
 
-  # Both DMGs land on one release. Kept in a separate job so the two package
-  # jobs never race to create/delete the same release.
+  # The plugin SDK: PluginKit + template + scaffolder + guide + sample, as one
+  # zip. Built on every run (a PR that breaks the plugin API or the scaffolder
+  # should fail here), attached to the release on push. macOS only because the
+  # validation step compiles a plugin against the SDK.
+  sdk:
+    name: Plugin SDK
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      # Full history + tags: package_sdk.sh versions the zip from `git describe`.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Package the SDK
+        run: ./package_sdk.sh
+
+      # Prove the zip is usable on its own: unpack it somewhere else, scaffold a
+      # plugin from it, build that plugin and the bundled sample against the
+      # SDK's PluginKit, and check the bundle carries no LC_RPATH (a leftover
+      # rpath would make dyld load a second PluginKit inside the app).
+      - name: Validate the SDK (scaffold + build a plugin from the zip)
+        run: |
+          set -euo pipefail
+          ZIP="$(ls .dist/DoubleFinderPluginKit-SDK-*.zip)"
+          WORK="$(mktemp -d)"
+          unzip -q "$ZIP" -d "$WORK"
+          SDK="$(ls -d "$WORK"/DoubleFinderPluginKit-SDK-*)"
+          cat "$SDK/README.md"
+          "$SDK/Tools/new-plugin.sh" CIPlugin org.example.ciplugin "$WORK/out"
+          (cd "$WORK/out/CIPlugin" && ./build.sh)
+          (cd "$SDK/Examples/SamplePlugin" && ./build.sh)
+          for b in "$WORK/out/CIPlugin/.dist/CIPlugin.dfplugin/Contents/MacOS/CIPlugin" \
+                   "$SDK/Examples/SamplePlugin/.dist/SamplePlugin.dfplugin/Contents/MacOS/SamplePlugin"; do
+            otool -L "$b" | grep -q "@rpath/libDoubleFinderPluginKit.dylib" \
+              || { echo "$b does not link PluginKit"; exit 1; }
+            if otool -l "$b" | grep -q LC_RPATH; then echo "$b still carries an LC_RPATH"; exit 1; fi
+          done
+          echo "SDK validated: $(basename "$ZIP")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk
+          path: .dist/DoubleFinderPluginKit-SDK-*.zip
+          if-no-files-found: error
+
+  # Both DMGs and the SDK land on one release. Kept in a separate job so the
+  # package jobs never race to create/delete the same release.
   release:
     name: Publish release
-    needs: package
+    needs: [package, sdk]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -177,6 +228,11 @@ jobs:
         with:
           pattern: lgpl-src-*
           merge-multiple: true
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk
           path: dist
 
       - name: Publish
@@ -195,6 +251,7 @@ jobs:
           |---|---|
           | \`Double-Finder-arm64.dmg\` | Apple Silicon (M1 and later) |
           | \`Double-Finder-x86_64.dmg\` | Intel Macs |
+          | \`DoubleFinderPluginKit-SDK-*.zip\` | Plugin developers: the PluginKit package, a plugin template + scaffolder, the development guide and the sample plugin |
 
           They are separate rather than universal because the Android/MTP backend links libmtp, and Homebrew publishes it for arm64 only — the other half of a universal library can't be produced on a single machine.
 
