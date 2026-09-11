@@ -201,11 +201,14 @@ jobs:
             if otool -l "$b" | grep -q LC_RPATH; then echo "$b still carries an LC_RPATH"; exit 1; fi
           done
           echo "SDK validated: $(basename "$ZIP")"
+          # upload-artifact skips globs under hidden directories (.dist) unless
+          # told otherwise — stage the zip in a plain folder instead.
+          mkdir -p sdk-out && cp "$ZIP" sdk-out/
 
       - uses: actions/upload-artifact@v4
         with:
           name: sdk
-          path: .dist/DoubleFinderPluginKit-SDK-*.zip
+          path: sdk-out/DoubleFinderPluginKit-SDK-*.zip
           if-no-files-found: error
 
   # Both DMGs and the SDK land on one release. Kept in a separate job so the
