@@ -126,7 +126,7 @@ jobs:
             || { echo "bundled libmtp does not cover ${{ matrix.arch }}"; exit 1; }
           hdiutil detach /tmp/dfdmg -quiet
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dmg-${{ matrix.arch }}
           path: .dist/Double-Finder-${{ matrix.arch }}.dmg
@@ -151,7 +151,7 @@ jobs:
           done
           ls -l .dist/lgpl-src
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lgpl-src-${{ matrix.arch }}
           path: .dist/lgpl-src/*
@@ -205,7 +205,7 @@ jobs:
           # told otherwise — stage the zip in a plain folder instead.
           mkdir -p sdk-out && cp "$ZIP" sdk-out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk
           path: sdk-out/DoubleFinderPluginKit-SDK-*.zip
