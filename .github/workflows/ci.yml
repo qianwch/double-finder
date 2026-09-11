@@ -216,7 +216,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dmg-*
           merge-multiple: true
@@ -224,13 +224,13 @@ jobs:
 
       # The LGPL source tarballs; both package jobs fetch the same files, so
       # merging them into one folder just de-duplicates.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: lgpl-src-*
           merge-multiple: true
           path: dist
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sdk
           path: dist
