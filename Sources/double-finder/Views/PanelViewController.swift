@@ -80,7 +80,12 @@ class PanelViewController: NSViewController {
     private func observeRemoteSessions() {
         NotificationCenter.default.addObserver(self, selector: #selector(remoteSessionsChanged),
                                                name: RemoteSessionStore.didChange, object: nil)
+        // Plugin drives appear/disappear with their plugin (enable/disable, rescan).
+        NotificationCenter.default.addObserver(self, selector: #selector(pluginsChanged),
+                                               name: PluginManager.didChange, object: nil)
     }
+
+    @objc private func pluginsChanged() { rebuildDriveBar() }
 
     @objc private func remoteSessionsChanged() {
         panelState.leaveRemovedSessions(existingIDs: RemoteSessionStore.shared.ids)
@@ -807,6 +812,13 @@ class PanelViewController: NSViewController {
             driveStack.addArrangedSubview(makeRemoteDriveRow(session: session,
                                                              active: session.id == activeID))
         }
+        // File-system plugins not yet connected: one button each (TC's plugin
+        // "drives"); clicking connects, after which the open session's row
+        // above replaces it.
+        let openIDs = RemoteSessionStore.shared.ids
+        for reg in PluginManager.shared.fileSystems where !openIDs.contains(reg.driveID) {
+            driveStack.addArrangedSubview(makePluginDriveButton(reg))
+        }
         for vol in Volumes.mounted() {
             let b = NSButton(title: " " + vol.name, target: self, action: #selector(driveSelected(_:)))
             b.bezelStyle = .recessed
@@ -831,6 +843,35 @@ class PanelViewController: NSViewController {
                 driveStack.addArrangedSubview(b)
             }
         }
+    }
+
+    private func makePluginDriveButton(_ reg: PluginManager.RegisteredFileSystem) -> NSView {
+        let title = reg.extensionObject.displayName
+        let b = NSButton(title: " " + title, target: self, action: #selector(pluginDriveSelected(_:)))
+        b.bezelStyle = .recessed
+        b.setButtonType(.pushOnPushOff)
+        b.controlSize = .small
+        b.font = .systemFont(ofSize: 11)
+        b.image = NSImage(systemSymbolName: reg.extensionObject.symbolName, accessibilityDescription: title)
+            ?? NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: title)
+        b.imagePosition = .imageLeading
+        b.identifier = NSUserInterfaceItemIdentifier(reg.driveID)
+        b.state = .off
+        b.toolTip = tr("%@ (plugin)", reg.pluginName)
+        return b
+    }
+
+    @objc private func pluginDriveSelected(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        sender.state = .off                     // the open session's row takes over the highlight
+        activatePanel()
+        panelDelegate?.panelViewController(self, openPluginDrive: id)
+    }
+
+    @objc private func pluginDriveMenuSelected(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        activatePanel()
+        panelDelegate?.panelViewController(self, openPluginDrive: id)
     }
 
     /// Builds a drive-bar row for one open remote session: a nav button
@@ -1031,7 +1072,18 @@ class PanelViewController: NSViewController {
             disconnect.indentationLevel = 1
             menu.addItem(disconnect)
         }
-        if !sessions.isEmpty { menu.addItem(.separator()) }
+        let openIDs = RemoteSessionStore.shared.ids
+        let pluginDrives = PluginManager.shared.fileSystems.filter { !openIDs.contains($0.driveID) }
+        for reg in pluginDrives {
+            let item = NSMenuItem(title: reg.extensionObject.displayName,
+                                  action: #selector(pluginDriveMenuSelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: reg.extensionObject.symbolName,
+                                 accessibilityDescription: reg.extensionObject.displayName)
+            item.representedObject = reg.driveID
+            menu.addItem(item)
+        }
+        if !sessions.isEmpty || !pluginDrives.isEmpty { menu.addItem(.separator()) }
         let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
         for vol in Volumes.mounted() {
             let item = NSMenuItem(title: vol.menuTitle, action: #selector(driveMenuSelected(_:)), keyEquivalent: "")
@@ -1224,6 +1276,8 @@ protocol PanelViewControllerDelegate: AnyObject {
     /// Rename a large remote (S3) file via a cancelable progress sheet — a server-side
     /// copy of a multi-GB object can take minutes and must not silently block the UI.
     func panelViewController(_ vc: PanelViewController, renameLargeS3File item: FileItem, to newName: String)
+    /// Drive bar / drive menu: open (connect + enter) a file-system plugin's drive.
+    func panelViewController(_ vc: PanelViewController, openPluginDrive driveID: String)
     /// The *other* panel's current local directory, or nil when it is remote —
     /// used by the drive switch to land on the same directory when both panels
     /// share a volume. In-archive paths resolve to the folder holding the archive.

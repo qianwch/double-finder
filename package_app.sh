@@ -27,6 +27,23 @@ cp "$BIN" "$APPDIR/Contents/MacOS/$APP"
 chmod +x "$APPDIR/Contents/MacOS/$APP"
 echo "    binary archs: $(lipo -archs "$APPDIR/Contents/MacOS/$APP")"
 
+echo "==> Bundle the plugin API dylib (DoubleFinderPluginKit)"
+# The public plugin API is a real dynamic library (PluginKit/ package): the
+# executable references @rpath/libDoubleFinderPluginKit.dylib and every
+# .dfplugin bundle links the same install name, so one copy in Frameworks
+# serves both. The rpath is added here (not only in the libmtp block below)
+# because the app must find PluginKit even when libmtp wasn't bundled.
+KIT_LIB="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/libDoubleFinderPluginKit.dylib"
+if [ ! -f "$KIT_LIB" ]; then
+    echo "ERROR: $KIT_LIB not found — PluginKit did not build, aborting packaging"
+    exit 1
+fi
+mkdir -p "$APPDIR/Contents/Frameworks" "$APPDIR/Contents/PlugIns"
+cp "$KIT_LIB" "$APPDIR/Contents/Frameworks/libDoubleFinderPluginKit.dylib"
+chmod u+w "$APPDIR/Contents/Frameworks/libDoubleFinderPluginKit.dylib"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APPDIR/Contents/MacOS/$APP" 2>/dev/null || true
+echo "    bundled libDoubleFinderPluginKit.dylib ($(lipo -archs "$APPDIR/Contents/Frameworks/libDoubleFinderPluginKit.dylib"))"
+
 echo "==> Bundle Localization resource pack"
 RESBUNDLE="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/double-finder_double-finder.bundle"
 if [ -d "$RESBUNDLE" ]; then

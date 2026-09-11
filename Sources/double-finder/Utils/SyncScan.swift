@@ -3,13 +3,18 @@ import Foundation
 /// Size + modification time for one file, backend-agnostic.
 struct SyncFileInfo { let size: Int64; let mtime: Date }
 
-/// One side of a directory sync. v1 supports local↔remote only.
+/// One side of a directory sync.
 enum SyncEndpoint {
     case local(base: String)
     case sftp(SFTPConnection, base: String)
     case s3(S3Client, bucket: String, prefix: String)
+    /// Any other backend through its `VirtualFS` (Android/MTP, plugin drives):
+    /// scanned by a directory-at-a-time walk, transferred with `copy(from:to:)`
+    /// (whose direction follows whether `from` exists locally, as those FSs do).
+    case generic(VirtualFS, base: String)
 
     var isS3: Bool { if case .s3 = self { return true }; return false }
+    var isGeneric: Bool { if case .generic = self { return true }; return false }
     var isRemote: Bool { if case .local = self { return false }; return true }
 }
 
@@ -59,7 +64,36 @@ enum SyncScan {
         case .s3(let client, let bucket, let prefix):
             let objs = try await client.listAllObjects(bucket: bucket, prefix: prefix)
             return s3RelMap(objs, prefix: prefix).filter { keep($0.key) }
+        case .generic(let fs, let base):
+            return try await scanGeneric(fs, base: base).filter { keep($0.key) }
         }
+    }
+
+    /// Depth-first `listDirectory` walk; rel paths are "/"-joined below `base`.
+    /// The first listing must succeed (a dead session is an error), deeper
+    /// failures skip that folder (same policy as the Find Files walk).
+    static func scanGeneric(_ fs: VirtualFS, base: String) async throws -> [String: SyncFileInfo] {
+        var map: [String: SyncFileInfo] = [:]
+        var stack: [(dir: String, rel: String)] = [(base, "")]
+        var first = true
+        while let (dir, rel) = stack.popLast() {
+            try Task.checkCancellation()
+            let items: [FileItem]
+            do { items = try await fs.listDirectory(dir) } catch {
+                if first { throw error }
+                continue
+            }
+            first = false
+            for item in items where item.name != ".." {
+                let childRel = rel.isEmpty ? item.name : rel + "/" + item.name
+                if item.isDirectory {
+                    stack.append((item.path, childRel))
+                } else {
+                    map[childRel] = SyncFileInfo(size: item.size, mtime: item.modified)
+                }
+            }
+        }
+        return map
     }
 
     private static func scanLocal(_ base: String, filterJunk: Bool) -> [String: SyncFileInfo] {

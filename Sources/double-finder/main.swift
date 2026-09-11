@@ -26,6 +26,15 @@ if ProcessInfo.processInfo.environment["NC_MTP_DIAG"] != nil {
     exit(0)
 }
 
+// Headless plugin diagnostic: `NC_PLUGIN_DIAG=1 "Double Finder"` loads every
+// plugin exactly as the app would and prints what it found (and why a bundle
+// was refused), then exits. The first thing to run when a .dfplugin doesn't
+// show up.
+if ProcessInfo.processInfo.environment["NC_PLUGIN_DIAG"] != nil {
+    MainActor.assumeIsolated { PluginManager.runDiagnostic() }
+    exit(0)
+}
+
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)

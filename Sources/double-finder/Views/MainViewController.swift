@@ -1,4 +1,5 @@
 import AppKit
+import DoubleFinderPluginKit
 import CryptoKit
 
 class MainViewController: NSViewController {
@@ -57,6 +58,9 @@ class MainViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        PluginManager.shared.host.mainVC = self
+        NotificationCenter.default.addObserver(self, selector: #selector(pluginsChangedForToolbar),
+                                               name: PluginManager.didChange, object: nil)
         setupUI()
         setupFunctionKeyActions()
         appState.load()
@@ -199,29 +203,17 @@ class MainViewController: NSViewController {
 
     // MARK: - Toolbar (customizable button bar)
 
-    /// Every command that can appear on the toolbar, in canonical order.
+    /// Every command that can appear on the toolbar (built-in + plugin), from
+    /// the shared `CommandRegistry`; actions dispatch through `runCommand` /
+    /// `runPluginCommand` like a menu item or a shortcut would.
     private var allToolbarCommands: [ToolbarBar.Item] {
-        [
-            .init(id: "refresh",     symbol: "arrow.clockwise",        tooltip: "Refresh")        { [weak self] in self?.activePanelVC.panelState.refresh() },
-            .init(id: "copy",        symbol: "doc.on.doc",             tooltip: "Copy (F5)")      { [weak self] in self?.actionCopy() },
-            .init(id: "move",        symbol: "arrow.right.doc.on.clipboard", tooltip: "Move (F6)") { [weak self] in self?.actionMove() },
-            .init(id: "newdir",      symbol: "folder.badge.plus",      tooltip: "New Directory (F7)") { [weak self] in self?.actionNewDirectory() },
-            .init(id: "delete",      symbol: "trash",                  tooltip: "Delete (F8)")    { [weak self] in self?.actionDelete() },
-            .init(id: "pack",        symbol: "archivebox",             tooltip: "Pack…")          { [weak self] in self?.actionPackZip() },
-            .init(id: "extract",     symbol: "shippingbox",            tooltip: "Extract")        { [weak self] in self?.actionExtractArchive() },
-            .init(id: "find",        symbol: "magnifyingglass",        tooltip: "Find Files")     { [weak self] in self?.actionFindFiles() },
-            .init(id: "multirename", symbol: "pencil",                 tooltip: "Multi-Rename")   { [weak self] in self?.actionMultiRename() },
-            .init(id: "sftp",        symbol: "network",                tooltip: "SFTP Connection")  { [weak self] in self?.actionConnectServer_menu() },
-            .init(id: "swap",        symbol: "arrow.left.arrow.right", tooltip: "Swap Panels")    { [weak self] in self?.swapPanels() },
-            .init(id: "branch",      symbol: "list.bullet.indent",     tooltip: "Branch View")    { [weak self] in self?.activePanelVC.panelState.toggleBranchView() },
-            .init(id: "tree",        symbol: "sidebar.left",           tooltip: "Directory Tree") { [weak self] in self?.toggleDirectoryTree_menu() },
-            // Not "terminal": that reads as the same button as "Open in Terminal"
-            // next to it, and focusing the command line gives almost no visible
-            // feedback — users reported the terminal button "doing nothing".
-            .init(id: "commandline", symbol: "rectangle.bottomthird.inset.filled", tooltip: "Command Line") { [weak self] in self?.focusCommandLine() },
-            .init(id: "terminal",    symbol: "terminal.fill",          tooltip: "Open in Terminal") { [weak self] in self?.actionOpenTerminal() },
-        ]
+        CommandRegistry.toolbarItems(runBuiltIn: { [weak self] in self?.runCommand($0) },
+                                     runPlugin: { [weak self] in self?.runPluginCommand(id: $0) })
     }
+
+    /// Plugins came or went (enable / disable / rescan): their toolbar buttons
+    /// must follow without a restart.
+    @objc private func pluginsChangedForToolbar() { configureToolbar() }
 
     private func configureToolbar() {
         var byID = Dictionary(uniqueKeysWithValues: allToolbarCommands.map { ($0.id, $0) })
@@ -322,6 +314,7 @@ class MainViewController: NSViewController {
         case .closeTab: activePanelVC.closeCurrentTab()
         case .openInOther: openInOtherPanel()
         case .matchOther: matchOtherPanelToActive()
+        case .openTerminal: actionOpenTerminal()
         }
     }
 
@@ -506,8 +499,11 @@ class MainViewController: NSViewController {
         // User-customized shortcuts take priority (layered on the built-in
         // defaults below). Only reached when the file list has focus, so this
         // never interferes with typing in the command line / filter fields.
-        if let cmd = KeyBindings.command(for: KeyCombo(event: event)) {
-            runCommand(cmd)
+        if let bound = KeyBindings.bindable(for: KeyCombo(event: event)) {
+            switch bound {
+            case .builtIn(let cmd): runCommand(cmd)
+            case .plugin(let id, _): runPluginCommand(id: id)
+            }
             return true
         }
 
@@ -826,8 +822,7 @@ class MainViewController: NSViewController {
         // ("Search archives"): those rows are virtual even though the panel is local.
         let archiveEntryRow = !insideArchive && panel.searchResultsIncludeArchiveEntries
             && PanelState.isInsideArchive(item.path)
-        let trulyLocal = panel.sftp == nil && panel.s3 == nil && panel.android == nil
-            && !insideArchive && !archiveEntryRow
+        let trulyLocal = panel.remote == nil && !insideArchive && !archiveEntryRow
         if item.name == ".." {
             panel.goUp()
         } else if trulyLocal && item.isDirectory && Self.isLaunchablePackage(item.path) {
@@ -839,6 +834,8 @@ class MainViewController: NSViewController {
             // No shell on the phone, so there's no remote-listing path like
             // RemoteArchiveFS — fetch the container, then browse it locally.
             downloadAndEnterAndroidArchive(item, device: device, panel: panelVC)
+        } else if FileItem.isArchiveFileName(item.name), let drive = panel.plugin {
+            downloadAndEnterPluginArchive(item, drive: drive, panel: panelVC)
         } else if FileItem.isArchiveFileName(item.name), let conn = panel.sftp {
             if RemoteArchiveFS.canBrowseRemotely(item.name) {
                 // tar/zip: list entries over ssh, fetch single files on demand.
@@ -894,8 +891,38 @@ class MainViewController: NSViewController {
         runOperation(op) { [weak panel] in
             guard let panel = panel,
                   FileManager.default.fileExists(atPath: localPath) else { return }
-            panel.panelState.enterAndroidArchive(localArchive: localPath, device: device,
-                                                 label: label, deviceDir: deviceDir)
+            panel.panelState.enterDownloadedArchive(localArchive: localPath,
+                                                    from: .android(device, label: label), remoteDir: deviceDir)
+        }
+    }
+
+    /// Plugin-drive twin of `downloadAndEnterAndroidArchive`: fetch the
+    /// container through the plugin session, then browse the local copy.
+    private func downloadAndEnterPluginArchive(_ item: FileItem, drive: PluginDriveSession,
+                                               panel: PanelViewController) {
+        let tmp = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-Archives")
+        try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+        let localPath = (tmp as NSString).appendingPathComponent(item.name)
+        try? FileManager.default.removeItem(atPath: localPath)
+        let remoteDir = panel.panelState.currentPath
+
+        let op = FileOperation(type: .copy, sources: [item.path], destination: tmp)
+        op.customTitle = tr("Downloading")
+        op.totalBytes = item.size
+        op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+        let session = drive.session
+        op.perItemOperation = { [weak op] path in
+            guard let op else { return }
+            let report: @Sendable (Int64) -> Void = { op.reportBytes($0) }
+            try await PluginFS.downloadTree(session, path: path, isDirectory: false,
+                                            toLocalDirectory: tmp, as: item.name,
+                                            progress: report,
+                                            isCancelled: { op.cancelRequested })
+        }
+        runOperation(op) { [weak panel] in
+            guard let panel = panel,
+                  FileManager.default.fileExists(atPath: localPath) else { return }
+            panel.panelState.enterDownloadedArchive(localArchive: localPath, from: .plugin(drive), remoteDir: remoteDir)
         }
     }
 
@@ -920,7 +947,7 @@ class MainViewController: NSViewController {
         runOperation(op) { [weak panel] in
             guard let panel = panel,
                   FileManager.default.fileExists(atPath: localPath) else { return }
-            panel.panelState.enterSFTPArchive(localArchive: localPath, conn: conn, remoteDir: remoteDir)
+            panel.panelState.enterDownloadedArchive(localArchive: localPath, from: .sftp(conn), remoteDir: remoteDir)
         }
     }
 
@@ -968,7 +995,7 @@ class MainViewController: NSViewController {
     }
 
     private func isLocalPanel(_ panel: PanelState) -> Bool {
-        panel.sftp == nil && panel.remoteArchive == nil && panel.s3 == nil && panel.android == nil
+        panel.remote == nil && panel.remoteArchive == nil
             && PanelState.archiveRoot(in: panel.currentPath) == nil
     }
 
@@ -1038,15 +1065,12 @@ class MainViewController: NSViewController {
         // archive entry listed by a local search gets that archive's ZipFS, so
         // the write-back path recognises it just as it does inside the archive.
         let fs = archiveEntryRow ? PanelState.fileSystem(for: item.path) : panel.fs
-        let s3 = panel.s3
-        let sftpConn = panel.sftp
-        let android = panel.android
+        let remote = panel.remote
         Task {
             let urls = await self.materialize([item], using: fs)
             await MainActor.run {
                 guard let u = urls.first else { NSSound.beep(); return }
-                self.registerEditWriteBack(localURL: u, remotePath: item.path,
-                                           fs: fs, s3: s3, sftpConn: sftpConn, android: android)
+                self.registerEditWriteBack(localURL: u, remotePath: item.path, fs: fs, remote: remote)
                 self.openInEditor(u)
             }
         }
@@ -1055,8 +1079,7 @@ class MainViewController: NSViewController {
     /// If the edited file came from S3/SFTP, track it so a later change can be
     /// uploaded back. Captures the connection now (independent of later nav).
     private func registerEditWriteBack(localURL: URL, remotePath: String,
-                                       fs: VirtualFS, s3: S3Connection?, sftpConn: SFTPConnection?,
-                                       android: AndroidDevice? = nil) {
+                                       fs: VirtualFS, remote: RemoteSession?) {
         let tempPath = localURL.path
         guard let a = try? FileManager.default.attributesOfItem(atPath: tempPath),
               let mod = a[.modificationDate] as? Date,
@@ -1064,18 +1087,18 @@ class MainViewController: NSViewController {
 
         let upload: (String, String) async throws -> Void
         let label: String
-        if let s3 = s3 {
+        if case .s3(let s3, _)? = remote {
             label = parseS3Path(remotePath).bucket ?? s3.endpointHost
             upload = { temp, remote in
                 try await fs.copy(from: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
             }
-        } else if let conn = sftpConn {
+        } else if case .sftp(let conn)? = remote {
             label = conn.host
             upload = { temp, remote in
                 try await SFTPFS(connection: conn).upload(
                     localPath: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
             }
-        } else if let device = android {
+        } else if case .android(let device, _)? = remote {
             label = AndroidDeviceRegistry.shared.info(device.sessionID)?.label ?? device.displayName
             upload = { temp, remote in
                 // Upload replaces the same-named object first (MTP would happily
@@ -1084,6 +1107,15 @@ class MainViewController: NSViewController {
                     device.sessionID, localPath: temp,
                     toDir: RemoteEditWriteBack.remoteParentDir(of: remote),
                     as: (remote as NSString).lastPathComponent, progress: { _ in })
+            }
+        } else if case .plugin(let drive)? = remote {
+            label = drive.session.label
+            let session = drive.session
+            upload = { temp, remote in
+                try await PluginFS.uploadTree(session, localPath: temp,
+                                              toDirectory: RemoteEditWriteBack.remoteParentDir(of: remote),
+                                              as: (remote as NSString).lastPathComponent,
+                                              progress: { _ in })
             }
         } else if let zip = fs as? ZipFS {
             // Edit-inside-archive write-back: rewrite the container replacing
@@ -1227,7 +1259,7 @@ class MainViewController: NSViewController {
         // last component renames on transfer); several items → <dir>/*.*.
         let singleName = pruned.count == 1 ? pruned[0].name : nil
         let dest0 = (destPanel.currentPath as NSString).appendingPathComponent(singleName ?? "*.*")
-        let destIsLocal = destPanel.sftp == nil && destPanel.s3 == nil && destPanel.android == nil
+        let destIsLocal = destPanel.remote == nil
         // A cross-backend move runs the copy pipeline, but the user asked for a
         // move — the confirm dialog must say so, not "Download"/"Upload".
         let verb = deleteProvider == nil ? provider.verb : tr("Move")
@@ -1296,7 +1328,7 @@ class MainViewController: NSViewController {
     /// new name instead of the source's own.
     private func existingDestNames(of items: [FileItem], at dest: String,
                                    destPanel: PanelState, renameTo: String? = nil) async -> Set<String> {
-        if destPanel.sftp == nil && destPanel.s3 == nil && destPanel.android == nil {
+        if destPanel.remote == nil {
             // Local destination: precise per-name existence (includes hidden).
             return Set(items.compactMap { item -> String? in
                 let name = renameTo ?? item.name
@@ -1312,53 +1344,40 @@ class MainViewController: NSViewController {
     /// local, same SFTP host, or same S3 store — i.e. a destination path can
     /// actually collide with a source path (precondition of the self-transfer guard).
     private func sharesNamespace(_ a: PanelState, _ b: PanelState) -> Bool {
-        if let s = a.sftp, let d = b.sftp { return s.sameHost(as: d) }
-        if let s = a.s3, let d = b.s3 { return s.sameStore(as: d) }
-        if let s = a.android, let d = b.android { return s.sessionID == d.sessionID }
-        return a.sftp == nil && a.s3 == nil && a.android == nil
-            && b.sftp == nil && b.s3 == nil && b.android == nil
+        switch (a.remote, b.remote) {
+        case (let x?, let y?): return x.sharesNamespace(with: y)
+        case (nil, nil): return true
+        default: return false
+        }
     }
 
     /// Pick the provider for a copy from `src` panel to `dst` panel.
     private func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) -> TransferProvider {
-        // Same S3 store on both panels (same endpoint + AK/SK, bucket may differ)
-        // → server-side copy (no download/upload round-trip).
-        if let s = src.s3, let d = dst.s3, s.sameStore(as: d), let client = src.s3Client {
-            return S3SameStoreProvider(client: client, move: false)
-        }
-        // Different S3 services on the two panels → bounce each object through
-        // a local temp file (download from one service, upload to the other).
-        if src.s3 != nil, dst.s3 != nil,
-           let srcClient = src.s3Client, let dstClient = dst.s3Client {
-            return S3CrossStoreProvider(srcClient: srcClient, dstClient: dstClient)
-        }
-        if src.s3 != nil, let client = src.s3Client {
-            return S3TransferProvider(client: client, downloading: true)
-        }
-        if dst.s3 != nil, let client = dst.s3Client {
-            return S3TransferProvider(client: client, downloading: false)
-        }
-        // Same phone on both panels → on-device copy (bytes never cross USB).
-        if let s = src.android, let d = dst.android, s.sessionID == d.sessionID {
-            return AndroidSameDeviceProvider(device: s, move: false)
-        }
-        if let device = src.android {
-            return AndroidTransferProvider(device: device, direction: .download)
-        }
-        if let device = dst.android {
-            return AndroidTransferProvider(device: device, direction: .upload)
-        }
-        // Same SFTP host on both panels → server-side cp (no download+upload).
-        if let s = src.sftp, let d = dst.sftp, s.sameHost(as: d) {
-            return SFTPSameHostProvider(connection: s, move: false)
-        }
-        if let conn = src.sftp { return SFTPTransferProvider(connection: conn, direction: .download) }
-        if let conn = dst.sftp { return SFTPTransferProvider(connection: conn, direction: .upload) }
+        if let provider = remoteTransferProvider(from: src, to: dst, move: false) { return provider }
         // Inside an archive, or a search listing holding archive entries: copy by
         // extracting through the source FS (which routes per path in the latter).
         let archive = PanelState.archiveRoot(in: src.currentPath) != nil
             || src.searchResultsIncludeArchiveEntries
         return LocalCopyProvider(srcFS: src.fs, archiveRoot: archive)
+    }
+
+    /// The provider for a transfer touching at least one remote panel, nil when
+    /// both are local. Order: same namespace (server-side / on-device, no
+    /// round-trip) → a cross-store relay the backend offers (S3 ↔ S3) → plain
+    /// download / upload through the remote side's session.
+    private func remoteTransferProvider(from src: PanelState, to dst: PanelState, move: Bool) -> TransferProvider? {
+        switch (src.remote, dst.remote) {
+        case (let s?, let d?) where s.sharesNamespace(with: d):
+            return s.sameStoreProvider(move: move)
+        case (let s?, let d?):
+            return s.crossStoreProvider(to: d) ?? s.transferProvider(download: true)
+        case (let s?, nil):
+            return s.transferProvider(download: true)
+        case (nil, let d?):
+            return d.transferProvider(download: false)
+        case (nil, nil):
+            return nil
+        }
     }
 
     /// Routes a finished-conflict-resolution operation either to the modal
@@ -1413,25 +1432,18 @@ class MainViewController: NSViewController {
         let src = activePanelVC.panelState
         let dst = inactivePanelVC.panelState
         let provider: TransferProvider
-        // Same S3 store on both panels (same endpoint + AK/SK, bucket may differ)
-        // → server-side move (copy + delete, no round-trip).
-        if let s = src.s3, let d = dst.s3, s.sameStore(as: d), let client = src.s3Client {
-            provider = S3SameStoreProvider(client: client, move: true)
-        } else if let s = src.android, let d = dst.android, s.sessionID == d.sessionID {
-            // Same phone → on-device move.
-            provider = AndroidSameDeviceProvider(device: s, move: true)
-        } else if let s = src.sftp, let d = dst.sftp, s.sameHost(as: d) {
-            // Same SFTP host → server-side mv (no download+upload round-trip).
-            provider = SFTPSameHostProvider(connection: s, move: true)
-        } else if src.s3 != nil || dst.s3 != nil || src.sftp != nil || dst.sftp != nil
-                    || src.android != nil || dst.android != nil {
+        if let s = src.remote, let d = dst.remote, s.sharesNamespace(with: d) {
+            // Same namespace on both panels (SFTP host / S3 store / phone /
+            // plugin drive) → server-side or on-device move, no round-trip.
+            provider = s.sameStoreProvider(move: true)
+        } else if src.remote != nil || dst.remote != nil {
             // Cross-backend move (local↔S3, local↔SFTP, S3↔S3 cross-store…):
             // run the matching copy pipeline, then delete the sources once every
             // unit succeeded (TC's F6 to/from a remote panel). Archive sources
             // can't be removed in place, so refuse those.
             guard PanelState.archiveRoot(in: src.currentPath) == nil else { NSSound.beep(); return }
             let del = DeleteProvider(sftp: src.sftp,
-                                     remoteFS: (src.s3 != nil || src.android != nil) ? src.fs : nil,
+                                     remoteFS: (src.remote != nil && src.sftp == nil) ? src.fs : nil,
                                      permanent: true)
             runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst,
                         provider: transferProvider(forCopyFrom: src, to: dst),
@@ -1506,6 +1518,7 @@ class MainViewController: NSViewController {
         let isSFTP = panel.sftp != nil
         let isS3 = panel.s3 != nil
         let isAndroid = panel.android != nil
+        let isPlugin = panel.plugin != nil
         let n = items.count
         let countText = n == 1 ? tr("1 item") : tr("%d items", n)
 
@@ -1513,7 +1526,7 @@ class MainViewController: NSViewController {
         let run: () -> Void = { [weak self] in
             guard let self = self else { return }
             let op = DeleteProvider(sftp: panel.sftp,
-                                    remoteFS: (panel.s3 != nil || panel.android != nil) ? panel.fs : nil,
+                                    remoteFS: (panel.remote != nil && panel.sftp == nil) ? panel.fs : nil,
                                     permanent: permanent).makeOperation(items: items)
             self.runOperation(op) { [weak self] in
                 self?.activePanelVC.panelState.selectedItems.removeAll()
@@ -1523,7 +1536,7 @@ class MainViewController: NSViewController {
         }
 
         // Remote delete is irreversible regardless of which key was pressed.
-        guard confirm || isSFTP || isS3 || isAndroid else { run(); return }
+        guard confirm || isSFTP || isS3 || isAndroid || isPlugin else { run(); return }
 
         // List what's about to go (up to 10 names, the rest folded), so the user
         // confirms actual content, not just a count.
@@ -1539,6 +1552,11 @@ class MainViewController: NSViewController {
             alert.messageText = tr("Delete %@ from S3?", countText)
             alert.informativeText = listing + "\n\n"
                 + tr("This permanently removes them from the bucket and cannot be undone.")
+            alert.addButton(withTitle: tr("Delete"))
+        } else if isPlugin {
+            alert.messageText = tr("Delete %@ from %@?", countText, panel.plugin?.session.label ?? "")
+            alert.informativeText = listing + "\n\n"
+                + tr("This permanently removes them and cannot be undone.")
             alert.addButton(withTitle: tr("Delete"))
         } else if permanent {
             alert.messageText = tr("Permanently delete %@?", countText)
@@ -1857,13 +1875,22 @@ class MainViewController: NSViewController {
             op.perItemOperation = { [weak op] _ in
                 guard let op = op else { return }
                 do {
-                    try await LocalFS().createArchive(
-                        sources: sources, to: archivePath,
-                        format: opts.format, level: opts.level, password: opts.password,
-                        baseDir: baseDir, volumeSize: opts.volumeSize,
-                        totalSourceBytes: total,
-                        progress: { op.reportBytes($0) },
-                        shouldCancel: { op.cancelRequested })
+                    switch opts.format {
+                    case .builtIn(let format):
+                        try await LocalFS().createArchive(
+                            sources: sources, to: archivePath,
+                            format: format, level: opts.level, password: opts.password,
+                            baseDir: baseDir, volumeSize: opts.volumeSize,
+                            totalSourceBytes: total,
+                            progress: { op.reportBytes($0) },
+                            shouldCancel: { op.cancelRequested })
+                    case .plugin(let reg):
+                        try await PluginArchiveFS.createArchive(
+                            sources: sources, to: archivePath, packer: reg.extensionObject,
+                            baseDir: baseDir,
+                            progress: { op.reportBytes($0) },
+                            shouldCancel: { op.cancelRequested })
+                    }
                 } catch {
                     // Cancelled or failed: don't leave a half-written archive around.
                     LocalFS.removePackOutputs(archivePath: archivePath, split: split)
@@ -2692,8 +2719,12 @@ class MainViewController: NSViewController {
     /// own directory when the drop landed on a file row, a package, or empty space.
     func panelViewController(_ vc: PanelViewController, didDropFiles urls: [URL], move: Bool, destDir: String) {
         let panel = vc.panelState
-        guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
+        guard PanelState.archiveRoot(in: panel.currentPath) == nil, panel.remoteArchive == nil else {
             NSSound.beep(); return
+        }
+        if let session = panel.remote {
+            dropOntoRemote(urls, session: session, destPanel: panel, destDir: destDir, move: move)
+            return
         }
         // Same guard F5/F6 uses: a folder dropped onto itself, into its own
         // subtree, or an item dropped back into its own parent. The local
@@ -2716,6 +2747,60 @@ class MainViewController: NSViewController {
             self?.leftPanelVC.panelState.refresh()
             self?.rightPanelVC.panelState.refresh()
         }
+    }
+
+    /// Drop onto a remote panel (SFTP / S3 / phone / plugin drive). Every dragged
+    /// item is a real local file — virtual entries never start a drag — so this
+    /// is F5's upload path with the drop folder as destination: same conflict
+    /// prompt, same per-backend provider, and for a move the local sources go
+    /// only after every unit succeeded (F6 cross-backend semantics).
+    private func dropOntoRemote(_ urls: [URL], session: RemoteSession, destPanel: PanelState,
+                                destDir: String, move: Bool) {
+        let items = urls.compactMap { Self.localItem(at: $0.path) }
+        guard !items.isEmpty else { NSSound.beep(); return }
+        let provider = session.transferProvider(download: false)
+        Task { @MainActor in
+            let existing = await self.existingDestNames(of: items, at: destDir, destPanel: destPanel)
+            let conflicts = items.filter { existing.contains($0.name) }
+            self.promptConflicts(conflicts) { [weak self] policy in
+                guard let self = self, let policy = policy else { return }
+                let skip = policy == .skip ? Set(conflicts.map { $0.name }) : []
+                let toTransfer = items.filter { !skip.contains($0.name) }
+                guard !toTransfer.isEmpty else { return }
+                let op = provider.makeOperation(items: toTransfer, destPath: destDir, renameTo: nil)
+                self.runOperation(op) { [weak self] in
+                    guard let self = self else { return }
+                    if move, !op.isCancelled, op.failures.isEmpty {
+                        let delOp = DeleteProvider(sftp: nil, remoteFS: nil, permanent: true)
+                            .makeOperation(items: toTransfer)
+                        self.runOperation(delOp) { [weak self] in self?.refreshBothPanels() }
+                        return
+                    }
+                    self.refreshBothPanels()
+                }
+            }
+        }
+    }
+
+    private func refreshBothPanels() {
+        leftPanelVC.panelState.refresh()
+        rightPanelVC.panelState.refresh()
+    }
+
+    /// A `FileItem` for an on-disk path (what the transfer providers expect from
+    /// a panel listing), nil when it doesn't exist.
+    static func localItem(at path: String) -> FileItem? {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return nil }
+        let a = (try? FileManager.default.attributesOfItem(atPath: path)) ?? [:]
+        let name = (path as NSString).lastPathComponent
+        return FileItem(id: UUID(), name: name, path: path, isDirectory: isDir.boolValue,
+                        isArchive: !isDir.boolValue && FileItem.isArchiveFileName(name),
+                        size: (a[.size] as? NSNumber)?.int64Value ?? 0,
+                        modified: (a[.modificationDate] as? Date) ?? Date(),
+                        isHidden: name.hasPrefix("."),
+                        isSymlink: (a[.type] as? FileAttributeType) == .typeSymbolicLink,
+                        permissions: "")
     }
 
     /// Renames a large S3 object via a cancelable progress sheet. S3 has no native
@@ -2887,21 +2972,24 @@ class MainViewController: NSViewController {
     /// direction + one-click sync). Both Compare and Synchronize menus open it.
     func actionCompareDirectories() { actionSynchronize() }
 
-    /// Builds a sync endpoint from a panel. nil ⇒ unsupported (archive, or S3 without client).
+    /// Builds a sync endpoint from a panel. nil ⇒ unsupported (archive, or the
+    /// S3 account root).
     private func makeSyncEndpoint(_ p: PanelState) -> SyncEndpoint? {
-        if PanelState.archiveRoot(in: p.currentPath) != nil { return nil }
-        // Android/MTP has no SyncEndpoint kind; without this it would fall
-        // through to the local branch and sync against a virtual path.
-        if p.android != nil { return nil }
-        if let conn = p.sftp { return .sftp(conn, base: p.currentPath) }
-        if p.s3 != nil {
-            guard let client = p.s3Client else { return nil }
+        if PanelState.archiveRoot(in: p.currentPath) != nil || p.remoteArchive != nil { return nil }
+        switch p.remote {
+        case .sftp(let conn)?:
+            return .sftp(conn, base: p.currentPath)
+        case .s3(let conn, let secret)?:
             let (bucket, key) = parseS3Path(p.currentPath)
             guard let b = bucket else { return nil }     // bucket list root not syncable
             let prefix = key.isEmpty ? "" : (key.hasSuffix("/") ? key : key + "/")
-            return .s3(client, bucket: b, prefix: prefix)
+            return .s3(conn.makeClient(secret: secret), bucket: b, prefix: prefix)
+        case .android?, .plugin?:
+            // No server-side listing: the generic VirtualFS walk + copy.
+            return .generic(p.fs, base: p.currentPath)
+        case nil:
+            return .local(base: p.currentPath)
         }
-        return .local(base: p.currentPath)
     }
 
     func actionSynchronize() {
@@ -3139,6 +3227,58 @@ class MainViewController: NSViewController {
     @objc func openSettingsToolbar()   { settings().show(select: "toolbar",   on: view.window) }
     @objc func openSettingsShortcuts() { settings().show(select: "shortcuts", on: view.window) }
     @objc func openSettingsFavorites() { settings().show(select: "favorites", on: view.window) }
+    @objc func openSettingsPlugins()   { settings().show(select: "plugins",   on: view.window) }
+
+    // MARK: - Plugins
+
+    /// Drive bar / Plugins menu: enter a file-system plugin's drive in the active
+    /// panel, connecting first when it isn't open yet. `connect` is where the
+    /// plugin may prompt (credentials, account) and where failures surface;
+    /// `PluginError.cancelled` stays silent.
+    func openPluginDrive(driveID: String) {
+        if let open = RemoteSessionStore.shared.session(withID: driveID) {
+            activePanelVC.panelState.enterSession(open)
+            return
+        }
+        guard let reg = PluginManager.shared.fileSystem(driveID: driveID) else { return }
+        let host = PluginManager.shared.host
+        Task { @MainActor in
+            do {
+                let session = try await reg.extensionObject.connect(host: host)
+                let drive = PluginDriveSession(driveID: driveID, pluginID: reg.pluginID,
+                                               symbol: reg.extensionObject.symbolName, session: session)
+                self.activePanelVC.panelState.connectPlugin(drive, initialPath: "/")
+            } catch {
+                host.presentError(error)
+            }
+        }
+    }
+
+    /// Plugins menu: run a command plugin against the current selection.
+    func runPluginCommand(id: String) {
+        guard let reg = PluginManager.shared.command(id: id) else { return }
+        let src = activePanelVC.panelState
+        let dst = inactivePanelVC.panelState
+        let selected = activePanelVC.selectedOrCurrent.filter { $0.name != ".." }.map { $0.path }
+        let host = PluginManager.shared.host
+        let context = PluginCommandContext(sourceDirectory: src.currentPath,
+                                           targetDirectory: dst.currentPath,
+                                           selectedPaths: selected,
+                                           sourceIsLocal: isLocalPanel(src),
+                                           targetIsLocal: isLocalPanel(dst),
+                                           host: host)
+        Task { @MainActor in
+            do {
+                try await reg.extensionObject.perform(context)
+            } catch {
+                host.presentError(error)
+            }
+        }
+    }
+
+    func panelViewController(_ vc: PanelViewController, openPluginDrive driveID: String) {
+        openPluginDrive(driveID: driveID)
+    }
 
     /// Re-applies all settings that the Settings window can change, to both panels.
     func reapplyAllSettings() {

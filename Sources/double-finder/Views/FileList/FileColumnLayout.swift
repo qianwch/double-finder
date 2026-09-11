@@ -4,13 +4,20 @@ import CoreGraphics
 /// No AppKit views, no UserDefaults — fully deterministic and unit-testable.
 struct FileColumnLayout {
 
-    /// Optional columns (beyond Name) the user can show/hide via the header menu.
-    /// Tuple: column id, header title, default width.
-    static let optionalColumns: [(id: String, title: String, width: CGFloat)] = [
+    /// Built-in optional columns (beyond Name). Tuple: column id, header title, default width.
+    static let builtInColumns: [(id: String, title: String, width: CGFloat)] = [
         ("size", "Size", 80), ("date", "Modified", 130),
         ("added", "Date Added", 130), ("created", "Date Created", 130),
         ("kind", "Kind", 130), ("perms", "Permissions", 100),
     ]
+
+    /// Every optional column the user can show/hide via the header menu: the
+    /// built-ins, then the columns of active content plugins ("plugin.*" ids,
+    /// see `PluginColumnRegistry`). Computed, so enabling a plugin adds its
+    /// columns to the chooser without a restart.
+    static var optionalColumns: [(id: String, title: String, width: CGFloat)] {
+        builtInColumns + PluginColumnRegistry.columns.map { ($0.id, $0.title, $0.width) }
+    }
 
     struct Col {
         let id: String

@@ -7,6 +7,8 @@ enum HelpContent {
     /// THIRD-PARTY.md on GitHub — fallback for the bare dev binary, whose
     /// resource folder has no copy of the licence files.
     static let thirdPartyURL = URL(string: "https://github.com/qianwch/double-finder/blob/main/THIRD-PARTY.md")!
+    /// Plugin development guide (English; the Chinese version sits next to it).
+    static let pluginGuideURL = URL(string: "https://github.com/qianwch/double-finder/blob/main/docs/plugin-development.md")!
 
     /// The THIRD-PARTY.md that package_app.sh drops into Contents/Resources next
     /// to LICENSE.txt, NOTICE.txt and every third-party licence text; nil when

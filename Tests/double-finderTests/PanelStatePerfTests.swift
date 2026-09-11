@@ -53,14 +53,15 @@ final class PanelStatePerfTests: XCTestCase {
 
     func testIsRemoteTrueWhenSFTPConnected() {
         let state = PanelState(path: "/")
-        state.sftp = SFTPConnection(host: "h", user: "u")
+        state.remote = .sftp(SFTPConnection(host: "h", user: "u"))
         XCTAssertTrue(state.isRemote)
     }
 
     func testIsRemoteTrueWhenS3Connected() {
         let state = PanelState(path: "/")
-        state.s3 = S3Connection(name: "n", endpoint: "https://s3.example.com",
-                                region: "us-east-1", bucket: "", accessKey: "AK", pathStyle: true)
+        state.remote = .s3(S3Connection(name: "n", endpoint: "https://s3.example.com",
+                                        region: "us-east-1", bucket: "", accessKey: "AK", pathStyle: true),
+                           secret: "")
         XCTAssertTrue(state.isRemote)
     }
 

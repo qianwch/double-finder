@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var appState: AppState!
     private weak var favoritesMenu: NSMenu?
     private weak var terminalAppMenu: NSMenu?
+    private weak var pluginsMenu: NSMenu?
     private var helpKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,6 +33,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // for one frame at launch.
         AppSettings.applyAppearance()
         ServerConnectionStore.migrateIfNeeded()
+        // Plugins load before the window: their drives must be in the drive bar
+        // and their commands in the menu from the first frame.
+        PluginManager.shared.loadAll()
         windowController = MainWindowController(appState: appState)
         windowController.showWindow()
         setupMenus()
@@ -74,6 +78,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowController.saveFrame()
         appState.save()
         mainVC()?.saveTabs()
+        // Plugins first: ejecting their drives may need whatever they hold open.
+        PluginManager.shared.deactivateAll()
         // Hand the phone's USB interface back, or Chrome / Android File Transfer
         // stay locked out until it's physically unplugged.
         AndroidDeviceRegistry.shared.closeAll()
@@ -259,7 +265,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cmdMenu.addItem(item("Compare by Content", #selector(menuCompareContent)))
         cmdMenu.addItem(item("Synchronize Directories…", #selector(menuSyncDirs)))
         cmdMenu.addItem(.separator())
-        cmdMenu.addItem(item("Open in Terminal", #selector(menuOpenTerminal), "t", [.command, .shift]))
+        cmdMenu.addItem(item("Open in Terminal", #selector(menuOpenTerminal), "t", [.command, .shift], .openTerminal))
         let termAppItem = NSMenuItem(title: tr("Terminal App"), action: nil, keyEquivalent: "")
         let termAppMenu = NSMenu(title: tr("Terminal App"))
         termAppMenu.delegate = self                 // populated dynamically
@@ -268,6 +274,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cmdMenu.addItem(termAppItem)
         cmdMenu.addItem(item("Focus Command Line", #selector(menuFocusCommandLine), "l", [.command], .commandLine))
         top(tr("Commands"), cmdMenu)
+
+        // Plugins — drives and commands contributed by plugins; populated on
+        // demand so enabling a plugin in Settings shows up without a rebuild.
+        let plugMenu = NSMenu(title: tr("Plugins"))
+        plugMenu.delegate = self
+        pluginsMenu = plugMenu
+        top(tr("Plugins"), plugMenu)
 
         // Favorites — populated on demand (menuNeedsUpdate).
         let favMenu = NSMenu(title: tr("Favorites"))
@@ -335,6 +348,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(other)
             return
         }
+        if menu === pluginsMenu {
+            rebuildPluginsMenu(menu)
+            return
+        }
         guard menu === favoritesMenu else { return }
         menu.removeAllItems()
 
@@ -381,6 +398,63 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuNewDirectory() {
         mainVC()?.perform(#selector(MainViewController.actionNewDirectory_menu))
     }
+    // MARK: - Plugins menu (dynamic)
+
+    @MainActor private func rebuildPluginsMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let manager = PluginManager.shared
+        for reg in manager.fileSystems {
+            let it = NSMenuItem(title: tr("Open %@", reg.extensionObject.displayName),
+                                action: #selector(menuOpenPluginDrive(_:)), keyEquivalent: "")
+            it.target = self
+            it.image = NSImage(systemSymbolName: reg.extensionObject.symbolName,
+                               accessibilityDescription: reg.extensionObject.displayName)
+            it.representedObject = reg.driveID
+            menu.addItem(it)
+        }
+        if !manager.fileSystems.isEmpty, !manager.commands.isEmpty { menu.addItem(.separator()) }
+        for reg in manager.commands {
+            let it = NSMenuItem(title: reg.extensionObject.title,
+                                action: #selector(menuRunPluginCommand(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = reg.id
+            menu.addItem(it)
+        }
+        if manager.fileSystems.isEmpty, manager.commands.isEmpty {
+            let none = NSMenuItem(title: tr("No Plugins Installed"), action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        menu.addItem(.separator())
+        let folder = NSMenuItem(title: tr("Open Plugins Folder"), action: #selector(menuOpenPluginsFolder),
+                                keyEquivalent: "")
+        folder.target = self
+        menu.addItem(folder)
+        let manage = NSMenuItem(title: tr("Manage Plugins…"), action: #selector(menuManagePlugins),
+                                keyEquivalent: "")
+        manage.target = self
+        menu.addItem(manage)
+        let guide = NSMenuItem(title: tr("Plugin Development Guide"), action: #selector(menuPluginGuide),
+                               keyEquivalent: "")
+        guide.target = self
+        menu.addItem(guide)
+    }
+
+    @objc private func menuPluginGuide() { NSWorkspace.shared.open(HelpContent.pluginGuideURL) }
+
+    @objc private func menuOpenPluginDrive(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        mainVC()?.openPluginDrive(driveID: id)
+    }
+    @objc private func menuRunPluginCommand(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        mainVC()?.runPluginCommand(id: id)
+    }
+    @objc private func menuOpenPluginsFolder() {
+        NSWorkspace.shared.open(PluginManager.userPluginsDirectory)
+    }
+    @objc private func menuManagePlugins() { mainVC()?.openSettingsPlugins() }
+
     @objc private func menuConnectServer() {
         mainVC()?.perform(#selector(MainViewController.actionConnectServer_menu))
     }

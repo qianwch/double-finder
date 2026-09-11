@@ -147,7 +147,12 @@ final class FileListBodyView: NSView {
         }
         // Accept file drops from Finder / other apps / the other panel.
         registerForDraggedTypes([.fileURL])
+        NotificationCenter.default.addObserver(self, selector: #selector(pluginColumnsReady),
+                                               name: PluginColumnValues.didUpdate, object: nil)
     }
+
+    /// A batch of plugin column values landed: repaint the visible rows (O(1)).
+    @objc private func pluginColumnsReady() { setNeedsDisplay(visibleRect) }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -543,7 +548,13 @@ final class FileListBodyView: NSView {
             return item.permissions.isEmpty
                 ? LocalFS.permissions(for: item.path)
                 : item.permissions
-        default:        return ""
+        default:
+            // Content-plugin column: cache hit or "" while the value is fetched
+            // in the background (a repaint follows, see pluginColumnsReady).
+            if PluginColumnRegistry.isPluginColumn(column) {
+                return PluginColumnValues.shared.text(columnID: column, item: item)
+            }
+            return ""
         }
     }
 

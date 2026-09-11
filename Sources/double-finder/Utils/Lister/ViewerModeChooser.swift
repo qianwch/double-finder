@@ -1,6 +1,8 @@
 import Foundation
 
-enum ViewerMode { case text, hex, preview }
+/// `.plugin` = a `ViewerPlugin` claimed the file (PluginManager.viewer(for:)); it
+/// is only reachable while such a plugin exists for the current file.
+enum ViewerMode { case text, hex, preview, plugin }
 
 /// Default-mode routing per file (design §3): media/PDF/Office → QL preview;
 /// decodable text (no NULs, or has a BOM) → text; everything else → hex.

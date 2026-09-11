@@ -90,7 +90,9 @@ struct FileItem: Identifiable, Hashable {
         let lower = name.lowercased()
         if rarVolumeNumber(lower).map({ $0 > 1 }) == true { return false }   // "x.part2.rar": continuation
         if archiveSuffixes.contains(where: { lower.hasSuffix($0) }) { return true }
-        return splitArchiveFirstPartBase(name) != nil
+        if splitArchiveFirstPartBase(name) != nil { return true }
+        // Formats contributed by packer plugins (empty registry = one lock take).
+        return ArchivePluginRegistry.packer(forFileName: name) != nil
     }
 
     /// N for a new-style RAR volume name "x.partN.rar" (any zero padding), nil

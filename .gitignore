@@ -22,3 +22,10 @@ Package.resolved
 /vendor/mermaid/mermaid.min.js
 /vendor/plantuml/plantuml.jar
 /vendor/*/*.tmp
+
+# Nested SwiftPM packages (plugin API + example plugin) build here
+/PluginKit/.build/
+/PluginKit/.swiftpm/
+/Examples/*/.build/
+/Examples/*/.dist/
+/Examples/*/.swiftpm/

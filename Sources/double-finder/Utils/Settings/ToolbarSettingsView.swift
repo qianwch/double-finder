@@ -7,25 +7,9 @@ final class ToolbarSettingsView: NSView {
 
     // MARK: - State
 
-    /// All available commands: (id, human-readable label/tooltip), in canonical
-    /// order. This mirrors `MainViewController.allToolbarCommands`.
-    private static let allCommands: [(id: String, label: String)] = [
-        ("refresh",     "Refresh"),
-        ("copy",        "Copy (F5)"),
-        ("move",        "Move (F6)"),
-        ("newdir",      "New Directory (F7)"),
-        ("delete",      "Delete (F8)"),
-        ("pack",        "Pack…"),
-        ("extract",     "Extract"),
-        ("find",        "Find Files"),
-        ("multirename", "Multi-Rename"),
-        ("sftp",        "SFTP Connection"),
-        ("swap",        "Swap Panels"),
-        ("branch",      "Branch View"),
-        ("tree",        "Directory Tree"),
-        ("commandline", "Command Line"),
-        ("terminal",    "Open in Terminal"),
-    ]
+    /// All available commands (built-in + plugin): (id, English label), in
+    /// canonical order — the same list the toolbar itself is built from.
+    @MainActor private static var allCommands: [(id: String, label: String)] { CommandRegistry.toolbarChoices }
 
     /// Working order: all command ids (enabled ones come first in saved order,
     /// then remaining commands appended).
@@ -43,6 +27,7 @@ final class ToolbarSettingsView: NSView {
 
     /// Reads the saved toolbar into working state: saved enabled ids first
     /// (filtered to known ones), then every remaining command appended.
+    @MainActor
     private static func loadState() -> (order: [String], enabled: Set<String>, customs: [CustomToolbarButton]) {
         let customs = CustomToolbarButtons.all()
         let currentIDs = ToolbarConfig.ids
@@ -150,6 +135,8 @@ final class ToolbarSettingsView: NSView {
 
     private func label(for id: String) -> String {
         if let custom = customs.first(where: { $0.id == id }) { return custom.title }
+        // Built-in labels are English source strings (the cell tr()s them);
+        // plugin titles come localized and pass through tr() unchanged.
         return ToolbarSettingsView.allCommands.first { $0.id == id }?.label ?? id
     }
 

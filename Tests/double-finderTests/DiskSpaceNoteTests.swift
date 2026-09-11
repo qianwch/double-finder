@@ -49,7 +49,7 @@ final class DiskSpaceNoteTests: XCTestCase {
         XCTAssertFalse(state.diskNote.isEmpty)
 
         // Connecting to a remote makes the local figure meaningless.
-        state.sftp = SFTPConnection(host: "h", user: "u")
+        state.remote = .sftp(SFTPConnection(host: "h", user: "u"))
         let cleared = expectation(description: "disk note cleared")
         state.onDiskSpaceChange = { cleared.fulfill() }
         state.refreshDiskSpace()

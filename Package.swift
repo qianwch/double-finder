@@ -10,6 +10,13 @@ let package = Package(
         // Product name becomes the binary name, which drives the menu-bar app name.
         .executable(name: "Double Finder", targets: ["double-finder"])
     ],
+    dependencies: [
+        // Public plugin API (PluginKit/). A separate package so SwiftPM links it
+        // as a real dynamic library — external .dfplugin bundles link the same
+        // dylib, giving the host and every plugin one shared copy of the
+        // protocol metadata (see PluginKit/Package.swift).
+        .package(path: "PluginKit")
+    ],
     targets: [
         // Vendored libarchive declarations (BSD-licensed). Links the system
         // /usr/lib/libarchive dylib (bsdtar's backend, ~3.7.x) so archive
@@ -62,7 +69,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "double-finder",
-            dependencies: ["Clibarchive", "Clibmtp", "CSevenZip"],
+            dependencies: [
+                .product(name: "DoubleFinderPluginKit", package: "PluginKit"),
+                "Clibarchive", "Clibmtp", "CSevenZip"
+            ],
             path: "Sources/double-finder",
             resources: [
                 .copy("Resources/Localization"),

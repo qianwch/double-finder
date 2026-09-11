@@ -34,6 +34,10 @@ final class SyncDirsSheet: NSWindowController {
     /// into `windowWillClose`, and the queue/scan must only be cancelled once.
     private var didClose = false
     private var anyS3: Bool { left.isS3 || right.isS3 }
+    /// A generic (Android / plugin) side: mtimes are whatever the backend kept —
+    /// a plugin may or may not preserve them on upload — so size-only is the
+    /// safer default, but unlike S3 the user can turn timestamps back on.
+    private var anyGeneric: Bool { left.isGeneric || right.isGeneric }
 
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "")
@@ -79,7 +83,7 @@ final class SyncDirsSheet: NSWindowController {
         syncButton.title = tr("Synchronize")
         hideEqual.state = .on
         ignoreTemp.state = .on           // skip junk by default (.DS_Store, node_modules, …)
-        sizeOnly.state = anyS3 ? .on : .off
+        sizeOnly.state = (anyS3 || anyGeneric) ? .on : .off
         sizeOnly.isEnabled = !anyS3      // S3 LastModified ≠ content mtime → force size-only
         hideEqual.target = self; hideEqual.action = #selector(optionsChanged)
         ignoreTemp.target = self; ignoreTemp.action = #selector(optionsChanged)
@@ -324,6 +328,21 @@ final class SyncDirsSheet: NSWindowController {
             try fm.createDirectory(atPath: (t as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             try await client.getObject(bucket: bucket, key: prefix + rel, toLocalPath: t, progress: report)
 
+        case (.local(let sb), .generic(let fs, let db)):
+            let s = (sb as NSString).appendingPathComponent(rel)
+            let remoteDir = ((db as NSString).appendingPathComponent(rel) as NSString).deletingLastPathComponent
+            try await Self.ensureDirectory(fs, path: remoteDir, above: db)
+            try await fs.copy(from: s, to: remoteDir)
+            report(localSize(s))
+
+        case (.generic(let fs, let sb), .local(let db)):
+            let remote = (sb as NSString).appendingPathComponent(rel)
+            let t = (db as NSString).appendingPathComponent(rel)
+            let localDir = (t as NSString).deletingLastPathComponent
+            try fm.createDirectory(atPath: localDir, withIntermediateDirectories: true)
+            try await fs.copy(from: remote, to: localDir)
+            report(localSize(t))
+
         case (.sftp(let sc, let sb), .sftp(let dc, let db)) where sc.sameHost(as: dc):
             // Both panels on one SFTP host: server-side cp, no round-trip.
             let srcPath = (sb as NSString).appendingPathComponent(rel)
@@ -348,6 +367,8 @@ final class SyncDirsSheet: NSWindowController {
             case .s3(let client, let bucket, let prefix):
                 try await client.getObject(bucket: bucket, key: prefix + rel,
                                            toLocalPath: temp, progress: { _ in })
+            case .generic(let fs, let base):
+                try await fs.copy(from: (base as NSString).appendingPathComponent(rel), to: tempDir)
             case .local:
                 break   // unreachable: local sources are handled above
             }
@@ -363,9 +384,29 @@ final class SyncDirsSheet: NSWindowController {
             case .s3(let client, let bucket, let prefix):
                 try await client.putObject(bucket: bucket, key: prefix + rel,
                                            fromLocalPath: temp, progress: report)
+            case .generic(let fs, let base):
+                let remoteDir = ((base as NSString).appendingPathComponent(rel) as NSString).deletingLastPathComponent
+                try await Self.ensureDirectory(fs, path: remoteDir, above: base)
+                try await fs.copy(from: temp, to: remoteDir)
+                report(localSize(temp))
             case .local:
                 break   // unreachable
             }
+        }
+    }
+
+    /// Creates `path` and its missing parents below `root` on a generic FS
+    /// (whose `createDirectory` is single-level and may refuse an existing dir).
+    private static func ensureDirectory(_ fs: VirtualFS, path: String, above root: String) async throws {
+        guard path.hasPrefix(root), path != root else { return }
+        let rel = String(path.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var current = root
+        for comp in rel.components(separatedBy: "/") where !comp.isEmpty {
+            current = (current as NSString).appendingPathComponent(comp)
+            // Existing directories are the common case; only a failed listing
+            // followed by a failed create is a real error.
+            if (try? await fs.listDirectory(current)) != nil { continue }
+            try await fs.createDirectory(current)
         }
     }
 

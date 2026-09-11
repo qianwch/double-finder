@@ -56,7 +56,7 @@ enum AppCommand: String, CaseIterable {
     case refresh, copy, move, newDir, delete, pack, extract, find, multiRename
     case sftp, swap, branch, tree, commandLine, rename, quickLook
     case viewFull, viewBrief, viewThumbnails, filter, selectAll, newTab, closeTab
-    case openInOther, matchOther
+    case openInOther, matchOther, openTerminal
 
     var label: String {
         switch self {
@@ -85,7 +85,90 @@ enum AppCommand: String, CaseIterable {
         case .closeTab: return "Close Tab"
         case .openInOther: return "Open Folder in Other Panel"
         case .matchOther: return "Same Folder as Active in Other Panel"
+        case .openTerminal: return "Open in Terminal"
         }
+    }
+
+    // MARK: Toolbar metadata (the toolbar draws from the same command list)
+
+    /// Toolbar button id, nil for commands that have no button. The ids are
+    /// persisted in `ToolbarButtonIDs`, so they never change.
+    var toolbarID: String? {
+        switch self {
+        case .refresh: return "refresh"
+        case .copy: return "copy"
+        case .move: return "move"
+        case .newDir: return "newdir"
+        case .delete: return "delete"
+        case .pack: return "pack"
+        case .extract: return "extract"
+        case .find: return "find"
+        case .multiRename: return "multirename"
+        case .sftp: return "sftp"
+        case .swap: return "swap"
+        case .branch: return "branch"
+        case .tree: return "tree"
+        case .commandLine: return "commandline"
+        case .openTerminal: return "terminal"
+        default: return nil
+        }
+    }
+
+    /// SF Symbol of the toolbar button (only for commands with a `toolbarID`).
+    var symbol: String? {
+        switch self {
+        case .refresh: return "arrow.clockwise"
+        case .copy: return "doc.on.doc"
+        case .move: return "arrow.right.doc.on.clipboard"
+        case .newDir: return "folder.badge.plus"
+        case .delete: return "trash"
+        case .pack: return "archivebox"
+        case .extract: return "shippingbox"
+        case .find: return "magnifyingglass"
+        case .multiRename: return "pencil"
+        case .sftp: return "network"
+        case .swap: return "arrow.left.arrow.right"
+        case .branch: return "list.bullet.indent"
+        case .tree: return "sidebar.left"
+        // Not "terminal": that reads as the same button as "Open in Terminal"
+        // next to it, and focusing the command line gives almost no visible
+        // feedback — users reported the terminal button "doing nothing".
+        case .commandLine: return "rectangle.bottomthird.inset.filled"
+        case .openTerminal: return "terminal.fill"
+        default: return nil
+        }
+    }
+
+    /// Toolbar tooltip / Settings ▸ Toolbar label — an English source string
+    /// (translated at display time). Differs from `label` where the button
+    /// traditionally names its key ("Copy (F5)"); kept verbatim so the existing
+    /// translations still hit.
+    var toolbarTooltip: String? {
+        switch self {
+        case .refresh: return "Refresh"
+        case .copy: return "Copy (F5)"
+        case .move: return "Move (F6)"
+        case .newDir: return "New Directory (F7)"
+        case .delete: return "Delete (F8)"
+        case .pack: return "Pack…"
+        case .extract: return "Extract"
+        case .find: return "Find Files"
+        case .multiRename: return "Multi-Rename"
+        case .sftp: return "SFTP Connection"
+        case .swap: return "Swap Panels"
+        case .branch: return "Branch View"
+        case .tree: return "Directory Tree"
+        case .commandLine: return "Command Line"
+        case .openTerminal: return "Open in Terminal"
+        default: return nil
+        }
+    }
+
+    /// Commands that can sit on the toolbar, in the canonical order Settings ▸
+    /// Toolbar lists them (= `ToolbarConfig.defaultIDs` order).
+    static var toolbarCommands: [AppCommand] {
+        [.refresh, .copy, .move, .newDir, .delete, .pack, .extract, .find, .multiRename,
+         .sftp, .swap, .branch, .tree, .commandLine, .openTerminal]
     }
 
     /// Built-in default shortcut, shown for reference in the editor.
@@ -116,6 +199,45 @@ enum AppCommand: String, CaseIterable {
         case .closeTab: return "⌘W"
         case .openInOther: return "⌘⇧O"
         case .matchOther: return "⌘="
+        case .openTerminal: return "⌘⇧T"
+        }
+    }
+}
+
+/// Anything a shortcut can be bound to: a built-in `AppCommand`, or a command
+/// contributed by a plugin (no built-in default key, so no "Enabled" switch).
+enum BindableCommand: Equatable {
+    case builtIn(AppCommand)
+    /// `id` = `PluginManager.RegisteredCommand.id` ("<plugin>/<command>").
+    case plugin(id: String, title: String)
+
+    var label: String {
+        switch self {
+        case .builtIn(let c): return c.label
+        case .plugin(_, let title): return title
+        }
+    }
+
+    var defaultHint: String {
+        switch self {
+        case .builtIn(let c): return c.defaultHint
+        case .plugin: return "—"
+        }
+    }
+
+    /// UserDefaults key of the custom binding.
+    var storageKey: String {
+        switch self {
+        case .builtIn(let c): return "kb.\(c.rawValue)"
+        case .plugin(let id, _): return "kb.plugin.\(id)"
+        }
+    }
+
+    static func == (a: BindableCommand, b: BindableCommand) -> Bool {
+        switch (a, b) {
+        case (.builtIn(let x), .builtIn(let y)): return x == y
+        case (.plugin(let x, _), .plugin(let y, _)): return x == y
+        default: return false
         }
     }
 }
@@ -156,6 +278,31 @@ enum KeyBindings {
     /// The command bound to `combo`, if any (used to dispatch a key event).
     static func command(for combo: KeyCombo) -> AppCommand? {
         for c in AppCommand.allCases where KeyBindings.combo(for: c) == combo { return c }
+        return nil
+    }
+
+    // MARK: Bindable (built-in + plugin) commands
+
+    static func combo(for command: BindableCommand) -> KeyCombo? {
+        guard let s = UserDefaults.standard.string(forKey: command.storageKey) else { return nil }
+        return KeyCombo(storage: s)
+    }
+
+    static func set(_ combo: KeyCombo?, for command: BindableCommand) {
+        if let combo = combo {
+            UserDefaults.standard.set(combo.storageString, forKey: command.storageKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: command.storageKey)
+        }
+    }
+
+    /// Every command a key can be bound to right now: the built-ins plus the
+    /// commands of active plugins (see `CommandRegistry`).
+    @MainActor static var bindableCommands: [BindableCommand] { CommandRegistry.bindable }
+
+    /// Whatever is bound to `combo` — built-in first, then plugin commands.
+    @MainActor static func bindable(for combo: KeyCombo) -> BindableCommand? {
+        for c in bindableCommands where KeyBindings.combo(for: c) == combo { return c }
         return nil
     }
 }

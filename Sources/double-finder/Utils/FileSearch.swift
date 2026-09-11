@@ -15,6 +15,9 @@ enum SearchEndpoint {
     case archive(archivePath: String, password: String?, base: String)
     /// The panel is inside an archive browsed in place on an SFTP host.
     case remoteArchive(RemoteArchiveFS, base: String)
+    /// A file-system plugin's drive: a directory-at-a-time walk through the
+    /// session (same shape as Android — no server-side listing or grep).
+    case plugin(PluginDriveSession, base: String)
 
     var base: String {
         switch self {
@@ -24,6 +27,7 @@ enum SearchEndpoint {
         case .android(_, _, let b): return b
         case .archive(_, _, let b): return b
         case .remoteArchive(_, let b): return b
+        case .plugin(_, let b): return b
         }
     }
 
@@ -68,6 +72,7 @@ enum SearchEndpoint {
         case .android(_, let label, let base): return "\(label):\(base)"
         case .archive(_, _, let base): return base
         case .remoteArchive(let ra, let base): return "\(ra.connection.user)@\(ra.connection.host):\(base)"
+        case .plugin(let drive, let base): return "\(drive.session.label):\(base)"
         }
     }
 }
@@ -284,6 +289,8 @@ enum FileSearch {
                               query: query, matcher: matcher, progress: progress)
         case .remoteArchive(let fs, let base):
             try await runRemoteArchive(fs: fs, base: base, query: query, matcher: matcher, progress: progress)
+        case .plugin(let drive, let base):
+            try await runPluginDrive(drive: drive, base: base, query: query, matcher: matcher, progress: progress)
         }
         progress.flush()
         return progress.hits.sorted { $0.path < $1.path }
@@ -654,6 +661,37 @@ enum FileSearch {
     /// serial queue, and going a folder at a time hands that queue back between
     /// USB round-trips, so the panel stays usable and cancellation lands within
     /// one directory instead of after the whole tree.
+    /// Plugin drive: the generic walk over `PluginFS.listDirectory`, content
+    /// matching by fetching each size-capped candidate to a temp folder.
+    private nonisolated static func runPluginDrive(drive: PluginDriveSession, base: String,
+                                                   query: FileSearchQuery, matcher: SearchNameMatcher,
+                                                   progress: SearchProgress) async throws {
+        let fs = PluginFS(drive: drive, currentPath: base)
+        let candidates = try await walk(base: base, subfolders: query.subfolders,
+                                        matcher: matcher, progress: progress) {
+            try await fs.listDirectory($0)
+        }
+        guard !query.content.isEmpty else {
+            for hit in candidates.prefix(maxResults) { progress.add(hit) }
+            return
+        }
+        let temp = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("DoubleFinder-Search-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(atPath: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: temp) }
+        for hit in candidates where hit.size <= SearchContentMatcher.maxBytes {
+            try Task.checkCancellation()
+            if progress.reachedLimit { break }
+            let local = (temp as NSString).appendingPathComponent(PluginFS.leaf(hit.path))
+            try? FileManager.default.removeItem(atPath: local)
+            guard (try? await PluginFS.downloadTree(drive.session, path: hit.path, isDirectory: false,
+                                                    toLocalDirectory: temp, progress: { _ in })) != nil,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: local)) else { continue }
+            if SearchContentMatcher.matches(data, needle: query.content) { progress.add(hit) }
+            try? FileManager.default.removeItem(atPath: local)
+        }
+    }
+
     private nonisolated static func runAndroid(device: AndroidDevice, base: String,
                                                query: FileSearchQuery, matcher: SearchNameMatcher,
                                                progress: SearchProgress) async throws {

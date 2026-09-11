@@ -4,11 +4,12 @@ import XCTest
 final class SettingsCategoryTests: XCTestCase {
     func testRegistryHasEightCategoriesInOrder() {
         let c = SettingsWindowController(installedTerminals: ["Terminal"])
-        XCTAssertEqual(c.categoryIDs, ["general","appearance","panels","toolbar","shortcuts","favorites"])
+        XCTAssertEqual(c.categoryIDs, ["general","appearance","panels","toolbar","shortcuts","favorites","plugins"])
     }
     func testCategoryIndexResolves() {
         let c = SettingsWindowController(installedTerminals: ["Terminal"])
         XCTAssertEqual(c.categoryIndex(for: "favorites"), 5)
+        XCTAssertEqual(c.categoryIndex(for: "plugins"), 6)
         XCTAssertEqual(c.categoryIndex(for: "appearance"), 1)
         XCTAssertEqual(c.categoryIndex(for: "general"), 0)
         XCTAssertNil(c.categoryIndex(for: "nope"))

@@ -5,7 +5,7 @@ import AppKit
 final class PackSheet: NSWindowController {
     struct Options {
         var baseName: String
-        var format: ArchiveFormat
+        var format: PackFormat
         var level: Int
         var password: String?
         var volumeSize: Int64?    // bytes per volume; nil = no split
@@ -13,6 +13,9 @@ final class PackSheet: NSWindowController {
     var onPack: ((Options) -> Void)?
 
     private let destDir: String
+    /// Formats offered, in popup order (snapshotted at init — the plugin set
+    /// can't change while the sheet is up).
+    private let formats: [PackFormat] = PackFormat.all
     private let nameField = NSTextField()
     private let formatPopup = NSPopUpButton()
     private let levelPopup = NSPopUpButton()
@@ -54,7 +57,7 @@ final class PackSheet: NSWindowController {
         nameField.stringValue = defaultBaseName
         nameField.bezelStyle = .roundedBezel
         nameField.useSingleLineScrolling()
-        formatPopup.addItems(withTitles: ArchiveFormat.allCases.map { $0.displayName })
+        formatPopup.addItems(withTitles: formats.map { $0.displayName })
         formatPopup.target = self; formatPopup.action = #selector(formatChanged)
         levelPopup.addItems(withTitles: levels.map { tr($0.0) })
         levelPopup.selectItem(at: 2)   // Normal
@@ -115,7 +118,7 @@ final class PackSheet: NSWindowController {
         ])
     }
 
-    private var selectedFormat: ArchiveFormat { ArchiveFormat.allCases[formatPopup.indexOfSelectedItem] }
+    private var selectedFormat: PackFormat { formats[formatPopup.indexOfSelectedItem] }
 
     private func updateEncryptionAvailability() {
         let supported = selectedFormat.supportsEncryption

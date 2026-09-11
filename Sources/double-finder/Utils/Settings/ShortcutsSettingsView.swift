@@ -12,8 +12,8 @@ final class ShortcutsSettingsView: NSView {
     private var query = ""
     /// 30-odd commands don't fit the pane, so the list is searchable rather than
     /// scrolled blind. Rows index into this, never into `AppCommand.allCases`.
-    private var commands: [AppCommand] {
-        let all = AppCommand.allCases
+    private var commands: [BindableCommand] {
+        let all = KeyBindings.bindableCommands
         guard !query.isEmpty else { return all }
         return all.filter {
             tr($0.label).localizedCaseInsensitiveContains(query)
@@ -170,7 +170,7 @@ final class ShortcutsSettingsView: NSView {
         guard let row = recordingRow else { return }
         let command = commands[row]
         // Drop any other command already using this combo
-        if let clash = KeyBindings.command(for: combo), clash != command {
+        if let clash = KeyBindings.bindable(for: combo), clash != command {
             KeyBindings.set(nil, for: clash)
         }
         KeyBindings.set(combo, for: command)
@@ -198,8 +198,8 @@ extension ShortcutsSettingsView: NSTableViewDataSource, NSTableViewDelegate {
     /// Checkbox column: whether the built-in default key still fires.
     @objc private func toggleDefaultEnabled(_ sender: NSButton) {
         let row = sender.tag
-        guard row >= 0, row < commands.count else { return }
-        KeyBindings.setDefaultDisabled(sender.state == .off, for: commands[row])
+        guard row >= 0, row < commands.count, case .builtIn(let cmd) = commands[row] else { return }
+        KeyBindings.setDefaultDisabled(sender.state == .off, for: cmd)
         onChanged()
     }
 
@@ -216,8 +216,13 @@ extension ShortcutsSettingsView: NSTableViewDataSource, NSTableViewDelegate {
             box.target = self
             box.action = #selector(toggleDefaultEnabled(_:))
             box.tag = row
-            box.state = KeyBindings.isDefaultDisabled(command) ? .off : .on
-            box.isEnabled = command.defaultHint != "—"
+            if case .builtIn(let cmd) = command {
+                box.state = KeyBindings.isDefaultDisabled(cmd) ? .off : .on
+                box.isEnabled = cmd.defaultHint != "—"
+            } else {
+                box.state = .off
+                box.isEnabled = false          // plugin commands have no built-in key
+            }
             return box
         }
         let text: String
@@ -228,7 +233,9 @@ extension ShortcutsSettingsView: NSTableViewDataSource, NSTableViewDelegate {
             if recordingRow == row { text = tr("Press keys…") }
             else { text = KeyBindings.combo(for: command)?.displayString ?? "—" }
         default:
-            text = tr(command.label)
+            // Built-in labels are English source strings (translated here);
+            // plugin titles arrive already localized by the plugin.
+            if case .builtIn = command { text = tr(command.label) } else { text = command.label }
         }
         let cellId = NSUserInterfaceItemIdentifier("sc_\(id)")
         let cell = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTextField ?? {

@@ -35,6 +35,17 @@ struct S3Connection: Equatable {
     /// Host of the endpoint URL (Keychain server attribute).
     var endpointHost: String { URL(string: endpoint)?.host ?? endpoint }
 
+    /// The signed REST client for this connection. Tolerates an endpoint typed
+    /// without a scheme ("obs.example.com"): a scheme-less string parses to a
+    /// URL with no host, breaking every request.
+    func makeClient(secret: String) -> S3Client {
+        let raw = endpoint.contains("://") ? endpoint : "https://\(endpoint)"
+        let ep = S3Endpoint(base: URL(string: raw) ?? URL(string: "https://s3.amazonaws.com")!,
+                            region: region, pathStyle: pathStyle)
+        let signer = S3Signer(accessKey: accessKey, secretKey: secret, region: region)
+        return S3Client(endpoint: ep, signer: signer)
+    }
+
     /// True when both connections address the **same S3 store** — same endpoint,
     /// region, access key and addressing style — so a server-side `copyObject`
     /// between them is valid. The bucket is intentionally NOT compared: it comes

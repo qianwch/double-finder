@@ -1,4 +1,5 @@
 import AppKit
+import DoubleFinderPluginKit
 import QuickLookUI
 
 // MARK: - Pure navigation logic (unit-tested in InternalViewerNavTests)
@@ -55,6 +56,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var hexView: ListerHexView?
     private var previewView: QLPreviewView?           // lazy (was eagerly built pre-Lister)
     private var mdWebView: ListerWebView?             // lazy, rendered markdown in preview mode
+    private var pluginView: NSView?                   // a ViewerPlugin's view for the current file
+    /// The viewer plugin claiming the current file (nil = none → segment 4 disabled).
+    private var pluginViewer: ViewerPlugin?
+    /// Built-in mode the chooser picked for the current file — the fallback when
+    /// the plugin view can't be built, and what 1/2/3 return to.
+    private var builtInChoice: ViewerMode = .preview
     private var statusBar: NSStackView?               // bottom bar
     private var encodingPopup: NSPopUpButton?
     private var wrapCheck: NSButton?
@@ -196,9 +203,10 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         ])
 
         // Titlebar accessory: mode segments on the right of the title bar.
-        let seg = NSSegmentedControl(labels: [tr("Text"), tr("Hexadecimal"), tr("Preview")],
+        let seg = NSSegmentedControl(labels: [tr("Text"), tr("Hexadecimal"), tr("Preview"), tr("Plugin")],
                                      trackingMode: .selectOne,
                                      target: self, action: #selector(modeChanged(_:)))
+        seg.setEnabled(false, forSegment: 3)          // enabled per file when a viewer plugin claims it
         seg.controlSize = .small
         seg.sizeToFit()
         let holder = NSView(frame: NSRect(x: 0, y: 0,
@@ -294,6 +302,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 hexScroll = sc
                 hexView = hv
             }
+        case .plugin:
+            break                                   // built (or refused) in setMode → mountPluginView
         case .preview:
             if showWeb {
                 if mdWebView == nil {
@@ -323,6 +333,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         hexScroll?.isHidden = currentMode != .hex
         previewView?.isHidden = !(currentMode == .preview && !showWeb)
         mdWebView?.isHidden = !showWeb
+        pluginView?.isHidden = currentMode != .plugin
         if currentMode == .preview {
             if showWeb {
                 previewView?.previewItem = nil          // free QL, hand focus to web
@@ -371,7 +382,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     @objc private func hexClipBoundsChanged() { updatePositionLabel() }
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
-        let modes: [ViewerMode] = [.text, .hex, .preview]
+        let modes: [ViewerMode] = [.text, .hex, .preview, .plugin]
         guard modes.indices.contains(sender.selectedSegment) else { return }
         setMode(modes[sender.selectedSegment], auto: false)
     }
@@ -399,6 +410,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             guard zoom != webZoom else { return }
             webZoom = zoom
             mdWebView?.setZoom(zoom)
+        case .plugin:
+            NSSound.beep()                      // a plugin view zooms (or not) on its own
         }
     }
 
@@ -439,6 +452,9 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             case 18 where bare: self.setMode(.text, auto: false); return nil     // 1 (not ⌥/⌃ combos)
             case 19 where bare: self.setMode(.hex, auto: false); return nil      // 2
             case 20 where bare: self.setMode(.preview, auto: false); return nil  // 3
+            case 21 where bare:                                                  // 4 (plugin, when one applies)
+                if self.pluginViewer != nil { self.setMode(.plugin, auto: false) } else { NSSound.beep() }
+                return nil
             case 119 where self.currentMode == .text:            // End: load to cap/EOF in one go
                 self.textContent?.loadToEnd(); return nil
             case 53:                                             // Esc
@@ -486,8 +502,11 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             let url = await entry.resolve()
             guard let self, self.navGeneration == gen else { return }
             self.endLoadingIndicator()
+            self.pluginViewer = nil
+            self.pluginView?.removeFromSuperview(); self.pluginView = nil
             guard let url else {
                 self.source = nil; self.currentURL = nil
+                self.modeControl?.setEnabled(false, forSegment: 3)
                 self.setMode(.preview, auto: true)
                 self.previewView?.previewItem = nil
                 self.window?.title = "\(tr("Cannot load")) — (\(index + 1)/\(total))"
@@ -498,7 +517,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             let sample = self.source?.read(offset: 0, count: 64 << 10)
             let choice = ViewerModeChooser.choose(fileExtension: url.pathExtension, sample: sample)
             self.currentEncoding = choice.encoding ?? .utf8
-            self.setMode(choice.mode, auto: true)
+            self.builtInChoice = choice.mode
+            // A viewer plugin that claims the file wins the auto choice (TC: WLX
+            // plugins take precedence over the built-in modes).
+            self.pluginViewer = PluginManager.shared.viewer(for: url, sample: sample ?? Data())
+            self.modeControl?.setEnabled(self.pluginViewer != nil, forSegment: 3)
+            self.setMode(self.pluginViewer != nil ? .plugin : choice.mode, auto: true)
             self.window?.title = "\(entry.title) — (\(index + 1)/\(total))"
             self.onIndexChange?(index)
         }
@@ -584,10 +608,21 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         // Manual same-file switches keep the reading position by byte offset
         // (same anchoring as encoding changes; TC behavior).
         let anchor: UInt64 = (!auto && mode != .preview) ? currentTopByteOffset() : 0
+        if mode == .plugin, !mountPluginView() {
+            // The plugin refused (threw) or vanished: fall back to the built-in
+            // choice for this file and say so.
+            pluginViewer = nil
+            modeControl?.setEnabled(false, forSegment: 3)
+            setMode(builtInChoice, auto: true, preserveSearch: preserveSearch)
+            showStatusNote(tr("Plugin viewer failed — showing built-in view"))
+            return
+        }
         currentMode = mode
-        modeControl?.selectedSegment = [.text: 0, .hex: 1, .preview: 2][mode]!
+        modeControl?.selectedSegment = [.text: 0, .hex: 1, .preview: 2, .plugin: 3][mode]!
         showOnlyCurrentModeView()
         switch mode {
+        case .plugin:
+            if let pv = pluginView { window?.makeFirstResponder(pv) }
         case .text:
             if let source {
                 textContent?.load(source: source, encoding: currentEncoding, anchorByte: anchor,
@@ -626,10 +661,29 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         reconfigureStatusBar()
     }
 
+    /// Builds (or rebuilds) the plugin's view for the current file. false when
+    /// there is no claiming plugin or it threw.
+    private func mountPluginView() -> Bool {
+        guard let viewer = pluginViewer, let url = currentURL, let container else { return false }
+        pluginView?.removeFromSuperview()
+        pluginView = nil
+        do {
+            let v = try viewer.makeView(for: url)
+            v.frame = container.bounds
+            v.autoresizingMask = [.width, .height]
+            container.addSubview(v)
+            pluginView = v
+            return true
+        } catch {
+            NSLog("[plugin] viewer %@ failed for %@: %@", viewer.identifier, url.path, error.localizedDescription)
+            return false
+        }
+    }
+
     // MARK: Search
 
     private func toggleSearchBar() {
-        guard currentMode != .preview else { NSSound.beep(); return }  // QL mode has no byte view to search
+        guard currentMode != .preview, currentMode != .plugin else { NSSound.beep(); return }  // no byte view to search
         searchBarVisible ? closeSearchBar() : openSearchBar()
     }
 
@@ -668,6 +722,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         case .text: textContent?.focus()
         case .hex: hexView?.focus()
         case .preview: window?.makeFirstResponder(previewView)
+        case .plugin: window?.makeFirstResponder(pluginView)
         }
     }
 
@@ -702,12 +757,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         switch currentMode {
         case .text: return textContent?.topVisibleByteOffset() ?? 0
         case .hex: return hexView?.topVisibleOffset ?? 0
-        case .preview: return 0
+        case .preview, .plugin: return 0
         }
     }
 
     private func find(backwards: Bool) {
-        guard currentMode != .preview else { NSSound.beep(); return }  // QL mode has no byte view to search
+        guard currentMode != .preview, currentMode != .plugin else { NSSound.beep(); return }  // no byte view to search
         guard let source, let bar = searchBar else { return }
         let pattern: [UInt8]
         if bar.mode == .hex {
@@ -790,7 +845,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 textContent?.highlightMatch(atByte: offset, byteLength: length)
             }
         case .hex: hexView?.highlight(offset: offset, count: length)
-        case .preview: break
+        case .preview, .plugin: break
         }
         updatePositionLabel()
     }
@@ -950,7 +1005,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         case .hex:
             let off = hexView?.topVisibleOffset ?? 0
             positionLabel?.stringValue = String(format: "0x%llX — %d%%", off, hexView?.percent ?? 0)
-        case .preview:
+        case .preview, .plugin:
             positionLabel?.stringValue = entries.isEmpty ? "" : "\(currentIndex + 1)/\(entries.count)"
         }
     }

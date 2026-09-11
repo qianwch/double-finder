@@ -82,22 +82,23 @@ class PanelState: ObservableObject {
     /// since plain AppKit does not observe `@Published` automatically.
     var onChange: (() -> Void)?
 
-    /// When set, the panel is browsing a remote host over SFTP.
-    var sftp: SFTPConnection?
+    /// The remote session this panel is in — SFTP host, S3 store (secret rides
+    /// along), Android phone (libmtp session lives in `AndroidDeviceRegistry`,
+    /// this is just the identity + friendly name) or a plugin drive — nil when
+    /// local. ONE field for every backend: `fs`, `isRemote`, the search endpoint,
+    /// mirroring, disconnect and failure recovery all derive from it, so adding
+    /// a backend means adding a `RemoteSession` case, not another optional here.
+    /// Set via `connect(_:initialPath:)`; direct assignment is for tests.
+    var remote: RemoteSession?
 
-    /// When set, the panel is browsing an S3-compatible store.
-    var s3: S3Connection?
-    private var s3Secret: String = ""
-
-    /// When set, the panel is browsing an Android phone over MTP. The open
-    /// libmtp session itself lives in `AndroidDeviceRegistry` — this is just the
-    /// device identity. `androidLabel` holds the friendly name read at connect
-    /// time, so the drive bar can show it without reopening the device.
-    var android: AndroidDevice?
-    private var androidLabel: String = ""
-    /// Read-only view of the connected device's friendly name, so the other
-    /// panel can join the same session without reopening the device.
-    var androidLabelForMirroring: String { androidLabel }
+    /// Backend-specific views of `remote` (nil unless that backend is active).
+    var sftp: SFTPConnection? { remote?.sftpConnection }
+    var s3: S3Connection? { remote?.s3Connection }
+    var android: AndroidDevice? { remote?.androidDevice }
+    var plugin: PluginDriveSession? { remote?.pluginDrive }
+    /// The connected phone's friendly name (read at connect time), so the other
+    /// panel can join the session without reopening the device.
+    var androidLabelForMirroring: String { remote?.androidLabel ?? "" }
 
     /// Branch view: show all files under the current folder, flattened (TC Ctrl+B).
     var branchView = false
@@ -255,13 +256,17 @@ class PanelState: ObservableObject {
         return items
     }
 
-    /// The filesystem backing the current path: SFTP when connected, S3 when
-    /// connected, else ZipFS for archive paths, else LocalFS.
+    /// The filesystem backing the current path: the remote session's FS when
+    /// connected, else ZipFS / a packer plugin for archive paths, else LocalFS.
     var fs: VirtualFS {
         if let ra = remoteArchive { return ra }
-        if let device = android { return AndroidFS(device: device, currentPath: currentPath) }
-        if let conn = sftp { return SFTPFS(connection: conn) }
-        if let conn = s3 { return S3FS(client: s3Client(conn), currentPath: currentPath) }
+        switch remote {
+        case .android(let device, _)?: return AndroidFS(device: device, currentPath: currentPath)
+        case .plugin(let drive)?: return PluginFS(drive: drive, currentPath: currentPath)
+        case .sftp(let conn)?: return SFTPFS(connection: conn)
+        case .s3(let conn, let secret)?: return S3FS(client: conn.makeClient(secret: secret), currentPath: currentPath)
+        case nil: break
+        }
         // A local search listing can mix on-disk files with entries found inside
         // archives ("Search archives"): route each call by the path it names.
         if searchResults != nil, searchArchiveMeta != nil {
@@ -270,35 +275,24 @@ class PanelState: ObservableObject {
         return Self.fileSystem(for: currentPath)
     }
 
-    /// Builds the signed REST client for an S3 connection. Shared by `fs` and
-    /// `searchEndpoint` — the secret lives here, so nothing outside PanelState
-    /// can (or has to) assemble one.
-    private func s3Client(_ conn: S3Connection) -> S3Client {
-        // Tolerate an endpoint typed without a scheme (e.g. "obs.example.com"):
-        // a scheme-less string parses to a URL with no host, breaking requests.
-        let raw = conn.endpoint.contains("://") ? conn.endpoint : "https://\(conn.endpoint)"
-        let ep = S3Endpoint(base: URL(string: raw) ?? URL(string: "https://s3.amazonaws.com")!,
-                            region: conn.region, pathStyle: conn.pathStyle)
-        let signer = S3Signer(accessKey: conn.accessKey, secretKey: s3Secret, region: conn.region)
-        return S3Client(endpoint: ep, signer: signer)
-    }
-
     /// The Find Files backend for this panel: the connected remote when there is
     /// one, the archive the panel is inside, the local tree otherwise. nil only at
     /// the S3 account root (no bucket yet, so no prefix to list).
     var searchEndpoint: SearchEndpoint? {
         if let ra = remoteArchive { return .remoteArchive(ra, base: currentPath) }
-        if let device = android {
+        switch remote {
+        case .android(let device, let label)?:
             // The device root lists storages rather than files; walking from
             // there is fine (it recurses into each storage).
-            return .android(device, label: androidLabel, base: currentPath)
-        }
-        if let conn = sftp { return .sftp(conn, base: currentPath) }
-        if let conn = s3 {
+            return .android(device, label: label, base: currentPath)
+        case .sftp(let conn)?: return .sftp(conn, base: currentPath)
+        case .plugin(let drive)?: return .plugin(drive, base: currentPath)
+        case .s3(let conn, let secret)?:
             let (bucket, key) = parseS3Path(currentPath)
             guard let bucket = bucket else { return nil }
             let prefix = (key.isEmpty || key.hasSuffix("/")) ? key : key + "/"
-            return .s3(s3Client(conn), bucket: bucket, prefix: prefix, base: currentPath)
+            return .s3(conn.makeClient(secret: secret), bucket: bucket, prefix: prefix, base: currentPath)
+        case nil: break
         }
         if let root = Self.archiveRoot(in: currentPath) {
             return .archive(archivePath: root, password: ArchivePasswords.get(root), base: currentPath)
@@ -309,17 +303,12 @@ class PanelState: ObservableObject {
     /// True when the panel is showing a remote location (SFTP / S3 / a remote
     /// archive) rather than the local filesystem — so the UI shouldn't highlight
     /// a local volume as "current".
-    var isRemote: Bool { sftp != nil || s3 != nil || android != nil || remoteArchive != nil }
+    var isRemote: Bool { remote != nil || remoteArchive != nil }
 
     /// The remote session this panel is currently in (drive-bar identity), nil
     /// when local. Note: browsing a remote archive in place temporarily clears
     /// `sftp`, so no drive is highlighted there (same as the old single entry).
-    var activeRemoteSession: RemoteSession? {
-        if let c = sftp { return .sftp(c) }
-        if let c = s3 { return .s3(c, secret: s3Secret) }
-        if let d = android { return .android(d, label: androidLabel) }
-        return nil
-    }
+    var activeRemoteSession: RemoteSession? { remote }
     var activeRemoteSessionID: String? { activeRemoteSession?.id }
 
     /// Per-session (`RemoteSession.id`) last browsed path in THIS panel, so
@@ -341,13 +330,7 @@ class PanelState: ObservableObject {
             navigate(to: "/")
             return
         }
-        let initial = remoteLastPaths[session.id] ?? "/"
-        switch session {
-        case .sftp(let conn): connectSFTP(conn, initialPath: initial)
-        case .s3(let conn, let secret): connectS3(conn, secret: secret, initialPath: initial)
-        case .android(let device, let label):
-            connectAndroid(device, label: label, initialPath: initial)
-        }
+        connect(session, initialPath: remoteLastPaths[session.id] ?? "/")
     }
 
     /// Called when the global session store changed: if the session this panel
@@ -359,14 +342,14 @@ class PanelState: ObservableObject {
     }
 
     /// The S3 client for the active S3 session, or nil if not connected to S3.
-    var s3Client: S3Client? { s3.map(s3Client) }
+    var s3Client: S3Client? { remote?.s3Client }
 
     /// Local path to fall back to when an *initial* remote connection fails — captured
     /// just before entering a remote session (only while still local). Defaults to home.
     private var localReturnPath: String = NSHomeDirectory()
 
     private func rememberLocalReturn() {
-        if sftp == nil && s3 == nil && android == nil && remoteArchive == nil {
+        if remote == nil && remoteArchive == nil {
             localReturnPath = currentPath
         }
     }
@@ -381,8 +364,7 @@ class PanelState: ObservableObject {
             // Clear the session fields BEFORE touching the store so the didChange
             // observer sees this panel as already-local and doesn't re-enter.
             let deadID = activeRemoteSessionID
-            sftp = nil; s3 = nil; s3Secret = ""
-            android = nil; androidLabel = ""
+            remote = nil
             remoteArchive = nil; remoteArchiveReturn = nil
             if let id = deadID {
                 remoteLastPaths[id] = nil
@@ -398,66 +380,43 @@ class PanelState: ObservableObject {
         watcher.watch(currentPath)
     }
 
-    func connectSFTP(_ conn: SFTPConnection, initialPath: String) {
+    /// Enters a remote session (registering it as a drive) and lists
+    /// `initialPath`. Replaces whatever session / in-place archive the panel
+    /// was in — a panel is in at most one backend at a time. For Android the
+    /// libmtp session must already be open (`AndroidDeviceRegistry.open`); for a
+    /// plugin drive `FileSystemPlugin.connect` must have run — both are where
+    /// prompts and failures surface, this only points the panel at the result.
+    func connect(_ session: RemoteSession, initialPath: String) {
         rememberLocalReturn()
-        RemoteSessionStore.shared.register(.sftp(conn))
-        remoteArchive = nil
-        remoteArchiveReturn = nil
-        searchResults = nil
-        s3 = nil; s3Secret = ""
-        android = nil; androidLabel = ""
-        sftp = conn
+        RemoteSessionStore.shared.register(session)
+        remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
+        remote = session
         currentPath = initialPath
-        cursorMemory = [:]
-        history = [initialPath]
-        historyIndex = 0
-        filter = ""
-        selectedItems.removeAll()
-        cursorIndex = 0
+        cursorMemory = [:]; history = [initialPath]; historyIndex = 0
+        filter = ""; selectedItems.removeAll(); cursorIndex = 0
         loadDirectory()
     }
 
-    func disconnectSFTP(toLocal path: String) {
-        sftp = nil
-        navigate(to: path)
+    func connectSFTP(_ conn: SFTPConnection, initialPath: String) {
+        connect(.sftp(conn), initialPath: initialPath)
     }
 
     func connectS3(_ conn: S3Connection, secret: String, initialPath: String) {
-        rememberLocalReturn()
-        RemoteSessionStore.shared.register(.s3(conn, secret: secret))
-        remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
-        sftp = nil
-        android = nil; androidLabel = ""
-        s3 = conn; s3Secret = secret
-        currentPath = initialPath
-        cursorMemory = [:]; history = [initialPath]; historyIndex = 0
-        filter = ""; selectedItems.removeAll(); cursorIndex = 0
-        loadDirectory()
+        connect(.s3(conn, secret: secret), initialPath: initialPath)
     }
 
-    func disconnectS3(toLocal path: String) {
-        s3 = nil; s3Secret = ""
-        navigate(to: path)
-    }
-
-    /// Enters an Android device. The libmtp session must already be open
-    /// (`AndroidDeviceRegistry.open`) — this only points the panel at it.
-    /// `initialPath` is "/" for a fresh connect, which lists the storages.
     func connectAndroid(_ device: AndroidDevice, label: String, initialPath: String) {
-        rememberLocalReturn()
-        RemoteSessionStore.shared.register(.android(device, label: label))
-        remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
-        sftp = nil
-        s3 = nil; s3Secret = ""
-        android = device; androidLabel = label
-        currentPath = initialPath
-        cursorMemory = [:]; history = [initialPath]; historyIndex = 0
-        filter = ""; selectedItems.removeAll(); cursorIndex = 0
-        loadDirectory()
+        connect(.android(device, label: label), initialPath: initialPath)
     }
 
-    func disconnectAndroid(toLocal path: String) {
-        android = nil; androidLabel = ""
+    func connectPlugin(_ drive: PluginDriveSession, initialPath: String) {
+        connect(.plugin(drive), initialPath: initialPath)
+    }
+
+    /// Leaves the remote session (the drive stays registered — ⏏ removes it)
+    /// and lists a local path.
+    func leaveRemote(toLocal path: String) {
+        remote = nil
         navigate(to: path)
     }
 
@@ -465,12 +424,8 @@ class PanelState: ObservableObject {
     /// remote session is active, leave it first — otherwise the local path would
     /// be listed against the remote host and come back empty.
     func navigateLocal(to path: String) {
-        if sftp != nil || remoteArchive != nil {
-            disconnectSFTP(toLocal: path)
-        } else if s3 != nil {
-            disconnectS3(toLocal: path)
-        } else if android != nil {
-            disconnectAndroid(toLocal: path)
+        if remote != nil || remoteArchive != nil {
+            leaveRemote(toLocal: path)        // navigate() drops the in-place archive too
         } else {
             navigate(to: path)
         }
@@ -483,16 +438,11 @@ class PanelState: ObservableObject {
     /// just navigates (keeping history). Local sources fall back to navigateLocal,
     /// which also leaves any remote session this panel currently holds.
     func mirrorLocation(of source: PanelState, path: String) {
-        if let conn = source.sftp {
-            if sftp == conn { navigate(to: path) }
-            else { connectSFTP(conn, initialPath: path) }
-        } else if let conn = source.s3 {
-            if s3 == conn { navigate(to: path) }
-            else { connectS3(conn, secret: source.s3Secret, initialPath: path) }
-        } else if let device = source.android {
-            // Same phone → plain navigate; otherwise join that device's session.
-            if android == device { navigate(to: path) }
-            else { connectAndroid(device, label: source.androidLabelForMirroring, initialPath: path) }
+        if let session = source.remote {
+            // Already in that same session (drive identity) → plain navigate,
+            // keeping history; otherwise join it.
+            if remote?.id == session.id { navigate(to: path) }
+            else { connect(session, initialPath: path) }
         } else {
             navigateLocal(to: path)
         }
@@ -506,6 +456,11 @@ class PanelState: ObservableObject {
 
     nonisolated static func fileSystem(for path: String) -> VirtualFS {
         if let archiveRoot = archiveRoot(in: path) {
+            // A packer plugin claiming the suffix wins over libarchive, so a
+            // plugin can also take over a format the built-in reader mishandles.
+            if let packer = ArchivePluginRegistry.packer(forFileName: (archiveRoot as NSString).lastPathComponent) {
+                return PluginArchiveFS(archivePath: archiveRoot, packer: packer)
+            }
             return ZipFS(archivePath: archiveRoot, password: ArchivePasswords.get(archiveRoot))
         }
         return LocalFS()
@@ -1079,33 +1034,23 @@ class PanelState: ObservableObject {
         loadDirectory()
     }
 
-    /// When browsing an archive that was downloaded from SFTP, remembers the
-    /// connection + remote directory so going up past the archive root returns
-    /// to the remote folder (and cleans up the temp download).
-    private var sftpArchiveReturn: (conn: SFTPConnection, remoteDir: String, tempArchive: String)?
-    private var androidArchiveReturn: (device: AndroidDevice, label: String,
-                                       deviceDir: String, tempArchive: String)?
+    /// When browsing a local copy of an archive downloaded off a remote session,
+    /// remembers the session + remote directory so going up past the archive
+    /// root returns there (and cleans up the temp download).
+    private var downloadedArchiveReturn: (session: RemoteSession, remoteDir: String, tempArchive: String)?
 
     /// When browsing an SFTP archive *in place* (no full download), the remote FS
     /// instance + where to return when leaving it.
     private(set) var remoteArchive: RemoteArchiveFS?
     private var remoteArchiveReturn: (conn: SFTPConnection, remoteDir: String)?
 
-    /// Enters a locally-downloaded copy of an SFTP archive, remembering how to go back.
-    func enterSFTPArchive(localArchive: String, conn: SFTPConnection, remoteDir: String) {
-        sftpArchiveReturn = (conn, remoteDir, localArchive)
-        sftp = nil
-        navigate(to: localArchive)
-    }
-
-    /// Enters an archive that was downloaded off an Android device. MTP has no
-    /// remote-listing equivalent of `RemoteArchiveFS` (there's no shell on the
-    /// phone), so the whole container is fetched first and browsed locally;
-    /// going up past its root returns to the folder it came from.
-    func enterAndroidArchive(localArchive: String, device: AndroidDevice, label: String,
-                             deviceDir: String) {
-        androidArchiveReturn = (device, label, deviceDir, localArchive)
-        android = nil; androidLabel = ""
+    /// Enters a locally-downloaded copy of an archive that lives on `session`
+    /// (backends without in-place listing — MTP has no shell, plugins have no
+    /// `RemoteArchiveFS`, SFTP for 7z/rar — fetch the whole container first).
+    /// Going up past its root returns to `remoteDir` on that session.
+    func enterDownloadedArchive(localArchive: String, from session: RemoteSession, remoteDir: String) {
+        downloadedArchiveReturn = (session, remoteDir, localArchive)
+        remote = nil
         navigate(to: localArchive)
     }
 
@@ -1115,7 +1060,7 @@ class PanelState: ObservableObject {
         let fs = RemoteArchiveFS(connection: conn, archivePath: archivePath)
         remoteArchive = fs
         remoteArchiveReturn = (conn, remoteDir)
-        sftp = nil
+        remote = nil
         navigate(to: archivePath)
     }
 
@@ -1135,18 +1080,11 @@ class PanelState: ObservableObject {
             connectSFTP(ret.conn, initialPath: ret.remoteDir)
             return
         }
-        // Leaving an archive downloaded off a phone at its root → back to the phone.
-        if let ret = androidArchiveReturn, currentPath == ret.tempArchive {
-            androidArchiveReturn = nil
+        // Leaving a downloaded remote archive at its root → back to where it came from.
+        if let ret = downloadedArchiveReturn, currentPath == ret.tempArchive {
+            downloadedArchiveReturn = nil
             try? FileManager.default.removeItem(atPath: ret.tempArchive)
-            connectAndroid(ret.device, label: ret.label, initialPath: ret.deviceDir)
-            return
-        }
-        // Leaving an SFTP-sourced (downloaded) archive at its root → reconnect.
-        if let ret = sftpArchiveReturn, currentPath == ret.tempArchive {
-            sftpArchiveReturn = nil
-            try? FileManager.default.removeItem(atPath: ret.tempArchive)
-            connectSFTP(ret.conn, initialPath: ret.remoteDir)
+            connect(ret.session, initialPath: ret.remoteDir)
             return
         }
         let parent = (currentPath as NSString).deletingLastPathComponent

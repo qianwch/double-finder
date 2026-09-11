@@ -92,6 +92,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             SettingsCategory(id: "favorites", title: tr("Favorites"), symbol: "bookmark") { [weak self] in
                 FavoritesSettingsView(onChanged: { self?.onFavoritesChanged?() })
             },
+            SettingsCategory(id: "plugins", title: tr("Plugins"), symbol: "puzzlepiece.extension") {
+                PluginsSettingsView()
+            },
         ]
     }
 

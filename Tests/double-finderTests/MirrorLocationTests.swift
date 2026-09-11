@@ -18,7 +18,7 @@ final class MirrorLocationTests: XCTestCase {
 
     func testMirrorFromSFTPJoinsRemoteSession() {
         let source = PanelState(path: "/home/ubuntu")
-        source.sftp = sftpConn
+        source.remote = .sftp(sftpConn)
 
         let target = PanelState(path: "/Users/me")    // local
         XCTAssertFalse(target.isRemote)
@@ -32,10 +32,10 @@ final class MirrorLocationTests: XCTestCase {
 
     func testMirrorWhenAlreadySameSFTPJustNavigates() {
         let source = PanelState(path: "/home/ubuntu")
-        source.sftp = sftpConn
+        source.remote = .sftp(sftpConn)
 
         let target = PanelState(path: "/home/ubuntu")
-        target.sftp = sftpConn
+        target.remote = .sftp(sftpConn)
         let historyBefore = target.history.count
 
         target.mirrorLocation(of: source, path: "/home/ubuntu/sub")
@@ -51,7 +51,7 @@ final class MirrorLocationTests: XCTestCase {
 
     func testMirrorFromS3JoinsRemoteSession() {
         let source = PanelState(path: "/bucket/dir")
-        source.s3 = s3Conn()
+        source.remote = .s3(s3Conn(), secret: "")
 
         let target = PanelState(path: "/Users/me")
         target.mirrorLocation(of: source, path: "/bucket/dir/sub")
@@ -67,7 +67,7 @@ final class MirrorLocationTests: XCTestCase {
         let source = PanelState(path: "/Users/me/Documents")   // local
 
         let target = PanelState(path: "/home/ubuntu")
-        target.sftp = sftpConn                                  // target was remote
+        target.remote = .sftp(sftpConn)                                  // target was remote
         XCTAssertTrue(target.isRemote)
 
         target.mirrorLocation(of: source, path: "/Users/me/Documents")
@@ -81,7 +81,7 @@ final class MirrorLocationTests: XCTestCase {
         let source = PanelState(path: "/Users/me/Documents")
 
         let target = PanelState(path: "/bucket")
-        target.s3 = s3Conn()
+        target.remote = .s3(s3Conn(), secret: "")
         XCTAssertTrue(target.isRemote)
 
         target.mirrorLocation(of: source, path: "/Users/me/Documents")

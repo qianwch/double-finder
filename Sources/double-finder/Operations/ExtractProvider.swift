@@ -22,7 +22,16 @@ struct ExtractProvider {
             } else {
                 target = destPath
             }
-            try await Task.detached { try ZipFS.extractAll(archivePath: path, to: target, password: password) }.value
+            try await Task.detached {
+                // Packer-plugin formats extract through the plugin; everything
+                // else is libarchive / the 7-Zip engine.
+                if let packer = ArchivePluginRegistry.packer(forFileName: (path as NSString).lastPathComponent) {
+                    try PluginArchiveFS.extractAll(archivePath: path, packer: packer, to: target,
+                                                   isCancelled: { Task.isCancelled })
+                } else {
+                    try ZipFS.extractAll(archivePath: path, to: target, password: password)
+                }
+            }.value
         }
         return op
     }
