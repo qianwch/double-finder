@@ -182,7 +182,7 @@ public protocol PageViewerPlugin: AnyObject {
 }
 ```
 
-面向文档类格式。你不返回视图，而是返回一段 **HTML 页面**，宿主用 Lister 自己的 web 视图当作「预览(3)」显示：
+面向文档类格式。你不返回视图，而是返回一段 **HTML 页面**，宿主用 Lister 自己的 web 视图显示在「插件(4)」段下——和 `ViewerPlugin` 的视图同一个位置（「预览(3)」保持 Quick Look；第 4 段只在有插件认领文件时出现）：
 ⌘=/⌘-/⌘0 缩放、加载指示、明暗切换、失败回退全部由宿主负责。`renderPage` 在后台任务里跑——长循环要轮询 `isCancelled`。
 抛错则把 `localizedDescription` 显示在状态栏并回落到没有你时 Lister 本来会用的模式（文本 / 十六进制 / Quick Look）。
 之后可在任意线程调 `update` 替换仍在显示的页面（例如慢的部分渲染完了）；给 `.failure` 等同于抛错；页面已被离开的迟到更新会被忽略。

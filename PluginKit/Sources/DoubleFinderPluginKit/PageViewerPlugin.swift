@@ -3,9 +3,10 @@ import Foundation
 /// A Lister (F3) viewer for document-like formats: the plugin turns a file
 /// into an HTML page and the HOST shows it in the Lister's own web view. Where
 /// `ViewerPlugin` hands over a whole `NSView`, a page viewer keeps every
-/// Lister behaviour — Preview (3) is its mode, ⌘= / ⌘- / ⌘0 zoom the page,
-/// the loading indicator, light/dark handling and the fall-back to the
-/// built-in Text / Hex / Quick Look modes on failure all come from the host.
+/// Lister behaviour — it shows under the Plugin segment (4) like any plugin,
+/// ⌘= / ⌘- / ⌘0 zoom the page, the loading indicator, light/dark handling
+/// and the fall-back to the built-in Text / Hex / Quick Look modes on failure
+/// all come from the host. Preview (3) stays plain Quick Look.
 ///
 /// The page is loaded with JavaScript disabled from a private URL that can
 /// fetch nothing, so everything it needs (images, fonts, stylesheets) must be

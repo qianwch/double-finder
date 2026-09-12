@@ -215,9 +215,10 @@ public protocol PageViewerPlugin: AnyObject {
 ```
 
 For document-like formats. Instead of a view you return an **HTML page** and
-the host shows it in the Lister's own web view as the Preview mode (3): the
-Lister's ⌘= / ⌘- / ⌘0 zoom, loading indicator, light/dark handling and
-fall-back all apply. `renderPage` runs on a background task — poll
+the host shows it in the Lister's own web view under the Plugin segment (4),
+exactly where a `ViewerPlugin` view would go (Preview (3) stays Quick Look):
+the Lister's ⌘= / ⌘- / ⌘0 zoom, loading indicator, light/dark handling and
+fall-back all apply. The segment only appears while a plugin claims the file. `renderPage` runs on a background task — poll
 `isCancelled` in long loops. Throwing shows `localizedDescription` in the
 status bar and falls back to the mode the Lister would have used without you
 (text / hex / Quick Look). Call `update` later (any thread) to replace the

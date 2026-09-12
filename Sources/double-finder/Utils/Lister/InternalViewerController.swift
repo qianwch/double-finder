@@ -49,18 +49,19 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
 
     // Window chrome (all torn down exhaustively in windowWillClose)
     private var container: NSView?                    // content area (above statusBar)
-    private var modeControl: NSSegmentedControl?      // titlebar accessory: Text/Hexadecimal/Preview
+    private var modeControl: NSSegmentedControl?      // titlebar accessory: Text/Hexadecimal/Preview[/Plugin]
     private var titlebarAccessory: NSTitlebarAccessoryViewController?
     private var textContent: ListerTextView?          // lazy
     private var hexScroll: NSScrollView?              // lazy, documentView = hexView
     private var hexView: ListerHexView?
     private var previewView: QLPreviewView?           // lazy (was eagerly built pre-Lister)
-    private var mdWebView: ListerWebView?             // lazy, rendered markdown in preview mode
+    private var mdWebView: ListerWebView?             // lazy, a page viewer's rendered page (Plugin segment)
     private var pluginView: NSView?                   // a ViewerPlugin's view for the current file
-    /// The viewer plugin claiming the current file (nil = none → segment 4 disabled).
+    /// The view plugin claiming the current file (nil = none; segment 4 then depends on `pageViewer`).
     private var pluginViewer: ViewerPlugin?
     /// Built-in mode the chooser picked for the current file — the fallback when
-    /// the plugin view can't be built, and what 1/2/3 return to.
+    /// a plugin view can't be built or a page render fails (`.md` → text
+    /// source, `.epub` → Quick Look, `.mobi` → hex), and what 1/2/3 return to.
     private var builtInChoice: ViewerMode = .preview
     private var statusBar: NSStackView?               // bottom bar
     private var encodingPopup: NSPopUpButton?
@@ -78,17 +79,15 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var currentURL: URL?
     private var currentEncoding: String.Encoding = .utf8
     /// The `PageViewerPlugin` (built-in Markdown / ebook, or a bundle's) that
-    /// claimed the current file — Preview (3) then shows its rendered page in
-    /// `mdWebView` instead of Quick Look. nil = plain QL preview.
+    /// claimed the current file — the Plugin segment (4) then shows its rendered
+    /// page in `mdWebView`. nil when no page viewer claims the file, or when a
+    /// `ViewerPlugin` (own NSView) claims it too — the view plugin wins.
     private var pageViewer: PageViewerPlugin?
-    /// The chooser's own verdict for the file (what Preview falls back to when
-    /// the page render fails: `.md` → text source, `.epub` → QL, `.mobi` → hex).
-    private var chooserMode: ViewerMode = .preview
     /// Set ONLY when a crashed WKWebView gives up twice (design §4.1) — makes
     /// showWeb false so preview stays on the fall-back. Reset per-file in load().
     private var webCrashed = false
-    /// Set when the page viewer threw (too large / DRM / read error): Preview
-    /// shows the chooser's mode instead until the user presses 3 again, which
+    /// Set when the page viewer threw (too large / DRM / read error): the file
+    /// shows in the chooser's mode instead until the user presses 4 again, which
     /// clears it and re-attempts the render (design §4.1 semantics kept).
     private var pageFellBack = false
     /// In-flight background page render (`PageViewerPlugin.renderPage` on a
@@ -211,7 +210,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         let seg = NSSegmentedControl(labels: [tr("Text"), tr("Hexadecimal"), tr("Preview"), tr("Plugin")],
                                      trackingMode: .selectOne,
                                      target: self, action: #selector(modeChanged(_:)))
-        seg.setEnabled(false, forSegment: 3)          // enabled per file when a viewer plugin claims it
+        seg.segmentCount = 3                          // the Plugin segment appears per file (updatePluginSegment)
         seg.controlSize = .small
         seg.sizeToFit()
         let holder = NSView(frame: NSRect(x: 0, y: 0,
@@ -238,6 +237,22 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         installMonitor()
     }
 
+    /// Shows the 4th segment ("Plugin") only while a plugin — view or page —
+    /// claims the current file; a permanently greyed segment on every other
+    /// file was just noise. The accessory grows/shrinks with it.
+    private func updatePluginSegment(visible: Bool) {
+        guard let seg = modeControl else { return }
+        let want = visible ? 4 : 3
+        guard seg.segmentCount != want else { return }
+        seg.segmentCount = want
+        if visible {
+            seg.setLabel(tr("Plugin"), forSegment: 3)
+            seg.setEnabled(true, forSegment: 3)
+        }
+        seg.sizeToFit()
+        titlebarAccessory?.view.frame.size.width = seg.frame.width + 12
+    }
+
     /// Re-pin the content area's top edge: below the search bar when visible,
     /// at the content view's top otherwise.
     private func layoutContent() {
@@ -251,11 +266,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         containerTopConstraint?.isActive = true
     }
 
-    /// True when preview mode should show a plugin-rendered page (ListerWebView)
-    /// rather than QLPreviewView: a page viewer claimed the file, the web view
-    /// has not given up (crash) and the last render did not fail.
+    /// True when the Plugin segment shows a page viewer's rendered page
+    /// (ListerWebView): a page viewer claimed the file, the web view has not
+    /// given up (crash) and the last render did not fail. Preview (3) is always
+    /// Quick Look.
     private func shouldShowWeb() -> Bool {
-        currentMode == .preview && pageViewer != nil && !webCrashed && !pageFellBack
+        currentMode == .plugin && pageViewer != nil && !webCrashed && !pageFellBack
     }
 
     /// Lazily build the current mode's view inside `container`, hide the others.
@@ -292,24 +308,24 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                 hexView = hv
             }
         case .plugin:
-            break                                   // built (or refused) in setMode → mountPluginView
-        case .preview:
-            if showWeb {
-                if mdWebView == nil {
-                    let wv = ListerWebView(frame: container.bounds)
-                    wv.autoresizingMask = [.width, .height]
-                    wv.setZoom(webZoom)
-                    wv.onGiveUp = { [weak self] in
-                        guard let self else { return }
-                        self.webCrashed = true
-                        self.setMode(.text, auto: true)
-                        self.showStatusNote(tr("Preview failed — showing source"))
-                    }
-                    wv.onAppearanceChanged = { [weak self] in self?.appearanceChangedInPreview() }
-                    container.addSubview(wv)
-                    mdWebView = wv
+            // A view plugin's NSView is built (or refused) in setMode →
+            // mountPluginView; a page viewer renders into the shared web view.
+            if showWeb, mdWebView == nil {
+                let wv = ListerWebView(frame: container.bounds)
+                wv.autoresizingMask = [.width, .height]
+                wv.setZoom(webZoom)
+                wv.onGiveUp = { [weak self] in
+                    guard let self else { return }
+                    self.webCrashed = true
+                    self.setMode(self.builtInChoice, auto: true)
+                    self.showStatusNote(tr("Plugin viewer failed — showing built-in view"))
                 }
-            } else if previewView == nil {
+                wv.onAppearanceChanged = { [weak self] in self?.appearanceChangedInPreview() }
+                container.addSubview(wv)
+                mdWebView = wv
+            }
+        case .preview:
+            if previewView == nil {
                 let pv = QLPreviewView(frame: container.bounds, style: .normal)!
                 pv.autoresizingMask = [.width, .height]
                 pv.shouldCloseWithWindow = true
@@ -320,16 +336,14 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         }
         textContent?.isHidden = currentMode != .text
         hexScroll?.isHidden = currentMode != .hex
-        previewView?.isHidden = !(currentMode == .preview && !showWeb)
+        previewView?.isHidden = currentMode != .preview
         mdWebView?.isHidden = !showWeb
-        pluginView?.isHidden = currentMode != .plugin
-        if currentMode == .preview {
-            if showWeb {
-                previewView?.previewItem = nil          // free QL, hand focus to web
-                mdWebView?.focus()
-            } else {
-                mdWebView?.loadHTML("")                  // drop any stale rendered doc
-            }
+        pluginView?.isHidden = !(currentMode == .plugin && !showWeb)
+        if showWeb {
+            previewView?.previewItem = nil              // free QL, hand focus to web
+            mdWebView?.focus()
+        } else {
+            mdWebView?.loadHTML("")                      // drop any stale rendered page
         }
     }
 
@@ -394,13 +408,13 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             textContent?.setFontSize(size, reapply: currentMode == .text)
             hexView?.setFontSize(size, reapply: currentMode == .hex)
         case .preview:
-            guard shouldShowWeb() else { NSSound.beep(); return }
+            NSSound.beep()                      // Quick Look has nothing to zoom
+        case .plugin:
+            guard shouldShowWeb() else { NSSound.beep(); return }   // a plugin VIEW zooms (or not) on its own
             let zoom = step == 0 ? 1 : min(3, max(0.5, webZoom + CGFloat(step) * 0.1))
             guard zoom != webZoom else { return }
             webZoom = zoom
             mdWebView?.setZoom(zoom)
-        case .plugin:
-            NSSound.beep()                      // a plugin view zooms (or not) on its own
         }
     }
 
@@ -442,7 +456,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             case 19 where bare: self.setMode(.hex, auto: false); return nil      // 2
             case 20 where bare: self.setMode(.preview, auto: false); return nil  // 3
             case 21 where bare:                                                  // 4 (plugin, when one applies)
-                if self.pluginViewer != nil { self.setMode(.plugin, auto: false) } else { NSSound.beep() }
+                if self.pluginViewer != nil || self.pageViewer != nil { self.setMode(.plugin, auto: false) } else { NSSound.beep() }
                 return nil
             case 119 where self.currentMode == .text:            // End: load to cap/EOF in one go
                 self.textContent?.loadToEnd(); return nil
@@ -492,10 +506,11 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             guard let self, self.navGeneration == gen else { return }
             self.endLoadingIndicator()
             self.pluginViewer = nil
+            self.pageViewer = nil
             self.pluginView?.removeFromSuperview(); self.pluginView = nil
             guard let url else {
                 self.source = nil; self.currentURL = nil
-                self.modeControl?.setEnabled(false, forSegment: 3)
+                self.updatePluginSegment(visible: false)
                 self.setMode(.preview, auto: true)
                 self.previewView?.previewItem = nil
                 self.window?.title = "\(tr("Cannot load")) — (\(index + 1)/\(total))"
@@ -506,17 +521,18 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             let sample = self.source?.read(offset: 0, count: 64 << 10)
             let choice = ViewerModeChooser.choose(fileExtension: url.pathExtension, sample: sample)
             self.currentEncoding = choice.encoding ?? .utf8
-            self.chooserMode = choice.mode
-            // A page viewer (built-in Markdown / ebook, or a bundle's) that claims
-            // the file makes Preview its rendered page; the chooser's verdict stays
-            // the fall-back for a failed render.
-            self.pageViewer = PluginManager.shared.pageViewer(for: url, sample: sample ?? Data())
-            self.builtInChoice = self.pageViewer != nil ? .preview : choice.mode
-            // A viewer plugin that claims the file wins the auto choice (TC: WLX
-            // plugins take precedence over the built-in modes).
+            self.builtInChoice = choice.mode
+            // A plugin that claims the file wins the auto choice (TC: WLX plugins
+            // take precedence over the built-in modes) and lights the Plugin
+            // segment: a view plugin first, else a page viewer (built-in
+            // Markdown / ebook, or a bundle's). The chooser's verdict stays the
+            // fall-back for a failed view / render.
             self.pluginViewer = PluginManager.shared.viewer(for: url, sample: sample ?? Data())
-            self.modeControl?.setEnabled(self.pluginViewer != nil, forSegment: 3)
-            self.setMode(self.pluginViewer != nil ? .plugin : self.builtInChoice, auto: true)
+            self.pageViewer = self.pluginViewer == nil
+                ? PluginManager.shared.pageViewer(for: url, sample: sample ?? Data()) : nil
+            let claimed = self.pluginViewer != nil || self.pageViewer != nil
+            self.updatePluginSegment(visible: claimed)
+            self.setMode(claimed ? .plugin : choice.mode, auto: true)
             self.window?.title = "\(entry.title) — (\(index + 1)/\(total))"
             self.onIndexChange?(index)
         }
@@ -597,17 +613,17 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// is only used by the deep-match auto-switch to hex.
     private func setMode(_ mode: ViewerMode, auto: Bool, preserveSearch: Bool = false) {
         if !preserveSearch, !auto { cancelSearch(clearQuery: true) }   // manual switch clears the search (design §6)
-        if mode == .preview, !auto { pageFellBack = false }           // an explicit 3 re-attempts a failed page render
+        if mode == .plugin, !auto { pageFellBack = false }            // an explicit 4 re-attempts a failed page render
         pageGeneration += 1                       // leaving/reloading a page voids in-flight render / phase-2 results
         cancelWebRender()                       // …and any render still converting for the previous page
         // Manual same-file switches keep the reading position by byte offset
         // (same anchoring as encoding changes; TC behavior).
-        let anchor: UInt64 = (!auto && mode != .preview) ? currentTopByteOffset() : 0
-        if mode == .plugin, !mountPluginView() {
-            // The plugin refused (threw) or vanished: fall back to the built-in
-            // choice for this file and say so.
+        let anchor: UInt64 = (!auto && (mode == .text || mode == .hex)) ? currentTopByteOffset() : 0
+        if mode == .plugin, pageViewer == nil, !mountPluginView() {
+            // The view plugin refused (threw) or vanished: fall back to the
+            // built-in choice for this file and say so.
             pluginViewer = nil
-            modeControl?.setEnabled(false, forSegment: 3)
+            updatePluginSegment(visible: false)
             setMode(builtInChoice, auto: true, preserveSearch: preserveSearch)
             showStatusNote(tr("Plugin viewer failed — showing built-in view"))
             return
@@ -617,7 +633,12 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         showOnlyCurrentModeView()
         switch mode {
         case .plugin:
-            if let pv = pluginView { window?.makeFirstResponder(pv) }
+            if shouldShowWeb(), let viewer = pageViewer, let url = currentURL {
+                startPageRender(viewer, url: url)
+                mdWebView?.focus()
+            } else if let pv = pluginView {
+                window?.makeFirstResponder(pv)
+            }
         case .text:
             if let source {
                 textContent?.load(source: source, encoding: currentEncoding, anchorByte: anchor,
@@ -635,13 +656,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             if anchor > 0 { hexView?.scrollToOffset(anchor) }
             hexView?.focus()
         case .preview:
-            if shouldShowWeb(), let viewer = pageViewer, let url = currentURL {
-                startPageRender(viewer, url: url)
-                mdWebView?.focus()
-            } else {
-                previewView?.previewItem = currentURL as NSURL?
-                window?.makeFirstResponder(previewView)
-            }
+            previewView?.previewItem = currentURL as NSURL?
+            window?.makeFirstResponder(previewView)
         }
         searchBar?.mode = (mode == .hex) ? .hex : .text
         reconfigureStatusBar()
@@ -890,11 +906,11 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     }
 
     /// The page viewer could not render the file: note + the chooser's mode.
-    /// `pageFellBack` keeps Preview on that mode until an explicit press of 3.
+    /// `pageFellBack` keeps the Plugin segment on that fall-back until an
+    /// explicit press of 4 re-attempts the render.
     private func pageRenderFailed(_ error: Error) {
         pageFellBack = true
-        let fallback: ViewerMode = chooserMode == .plugin ? .hex : chooserMode
-        setMode(fallback, auto: true)
+        setMode(builtInChoice, auto: true)
         showStatusNote(tr(error.localizedDescription))     // built-ins throw English source strings
     }
 
@@ -913,7 +929,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// (mermaid SVGs are baked for one theme; the SVG cache makes it instant).
     private func appearanceChangedInPreview() {
         guard shouldShowWeb(), let viewer = pageViewer, viewer.needsRerenderOnAppearanceChange() else { return }
-        setMode(.preview, auto: true)
+        setMode(.plugin, auto: true)
     }
 
     // MARK: Encoding
