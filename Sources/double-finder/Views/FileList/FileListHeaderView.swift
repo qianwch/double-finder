@@ -7,6 +7,9 @@ import AppKit
 /// - Click a column title → `onSort(id)` (caller handles direction toggle + re-sort).
 /// - Drag a column's right-edge divider → resize that optional column, persist via
 ///   `AppSettings.columnWidths`, fire `onLayoutChanged()`.
+/// - Drag a column title sideways → reorder the optional columns (the title
+///   follows the cursor as a ghost, an accent line marks the drop slot; the
+///   new order is the order of `AppSettings.visibleColumns`). Name stays first.
 /// - Right-click → column-chooser `NSMenu` (toggle `AppSettings.visibleColumns`,
 ///   fire `onLayoutChanged()`).
 ///
@@ -51,6 +54,17 @@ final class FileListHeaderView: NSView {
     private var dragLeftStart: CGFloat = 0
     private var dragRightStart: CGFloat = 0
     private var dragStartX: CGFloat = 0
+
+    // Reorder state: a press on an optional column's title arms a potential
+    // reorder; it becomes one once the cursor moves `reorderThreshold` points,
+    // otherwise mouseUp is a plain sort click.
+    private var pressColumnID: String? = nil
+    private var pressX: CGFloat = 0
+    private var reorderID: String? = nil     // non-nil while a reorder drag is live
+    private var reorderCursorX: CGFloat = 0
+    private var reorderGrabOffset: CGFloat = 0   // cursor x − column left edge at press
+    private var reorderSlot: Int = 0
+    private let reorderThreshold: CGFloat = 4
 
     // MARK: - Cursor tracking
 
@@ -181,6 +195,28 @@ final class FileListHeaderView: NSView {
             }
         }
 
+        // --- Reorder feedback: insertion line + ghost of the dragged title ---
+        if let dragID = reorderID, let range = layout.xRange(of: dragID) {
+            let lineX = layout.dropLineX(forSlot: reorderSlot)
+            NSColor.controlAccentColor.setFill()
+            NSRect(x: lineX - 1, y: 1, width: 2, height: bounds.height - 2).fill()
+            let w = range.upperBound - range.lowerBound
+            let ghost = NSRect(x: reorderCursorX - reorderGrabOffset, y: 1, width: w, height: bounds.height - 3)
+            let path = NSBezierPath(roundedRect: ghost, xRadius: 4, yRadius: 4)
+            NSColor.controlAccentColor.withAlphaComponent(0.18).setFill()
+            path.fill()
+            NSColor.controlAccentColor.withAlphaComponent(0.6).setStroke()
+            path.lineWidth = 1
+            path.stroke()
+            if let col = layout.columns.first(where: { $0.id == dragID }) {
+                let title = tr(col.title)
+                let size = (title as NSString).size(withAttributes: titleAttrs)
+                (title as NSString).draw(in: NSRect(x: ghost.minX + 6, y: (bounds.height - size.height) / 2,
+                                                    width: min(size.width, w - 12), height: size.height),
+                                         withAttributes: [.font: titleFont, .foregroundColor: NSColor.labelColor])
+            }
+        }
+
         // --- Bottom border ---
         NSColor.separatorColor.setStroke()
         let border = NSBezierPath()
@@ -210,15 +246,28 @@ final class FileListHeaderView: NSView {
             return
         }
 
-        // Column click → sort
+        // Title press: sort on release, or reorder once dragged sideways.
         if let colID = layout.column(atX: pt.x) {
-            onSort?(colID)
+            pressColumnID = colID
+            pressX = pt.x
+            if let range = layout.xRange(of: colID) { reorderGrabOffset = pt.x - range.lowerBound }
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let rightID = dragRightID else { return }
         let pt = convert(event.locationInWindow, from: nil)
+        if reorderID == nil, let pressed = pressColumnID, pressed != "name",
+           abs(pt.x - pressX) >= reorderThreshold {
+            reorderID = pressed                    // Name is pinned first: not draggable
+            NSCursor.closedHand.set()
+        }
+        if let _ = reorderID {
+            reorderCursorX = pt.x
+            reorderSlot = makeLayout().dropSlot(atX: pt.x)
+            needsDisplay = true
+            return
+        }
+        guard let rightID = dragRightID else { return }
         // Move the divider with the cursor: left += eff, right -= eff. Clamp the
         // shared delta so neither column drops below the minimum (keeping the
         // sum — and therefore the flexible Name column — unchanged).
@@ -236,8 +285,25 @@ final class FileListHeaderView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        dragLeftID = nil
-        dragRightID = nil
+        defer {
+            dragLeftID = nil
+            dragRightID = nil
+            pressColumnID = nil
+            reorderID = nil
+        }
+        if let dragID = reorderID {
+            NSCursor.arrow.set()
+            let reordered = FileColumnLayout.moved(AppSettings.visibleColumns, id: dragID, toSlot: reorderSlot)
+            if reordered != AppSettings.visibleColumns {
+                AppSettings.visibleColumns = reordered
+                onLayoutChanged?()
+            }
+            needsDisplay = true
+            return
+        }
+        if dragRightID == nil, let colID = pressColumnID {
+            onSort?(colID)                         // plain click (no drag) → sort
+        }
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -307,10 +373,11 @@ final class FileListHeaderView: NSView {
     @objc private func applyColumnSet(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String,
               let set = ColumnSets.all().first(where: { $0.name == name }) else { return }
-        // Only known ids, in canonical order — a set saved by a newer build
-        // must not inject columns this build can't draw.
-        let canonical = FileColumnLayout.optionalColumns.map { $0.id }
-        AppSettings.visibleColumns = canonical.filter { set.columns.contains($0) }
+        // Only known ids — a set saved by a newer build must not inject columns
+        // this build can't draw. The set's own order is kept (sets carry the
+        // user's drag-reordered layout).
+        let known = Set(FileColumnLayout.optionalColumns.map { $0.id })
+        AppSettings.visibleColumns = set.columns.filter { known.contains($0) }
         needsDisplay = true
         onLayoutChanged?()
     }
@@ -345,10 +412,10 @@ final class FileListHeaderView: NSView {
         if visible.contains(colID) {
             visible.removeAll { $0 == colID }
         } else {
-            // Maintain the canonical order from optionalColumns.
-            let canonicalOrder = FileColumnLayout.optionalColumns.map { $0.id }
-            visible.append(colID)
-            visible.sort { canonicalOrder.firstIndex(of: $0) ?? 0 < canonicalOrder.firstIndex(of: $1) ?? 0 }
+            // Slot it by catalogue rank among the columns already shown, keeping
+            // the user's drag-reordered sequence of the others intact.
+            visible = FileColumnLayout.inserted(visible, adding: colID,
+                                                canonical: FileColumnLayout.optionalColumns.map { $0.id })
         }
         AppSettings.visibleColumns = visible
         needsDisplay = true

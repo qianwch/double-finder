@@ -93,6 +93,62 @@ struct FileColumnLayout {
         return nil
     }
 
+    // MARK: - Reordering (drag a header title)
+
+    /// Where a dragged optional column would land if dropped at `x`: a slot
+    /// index into the optional-column list (0 = right after Name, n = last).
+    /// The boundary between two slots is the midpoint of each column, so the
+    /// insertion line flips when the cursor passes a column's centre. Name is
+    /// pinned first: no slot exists to its left.
+    func dropSlot(atX x: CGFloat) -> Int {
+        var left: CGFloat = 0
+        for (i, col) in columns.enumerated() {
+            let mid = left + col.width / 2
+            if i > 0, x < mid { return i - 1 }
+            left += col.width
+        }
+        return max(0, columns.count - 1)
+    }
+
+    /// X coordinate of the insertion line for `slot` (the left edge of the
+    /// optional column at that slot, or the right edge of the last column).
+    func dropLineX(forSlot slot: Int) -> CGFloat {
+        var x: CGFloat = 0
+        for (i, col) in columns.enumerated() {
+            if i == slot + 1 { return x }
+            x += col.width
+        }
+        return x
+    }
+
+    /// Moves `id` inside an ordered id list to `slot` (an insertion index in
+    /// the list BEFORE removal, as `dropSlot` returns). Unknown id → unchanged.
+    static func moved(_ ids: [String], id: String, toSlot slot: Int) -> [String] {
+        guard let from = ids.firstIndex(of: id) else { return ids }
+        var out = ids
+        out.remove(at: from)
+        var target = slot > from ? slot - 1 : slot
+        target = max(0, min(out.count, target))
+        out.insert(id, at: target)
+        return out
+    }
+
+    /// Where a column being turned on should go: right after the last visible
+    /// column that precedes it in the canonical catalogue (front when none),
+    /// so the user's own ordering of the other columns is preserved (a plain
+    /// canonical re-sort would undo every drag-reorder on each toggle).
+    static func inserted(_ ids: [String], adding id: String, canonical: [String]) -> [String] {
+        guard !ids.contains(id) else { return ids }
+        let rank = canonical.firstIndex(of: id) ?? Int.max
+        var out = ids
+        if let last = ids.lastIndex(where: { (canonical.firstIndex(of: $0) ?? Int.max) < rank }) {
+            out.insert(id, at: last + 1)
+        } else {
+            out.insert(id, at: 0)
+        }
+        return out
+    }
+
     /// Returns the column id whose RIGHT edge is within `tolerance` of `atX` (for drag-to-resize).
     /// Only non-last columns are resizable (resizing the last column from its right edge is not meaningful).
     func resizeDivider(atX: CGFloat, tolerance: CGFloat) -> String? {

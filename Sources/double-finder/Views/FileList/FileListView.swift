@@ -70,6 +70,17 @@ final class FileListView: NSScrollView {
             self.body.reloadLayout()
             self.body.needsDisplay = true
             self.headerView.needsDisplay = true
+            // Column order / widths / visibility are global settings: the other
+            // panel's header and body must follow right away, not on its next
+            // incidental redraw.
+            NotificationCenter.default.post(name: .fileListColumnsDidChange, object: self)
+        }
+        columnsObserver = NotificationCenter.default.addObserver(
+            forName: .fileListColumnsDidChange, object: nil, queue: .main) { [weak self] note in
+            guard let self, (note.object as AnyObject?) !== self else { return }
+            self.body.reloadLayout()
+            self.body.needsDisplay = true
+            self.headerView.needsDisplay = true
         }
 
         // Apply initial viewMode (full) — sets insets + header visibility.
@@ -77,6 +88,10 @@ final class FileListView: NSScrollView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Block observers are NOT removed by `removeObserver(self)` — keep the token.
+    private var columnsObserver: NSObjectProtocol?
+    deinit { if let o = columnsObserver { NotificationCenter.default.removeObserver(o) } }
 
     // MARK: - Layout
 
@@ -281,4 +296,10 @@ final class FileListView: NSScrollView {
             return
         }
     }
+}
+
+extension Notification.Name {
+    /// Posted by a FileListView whose header changed the shared column layout
+    /// (reorder / resize / show-hide); the other panel reloads on it.
+    static let fileListColumnsDidChange = Notification.Name("FileListColumnsDidChange")
 }
