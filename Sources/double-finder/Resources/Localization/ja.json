@@ -650,5 +650,8 @@
   "Markdown Preview": "Markdown プレビュー",
   "Ebook Reader": "電子書籍リーダー",
   "Renders Markdown, mermaid and PlantUML files as a page in the Lister": "Markdown・mermaid・PlantUML ファイルをビューアでページとして表示",
-  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "EPUB と Kindle（MOBI / AZW3）の書籍をビューアで読む"
+  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "EPUB と Kindle（MOBI / AZW3）の書籍をビューアで読む",
+  "PDF Viewer": "PDF ビューア",
+  "Shows PDF documents in the Lister, dark mode included": "PDF 文書をビューアで表示（ダークモード対応）",
+  "Cannot open PDF": "PDF を開けません"
 }

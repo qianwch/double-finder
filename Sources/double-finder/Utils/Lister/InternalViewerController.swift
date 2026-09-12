@@ -410,7 +410,14 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         case .preview:
             NSSound.beep()                      // Quick Look has nothing to zoom
         case .plugin:
-            guard shouldShowWeb() else { NSSound.beep(); return }   // a plugin VIEW zooms (or not) on its own
+            guard shouldShowWeb() else {
+                // A plugin VIEW zooms on its own: forward to it when it implements
+                // the standard zoomIn:/zoomOut: actions (PDFView does) and our
+                // resetZoom: for ⌘0; otherwise there is nothing to zoom.
+                let sel = NSSelectorFromString(step > 0 ? "zoomIn:" : step < 0 ? "zoomOut:" : "resetZoom:")
+                if let pv = pluginView, pv.responds(to: sel) { _ = pv.perform(sel, with: nil) } else { NSSound.beep() }
+                return
+            }
             let zoom = step == 0 ? 1 : min(3, max(0.5, webZoom + CGFloat(step) * 0.1))
             guard zoom != webZoom else { return }
             webZoom = zoom

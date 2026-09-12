@@ -650,5 +650,8 @@
   "Markdown Preview": "Markdown 预览",
   "Ebook Reader": "电子书阅读器",
   "Renders Markdown, mermaid and PlantUML files as a page in the Lister": "在查看器中把 Markdown、mermaid 与 PlantUML 文件渲染成页面",
-  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "在查看器中阅读 EPUB 与 Kindle（MOBI / AZW3）电子书"
+  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "在查看器中阅读 EPUB 与 Kindle（MOBI / AZW3）电子书",
+  "PDF Viewer": "PDF 查看器",
+  "Shows PDF documents in the Lister, dark mode included": "在查看器中显示 PDF 文档，支持黑暗模式",
+  "Cannot open PDF": "无法打开 PDF"
 }

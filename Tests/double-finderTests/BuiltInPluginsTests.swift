@@ -2,8 +2,8 @@ import XCTest
 import DoubleFinderPluginKit
 @testable import double_finder
 
-/// The built-in plugins (Markdown preview, ebook reader) go through the same
-/// PageViewerPlugin contract as a bundle would: claim by extension + sample,
+/// The built-in plugins (Markdown preview, ebook reader, PDF viewer) go through
+/// the same plugin contracts as a bundle would: claim by extension + sample,
 /// render off-main, report failures as errors the host shows and falls back on.
 final class BuiltInPluginsTests: XCTestCase {
 
@@ -16,15 +16,24 @@ final class BuiltInPluginsTests: XCTestCase {
         return url
     }
 
-    func testCatalogueShipsMarkdownAndEbookPageViewers() {
-        XCTAssertEqual(BuiltInPlugins.all.count, 2)
+    func testCatalogueShipsMarkdownEbookAndPDFViewers() {
+        XCTAssertEqual(BuiltInPlugins.all.count, 3)
         let ids = BuiltInPlugins.all.map { $0.init().info.identifier }
-        XCTAssertEqual(ids, [MarkdownPreviewPlugin.identifier, EbookReaderPlugin.identifier])
+        XCTAssertEqual(ids, [MarkdownPreviewPlugin.identifier, EbookReaderPlugin.identifier, PDFViewerPlugin.identifier])
         for type in BuiltInPlugins.all {
             let p = type.init()
-            XCTAssertEqual(p.pageViewers.count, 1, p.info.identifier)
-            XCTAssertTrue(p.viewers.isEmpty && p.fileSystems.isEmpty && p.commands.isEmpty)
+            let isPDF = p.info.identifier == PDFViewerPlugin.identifier
+            XCTAssertEqual(p.pageViewers.count, isPDF ? 0 : 1, p.info.identifier)   // md / ebook = page viewers
+            XCTAssertEqual(p.viewers.count, isPDF ? 1 : 0, p.info.identifier)       // pdf = a view plugin (PDFKit)
+            XCTAssertTrue(p.fileSystems.isEmpty && p.commands.isEmpty)
         }
+    }
+
+    func testPDFViewerClaimsByExtensionOrMagic() {
+        let v = PDFDocumentViewer()
+        XCTAssertTrue(v.canView(url: URL(fileURLWithPath: "/x/a.PDF"), sample: Data()))
+        XCTAssertTrue(v.canView(url: URL(fileURLWithPath: "/x/noext"), sample: Data("%PDF-1.4".utf8)))
+        XCTAssertFalse(v.canView(url: URL(fileURLWithPath: "/x/a.epub"), sample: Data("PK".utf8)))
     }
 
     func testMarkdownViewerClaimsTextMarkdownOnly() {

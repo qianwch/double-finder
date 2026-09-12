@@ -8,5 +8,6 @@ enum BuiltInPlugins {
     static let all: [DFPlugin.Type] = [
         MarkdownPreviewPlugin.self,   // .md / .mmd / .puml → rendered page (PageViewerPlugin)
         EbookReaderPlugin.self,       // .epub / .mobi / .azw3 → rendered book (PageViewerPlugin)
+        PDFViewerPlugin.self,         // .pdf → PDFKit view with dark-mode rendering (ViewerPlugin)
     ]
 }
