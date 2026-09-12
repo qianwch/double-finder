@@ -26,6 +26,11 @@ final class ListerWebView: NSView, WKNavigationDelegate {
         let prefs = WKWebpagePreferences()
         prefs.allowsContentJavaScript = false
         conf.defaultWebpagePreferences = prefs
+        // Own the private page scheme: with a handler registered WebKit
+        // answers every `x-double-finder-lister://` request itself (empty)
+        // instead of handing an unknown scheme to LaunchServices, which pops
+        // the system "no application set to open URL" dialog.
+        conf.setURLSchemeHandler(EmptySchemeHandler(), forURLScheme: Self.pageBase.scheme!)
         webView = WKWebView(frame: .zero, configuration: conf)
         super.init(frame: frame)
         webView.navigationDelegate = self
@@ -45,12 +50,14 @@ final class ListerWebView: NSView, WKNavigationDelegate {
     func loadHTML(_ html: String) {
         lastHTML = html
         crashedOnce = false
-        webView.loadHTMLString(html, baseURL: Self.pageBase)   // images are inlined data URIs
+        // The empty page (clearing / teardown) goes to about:blank: loading ""
+        // against the private base made WebKit navigate to the base URL itself.
+        webView.loadHTMLString(html, baseURL: html.isEmpty ? nil : Self.pageBase)   // images are inlined data URIs
     }
 
     func teardown() {                                 // windowWillClose (design §4.1)
         webView.navigationDelegate = nil
-        webView.loadHTMLString("", baseURL: Self.pageBase)
+        webView.loadHTMLString("", baseURL: nil)
         onGiveUp = nil
         onAppearanceChanged = nil
     }
@@ -94,6 +101,18 @@ final class ListerWebView: NSView, WKNavigationDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if crashedOnce { onGiveUp?(); return }
         crashedOnce = true
-        webView.loadHTMLString(lastHTML, baseURL: Self.pageBase)
+        webView.loadHTMLString(lastHTML, baseURL: lastHTML.isEmpty ? nil : Self.pageBase)
     }
+}
+
+/// Answers every request on the private page scheme with an empty 404-style
+/// response. Nothing legitimate ever fetches from it (all resources are inlined
+/// data URIs); registering it only keeps the scheme out of LaunchServices.
+private final class EmptySchemeHandler: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        let url = task.request.url ?? ListerWebView.pageBase
+        task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+        task.didFinish()
+    }
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
