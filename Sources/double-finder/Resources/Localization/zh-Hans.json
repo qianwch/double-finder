@@ -646,5 +646,9 @@
   "KFX books are not supported — showing hexadecimal": "不支持 KFX 格式电子书——已显示十六进制",
   "Unsupported ebook format — showing hexadecimal": "不支持的电子书格式——已显示十六进制",
   "Cannot read ebook — showing hexadecimal": "无法读取电子书——已显示十六进制",
-  "Ebook too large to render": "电子书过大，无法渲染"
+  "Ebook too large to render": "电子书过大，无法渲染",
+  "Markdown Preview": "Markdown 预览",
+  "Ebook Reader": "电子书阅读器",
+  "Renders Markdown, mermaid and PlantUML files as a page in the Lister": "在查看器中把 Markdown、mermaid 与 PlantUML 文件渲染成页面",
+  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "在查看器中阅读 EPUB 与 Kindle（MOBI / AZW3）电子书"
 }

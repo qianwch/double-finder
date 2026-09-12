@@ -77,29 +77,29 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var source: ListerSource?
     private var currentURL: URL?
     private var currentEncoding: String.Encoding = .utf8
+    /// The `PageViewerPlugin` (built-in Markdown / ebook, or a bundle's) that
+    /// claimed the current file — Preview (3) then shows its rendered page in
+    /// `mdWebView` instead of Quick Look. nil = plain QL preview.
+    private var pageViewer: PageViewerPlugin?
+    /// The chooser's own verdict for the file (what Preview falls back to when
+    /// the page render fails: `.md` → text source, `.epub` → QL, `.mobi` → hex).
+    private var chooserMode: ViewerMode = .preview
     /// Set ONLY when a crashed WKWebView gives up twice (design §4.1) — makes
-    /// showWeb false so preview stays on source. Reset per-file in load(). It is
-    /// deliberately NOT set on oversize/read-error redirects: those fall to source
-    /// too, but a second press-3 must re-attempt the render, not jump to QL.
-    private var mdRenderFellBack = false
-    /// Max markdown size we read fully into memory to render (design §4.1).
-    private let mdRenderMaxBytes: UInt64 = 50 << 20
-    /// Max ebook container size handed to EPUBReader / MOBIReader (the whole
-    /// file is unpacked / decompressed in memory; images are inlined up to a
-    /// separate 48MB budget, see EbookResourceBudget).
-    private let ebookMaxBytes: UInt64 = 512 << 20
-    /// In-flight background web render (markdown OR ebook): read + decode +
-    /// convert run in a detached task so a multi-MB file never freezes the
-    /// window. Cancelled by any mode switch, file change or close; completion
-    /// is additionally gated on `diagramGeneration` so a late result can never
-    /// land on another page.
+    /// showWeb false so preview stays on the fall-back. Reset per-file in load().
+    private var webCrashed = false
+    /// Set when the page viewer threw (too large / DRM / read error): Preview
+    /// shows the chooser's mode instead until the user presses 3 again, which
+    /// clears it and re-attempts the render (design §4.1 semantics kept).
+    private var pageFellBack = false
+    /// In-flight background page render (`PageViewerPlugin.renderPage` on a
+    /// detached task so a multi-MB file never freezes the window). Cancelled by
+    /// any mode switch, file change or close through `pageCancel`; completion
+    /// is additionally gated on `pageGeneration` so a late result — or a late
+    /// phase-2 `update` from the plugin — can never land on another page.
     private var webRenderTask: Task<Void, Never>?
-    /// Bumped on every setMode/close — a late diagram-SVG substitution must not
-    /// reload a page the user already left (design §5, generation token).
-    private var diagramGeneration = 0
-    /// Theme baked into the currently displayed diagram SVGs; nil = current doc
-    /// has no rendered diagrams (page CSS adapts by itself, no reload needed).
-    private var lastDiagramDark: Bool?
+    private var pageCancel: CancelFlag?
+    /// Bumped on every setMode/close — the generation token above.
+    private var pageGeneration = 0
 
     // Zoom (⌘= / ⌘- / ⌘0). Deliberately NOT reset in windowWillClose — the
     // singleton keeps the user's chosen size for the next viewer session.
@@ -251,33 +251,11 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         containerTopConstraint?.isActive = true
     }
 
-    /// True when preview mode should show rendered markdown (ListerWebView)
-    /// rather than QLPreviewView. False after a WKWebView crash-give-up.
+    /// True when preview mode should show a plugin-rendered page (ListerWebView)
+    /// rather than QLPreviewView: a page viewer claimed the file, the web view
+    /// has not given up (crash) and the last render did not fail.
     private func shouldShowWeb() -> Bool {
-        currentMode == .preview && !mdRenderFellBack
-            && (isMarkdownURL(currentURL) || diagramKind(of: currentURL) != nil || isEbookURL(currentURL))
-    }
-
-    /// EPUB / Kindle books, rendered by the built-in reader into the web view.
-    private func isEbookURL(_ url: URL?) -> Bool {
-        guard let ext = url?.pathExtension else { return false }
-        return ViewerModeChooser.isEbook(extension: ext)
-    }
-
-    /// Standalone diagram-source files, routed to rendered preview like markdown
-    /// (design §5 — this is the SECOND gate; ViewerModeChooser is the first).
-    private func diagramKind(of url: URL?) -> DiagramKind? {
-        switch url?.pathExtension.lowercased() {
-        case "mmd": return .mermaid
-        case "puml", "plantuml": return .plantuml
-        default: return nil
-        }
-    }
-
-    /// A markdown file by extension (md/markdown), routed to rendered preview.
-    private func isMarkdownURL(_ url: URL?) -> Bool {
-        guard let ext = url?.pathExtension.lowercased() else { return false }
-        return ext == "md" || ext == "markdown"
+        currentMode == .preview && pageViewer != nil && !webCrashed && !pageFellBack
     }
 
     /// Lazily build the current mode's view inside `container`, hide the others.
@@ -323,7 +301,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
                     wv.setZoom(webZoom)
                     wv.onGiveUp = { [weak self] in
                         guard let self else { return }
-                        self.mdRenderFellBack = true
+                        self.webCrashed = true
                         self.setMode(.text, auto: true)
                         self.showStatusNote(tr("Preview failed — showing source"))
                     }
@@ -500,10 +478,10 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         let gen = navGeneration
         let entry = entries[index]; let total = entries.count
         cancelSearch(clearQuery: true)               // new file = new search context
-        mdRenderFellBack = false                     // per-file: give the next md a fresh render attempt
-        lastDiagramDark = nil                        // per-file: no rendered diagrams shown yet
-        diagramGeneration += 1                       // void the previous file's in-flight phase 2 (design §5.3):
-                                                     // it must not land during entry.resolve() and repollute lastDiagramDark
+        webCrashed = false                           // per-file: give the next page a fresh render attempt
+        pageFellBack = false
+        pageGeneration += 1                          // void the previous file's in-flight render / phase 2
+                                                     // (design §5.3): it must not land during entry.resolve()
         resolveTask?.cancel()                        // stop the previous file's download/extract
         // Name the INCOMING file right away: during a slow resolve the titlebar
         // would otherwise still advertise the previous one.
@@ -528,12 +506,17 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             let sample = self.source?.read(offset: 0, count: 64 << 10)
             let choice = ViewerModeChooser.choose(fileExtension: url.pathExtension, sample: sample)
             self.currentEncoding = choice.encoding ?? .utf8
-            self.builtInChoice = choice.mode
+            self.chooserMode = choice.mode
+            // A page viewer (built-in Markdown / ebook, or a bundle's) that claims
+            // the file makes Preview its rendered page; the chooser's verdict stays
+            // the fall-back for a failed render.
+            self.pageViewer = PluginManager.shared.pageViewer(for: url, sample: sample ?? Data())
+            self.builtInChoice = self.pageViewer != nil ? .preview : choice.mode
             // A viewer plugin that claims the file wins the auto choice (TC: WLX
             // plugins take precedence over the built-in modes).
             self.pluginViewer = PluginManager.shared.viewer(for: url, sample: sample ?? Data())
             self.modeControl?.setEnabled(self.pluginViewer != nil, forSegment: 3)
-            self.setMode(self.pluginViewer != nil ? .plugin : choice.mode, auto: true)
+            self.setMode(self.pluginViewer != nil ? .plugin : self.builtInChoice, auto: true)
             self.window?.title = "\(entry.title) — (\(index + 1)/\(total))"
             self.onIndexChange?(index)
         }
@@ -614,7 +597,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// is only used by the deep-match auto-switch to hex.
     private func setMode(_ mode: ViewerMode, auto: Bool, preserveSearch: Bool = false) {
         if !preserveSearch, !auto { cancelSearch(clearQuery: true) }   // manual switch clears the search (design §6)
-        diagramGeneration += 1                       // leaving/reloading a page voids in-flight diagram results
+        if mode == .preview, !auto { pageFellBack = false }           // an explicit 3 re-attempts a failed page render
+        pageGeneration += 1                       // leaving/reloading a page voids in-flight render / phase-2 results
         cancelWebRender()                       // …and any render still converting for the previous page
         // Manual same-file switches keep the reading position by byte offset
         // (same anchoring as encoding changes; TC behavior).
@@ -651,25 +635,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             if anchor > 0 { hexView?.scrollToOffset(anchor) }
             hexView?.focus()
         case .preview:
-            if shouldShowWeb(), let source, let url = currentURL, isEbookURL(url) {
-                if source.length > ebookMaxBytes {
-                    setMode(.hex, auto: true)
-                    showStatusNote(tr("Ebook too large to render"))
-                    return
-                }
-                startEbookRender(url: url)
-                mdWebView?.focus()
-            } else if shouldShowWeb(), let source {
-                // Size-before-read (order is critical: never read a huge md fully
-                // into memory). Oversize redirects to source WITHOUT setting
-                // mdRenderFellBack — that flag is crash-only, and setting it here
-                // would make a second press-3 wrongly jump to QL.
-                if source.length > mdRenderMaxBytes {
-                    setMode(.text, auto: true)
-                    showStatusNote(tr("Markdown too large — showing source"))
-                    return
-                }
-                startMarkdownRender(source: source)
+            if shouldShowWeb(), let viewer = pageViewer, let url = currentURL {
+                startPageRender(viewer, url: url)
                 mdWebView?.focus()
             } else {
                 previewView?.previewItem = currentURL as NSURL?
@@ -869,167 +836,83 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         updatePositionLabel()
     }
 
-    // MARK: Markdown rendering (phase 1 of the markdown preview, off-main)
+    // MARK: Page rendering (PageViewerPlugin → ListerWebView)
 
-    /// Reads, decodes and converts the current file on a detached task, then
-    /// hands the HTML to the web view on the main actor. The loading overlay
-    /// only appears if the render outlasts its 250ms grace (small files never
-    /// flash it). Read errors fall back to source mode exactly like before.
-    private func startMarkdownRender(source: ListerSource) {
-        let gen = diagramGeneration
-        let encoding = currentEncoding
-        let kind = diagramKind(of: currentURL)
-        let baseDir = currentURL?.deletingLastPathComponent()
-        let length = Int(source.length)
+    /// Runs the plugin's `renderPage` on a detached task and loads the result;
+    /// later `update`s from the plugin (e.g. diagrams rendered to SVG) reload
+    /// the page while it is still the current one. The loading overlay only
+    /// appears if the render outlasts its 250ms grace (small files never flash
+    /// it). A throw / failed update shows its message and falls back to the
+    /// chooser's mode for the file (md → source, epub → QL, mobi → hex).
+    private func startPageRender(_ viewer: PageViewerPlugin, url: URL) {
+        let gen = pageGeneration
+        let cancel = CancelFlag()
+        pageCancel = cancel
         mdWebView?.focus()                           // keyboard goes to the page area right away
         beginLoadingIndicator()
-        webRenderTask = Task.detached(priority: .userInitiated) { [weak self] in
-            var rendered: (html: String, diagrams: [DiagramBlock])?
-            if let data = source.read(offset: 0, count: length) {
-                var decoder = TextChunkDecoder(encoding: encoding)
-                let text = decoder.decode(data, isFinal: true)
-                if let kind {
-                    // Standalone .mmd/.puml = a synthesized one-fence document, so
-                    // phase 1 (source visible) and phase 2 (SVG) reuse the md path.
-                    let fence = kind == .mermaid ? "mermaid" : "plantuml"
-                    rendered = MarkdownToHTML.renderDocument("```\(fence)\n\(text)\n```", baseDir: nil,
-                                                             isCancelled: { Task.isCancelled })
-                } else {
-                    rendered = MarkdownToHTML.renderDocument(text, baseDir: baseDir,
-                                                             isCancelled: { Task.isCancelled })
+        let deliver: @Sendable (Result<String, Error>) -> Void = { [weak self] result in
+            Task { @MainActor [weak self] in
+                guard let self, !cancel.isCancelled, self.pageGeneration == gen else { return }
+                switch result {
+                case .success(let html):
+                    self.mdWebView?.loadHTML(html)
+                    // Appearance may have flipped while the plugin was still
+                    // rendering — re-check once; the plugin decides cheaply.
+                    self.appearanceChangedInPreview()
+                case .failure(let error):
+                    self.pageRenderFailed(error)
                 }
-            }
-            guard !Task.isCancelled else { return }
-            let result = rendered                    // immutable copy for the Sendable hop
-            await MainActor.run { [weak self] in
-                guard let self, !Task.isCancelled, self.diagramGeneration == gen else { return }
-                self.webRenderTask = nil
-                self.endLoadingIndicator()
-                guard let doc = result else {
-                    self.setMode(.text, auto: true)
-                    self.showStatusNote(tr("Read error — cannot access the file"))
-                    return
-                }
-                self.mdWebView?.loadHTML(doc.html)
-                if kind != nil {
-                    self.resolveDiagrams(doc, standalone: true)
-                } else if !doc.diagrams.isEmpty {
-                    self.resolveDiagrams(doc, standalone: false)
-                }
-                self.mdWebView?.focus()
             }
         }
-    }
-
-    // MARK: Ebook rendering (EPUB / MOBI / KF8 → one page with a TOC sidebar)
-
-    /// Parses the book on a detached task (unzip / decompress / sanitize / inline
-    /// images) and loads the assembled page. Failures fall to hexadecimal with a
-    /// status note — DRM and unsupported containers (KFX) are named explicitly.
-    private func startEbookRender(url: URL) {
-        let gen = diagramGeneration
-        mdWebView?.focus()
-        beginLoadingIndicator()
         webRenderTask = Task.detached(priority: .userInitiated) { [weak self] in
-            var html: String?
-            var failure: String?
+            let result: Result<String, Error>
             do {
-                let book: EbookBook
-                if url.pathExtension.lowercased() == "epub" {
-                    book = try EPUBReader.read(url: url, isCancelled: { Task.isCancelled })
-                } else {
-                    book = try MOBIReader.read(url: url, isCancelled: { Task.isCancelled })
-                }
-                if !Task.isCancelled { html = EbookHTML.page(for: book) }
-            } catch EbookError.drm {
-                failure = "Ebook is DRM-protected — cannot display"
-            } catch EbookError.unsupported(let what) {
-                failure = what == "KFX" ? "KFX books are not supported — showing hexadecimal"
-                                        : "Unsupported ebook format — showing hexadecimal"
-            } catch EbookError.cancelled {
+                result = .success(try viewer.renderPage(url: url, isCancelled: { cancel.isCancelled }, update: deliver))
+            } catch is CancellationError {
                 return
             } catch {
-                NSLog("[ebook] %@: %@", url.lastPathComponent, String(describing: error))
-                failure = "Cannot read ebook — showing hexadecimal"
+                result = .failure(error)
             }
-            guard !Task.isCancelled else { return }
-            let result = html, note = failure
+            guard !cancel.isCancelled else { return }
             await MainActor.run { [weak self] in
-                guard let self, !Task.isCancelled, self.diagramGeneration == gen else { return }
+                guard let self, !cancel.isCancelled, self.pageGeneration == gen else { return }
                 self.webRenderTask = nil
                 self.endLoadingIndicator()
-                guard let page = result else {
-                    self.setMode(.hex, auto: true)
-                    self.showStatusNote(tr(note ?? "Cannot read ebook — showing hexadecimal"))
-                    return
+                switch result {
+                case .success(let html):
+                    self.mdWebView?.loadHTML(html)
+                    self.mdWebView?.focus()
+                case .failure(let error):
+                    self.pageRenderFailed(error)
                 }
-                self.mdWebView?.loadHTML(page)
-                self.mdWebView?.focus()
             }
         }
     }
 
-    /// Stops an in-flight render (the converter polls `Task.isCancelled` and
-    /// bails within a few hundred lines) and drops its loading overlay.
+    /// The page viewer could not render the file: note + the chooser's mode.
+    /// `pageFellBack` keeps Preview on that mode until an explicit press of 3.
+    private func pageRenderFailed(_ error: Error) {
+        pageFellBack = true
+        let fallback: ViewerMode = chooserMode == .plugin ? .hex : chooserMode
+        setMode(fallback, auto: true)
+        showStatusNote(tr(error.localizedDescription))     // built-ins throw English source strings
+    }
+
+    /// Stops an in-flight render (plugins poll `isCancelled` and bail early)
+    /// and drops its loading overlay.
     private func cancelWebRender() {
+        pageCancel?.cancel(); pageCancel = nil
         guard let task = webRenderTask else { return }
         task.cancel()
         webRenderTask = nil
         endLoadingIndicator()
     }
 
-    // MARK: Diagram rendering (phase 2 of the markdown preview)
-
-    /// Phase 2 of the markdown preview (design §5): render every diagram block
-    /// to SVG (cache-hits are instant), then reload the final page ONCE. The
-    /// scroll position resets — accepted (§5.6): the file was just opened.
-    /// A standalone diagram file whose single block fails falls back to text
-    /// mode instead (search/encoding beat a code-block-in-web-view).
-    private func resolveDiagrams(_ doc: (html: String, diagrams: [DiagramBlock]), standalone: Bool) {
-        diagramGeneration += 1
-        let gen = diagramGeneration
-        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        Task { [weak self] in
-            var results: [Int: MarkdownToHTML.DiagramSubstitute] = [:]
-            var failureNote: String?
-            for (idx, block) in doc.diagrams.enumerated() {
-                let r = await DiagramRenderer.shared.render(
-                    DiagramRequest(kind: block.kind, source: block.source, dark: dark))
-                switch r {
-                case .svg(let svg): results[idx] = .svg(svg)
-                case .failure(let note):
-                    results[idx] = .failureNote(tr(note))
-                    failureNote = note
-                }
-            }
-            guard let self, self.diagramGeneration == gen else { return }
-            if standalone, let note = failureNote {
-                // mdRenderFellBack stays false — that flag is crash-only (§5).
-                self.setMode(.text, auto: true)
-                self.showStatusNote(tr(note))
-                return
-            }
-            guard !results.isEmpty else { return }
-            // Only count the theme as "baked in" when at least one SVG landed —
-            // an all-failure page has nothing theme-dependent to re-render.
-            let anySVG = results.values.contains { if case .svg = $0 { return true } else { return false } }
-            if anySVG { self.lastDiagramDark = dark }
-            self.mdWebView?.loadHTML(
-                MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams, results: results))
-            // Appearance may have flipped while phase 2 was in flight — the page
-            // we just loaded would keep stale-theme SVGs with no callback to fix
-            // it until the NEXT flip. Re-check once; the guards make it cheap.
-            self.appearanceChangedInPreview()
-        }
-    }
-
     /// Live light/dark switch while the viewer is open (spec §7): re-render the
-    /// current preview when the shown SVGs were baked with the OTHER theme.
-    /// Cache keyed by theme makes flipping back instant.
+    /// current page when the plugin says its output depends on the appearance
+    /// (mermaid SVGs are baked for one theme; the SVG cache makes it instant).
     private func appearanceChangedInPreview() {
-        guard shouldShowWeb(), let last = lastDiagramDark else { return }
-        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        guard dark != last else { return }
+        guard shouldShowWeb(), let viewer = pageViewer, viewer.needsRerenderOnAppearanceChange() else { return }
         setMode(.preview, auto: true)
     }
 
@@ -1116,7 +999,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         lastMatch = nil
         searchBarVisible = false
         noteGeneration += 1                      // invalidate any pending note-clear
-        diagramGeneration += 1                   // invalidate any in-flight diagram substitution
+        pageGeneration += 1                   // invalidate any in-flight diagram substitution
         NotificationCenter.default.removeObserver(self)
         previewView?.close()
         mdWebView?.teardown()
@@ -1126,8 +1009,9 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         // views would "exist" but belong to the dead window).
         previewView = nil
         mdWebView = nil
-        mdRenderFellBack = false
-        lastDiagramDark = nil
+        webCrashed = false
+        pageFellBack = false
+        pageViewer = nil
         textContent = nil
         hexScroll = nil
         hexView = nil
@@ -1149,4 +1033,14 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         entries = []
         onIndexChange = nil
     }
+}
+
+/// Cancellation the host controls and plugins poll from any thread: a task's
+/// own `Task.isCancelled` would not reach a plugin's follow-up work (phase-2
+/// diagram rendering runs in a task the plugin spawns).
+final class CancelFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var isCancelled: Bool { lock.withLock { flag } }
+    func cancel() { lock.withLock { flag = true } }
 }

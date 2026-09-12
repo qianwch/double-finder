@@ -60,6 +60,11 @@ final class PluginManager {
         let extensionObject: ViewerPlugin
     }
 
+    struct RegisteredPageViewer {
+        let pluginID: String
+        let extensionObject: PageViewerPlugin
+    }
+
     struct RegisteredCommand {
         let pluginID: String
         let extensionObject: CommandPlugin
@@ -83,6 +88,7 @@ final class PluginManager {
     private(set) var records: [Record] = []
     private(set) var fileSystems: [RegisteredFileSystem] = []
     private(set) var viewers: [RegisteredViewer] = []
+    private(set) var pageViewers: [RegisteredPageViewer] = []
     private(set) var commands: [RegisteredCommand] = []
     private(set) var packers: [RegisteredPacker] = []
     private(set) var contentProviders: [RegisteredContent] = []
@@ -251,6 +257,7 @@ final class PluginManager {
             fileSystems.append(RegisteredFileSystem(pluginID: id, pluginName: plugin.info.name, extensionObject: fs))
         }
         for v in plugin.viewers { viewers.append(RegisteredViewer(pluginID: id, extensionObject: v)) }
+        for v in plugin.pageViewers { pageViewers.append(RegisteredPageViewer(pluginID: id, extensionObject: v)) }
         for c in plugin.commands { commands.append(RegisteredCommand(pluginID: id, extensionObject: c)) }
         for p in plugin.packers { packers.append(RegisteredPacker(pluginID: id, extensionObject: p)) }
         for c in plugin.contentProviders { contentProviders.append(RegisteredContent(pluginID: id, extensionObject: c)) }
@@ -276,6 +283,7 @@ final class PluginManager {
         }
         fileSystems.removeAll { $0.pluginID == id }
         viewers.removeAll { $0.pluginID == id }
+        pageViewers.removeAll { $0.pluginID == id }
         commands.removeAll { $0.pluginID == id }
         packers.removeAll { $0.pluginID == id }
         contentProviders.removeAll { $0.pluginID == id }
@@ -344,6 +352,7 @@ final class PluginManager {
             if let p = rec.plugin, rec.isActive {
                 for fs in p.fileSystems { print("    fs      \(fs.identifier) — \(fs.displayName)") }
                 for v in p.viewers { print("    viewer  \(v.identifier) — \(v.displayName)") }
+                for v in p.pageViewers { print("    page    \(v.identifier) — \(v.displayName)") }
                 for c in p.commands { print("    command \(c.identifier) — \(c.title)") }
                 for k in p.packers { print("    packer  \(k.identifier) — \(k.displayName) [\(k.fileExtensions.joined(separator: ", "))]") }
                 for c in p.contentProviders { print("    columns \(c.identifier) — \(c.columns.map { $0.title }.joined(separator: ", "))") }
@@ -372,11 +381,18 @@ final class PluginManager {
         viewers.first { $0.extensionObject.canView(url: url, sample: sample) }?.extensionObject
     }
 
+    /// First page viewer that claims the file, in load order (built-ins first,
+    /// so a bundle cannot silently take Markdown / ebooks over — disable the
+    /// built-in in Settings to let one through).
+    func pageViewer(for url: URL, sample: Data) -> PageViewerPlugin? {
+        pageViewers.first { $0.extensionObject.canRender(url: url, sample: sample) }?.extensionObject
+    }
+
     /// One-line "what it provides" for the Settings table.
     func provides(_ rec: Record) -> String {
         guard let plugin = rec.plugin else { return "" }
         var parts: [String] = []
-        let fs = plugin.fileSystems.count, v = plugin.viewers.count, c = plugin.commands.count
+        let fs = plugin.fileSystems.count, v = plugin.viewers.count + plugin.pageViewers.count, c = plugin.commands.count
         let pk = plugin.packers.count, cols = plugin.contentProviders.reduce(0) { $0 + $1.columns.count }
         if fs > 0 { parts.append(fs == 1 ? tr("File system") : tr("%d file systems", fs)) }
         if v > 0 { parts.append(v == 1 ? tr("Viewer") : tr("%d viewers", v)) }

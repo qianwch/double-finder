@@ -125,7 +125,9 @@ packaged `.app` behave the same. See `THIRD-PARTY.md` for licensing.
 
 Double Finder has a Total Commander-style plugin API (`PluginKit/`, module
 `DoubleFinderPluginKit`): **file-system plugins** add a drive to the drive bar
-(like TC's WFX), **viewer plugins** add a Lister mode for a file type (WLX),
+(like TC's WFX), **viewer plugins** add a Lister mode for a file type (WLX) —
+either a custom view or an HTML page shown in the Lister; the Markdown preview
+and the ebook reader are built-in plugins of this kind and can be switched off —,
 **packer plugins** make a new archive format browsable and extractable (WCX,
 read-only), **content plugins** add columns to the file list (WDX), and
 **command plugins** add an entry to the Plugins menu, the toolbar and the

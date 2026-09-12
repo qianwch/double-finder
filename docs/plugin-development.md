@@ -201,6 +201,40 @@ to the built-in modes. The plugin view does not take part in the Lister's
 search, zoom or encoding controls; ⌘-arrows still step to the next file (your
 view is rebuilt per file).
 
+### 4.2b PageViewerPlugin (rendered page)
+
+```swift
+public protocol PageViewerPlugin: AnyObject {
+    var identifier: String { get }
+    var displayName: String { get }
+    func canRender(url: URL, sample: Data) -> Bool        // sample = first ≤64 KiB; keep it cheap
+    func renderPage(url: URL, isCancelled: @escaping @Sendable () -> Bool,
+                    update: @escaping @Sendable (Result<String, Error>) -> Void) throws -> String
+    func needsRerenderOnAppearanceChange() -> Bool        // default false
+}
+```
+
+For document-like formats. Instead of a view you return an **HTML page** and
+the host shows it in the Lister's own web view as the Preview mode (3): the
+Lister's ⌘= / ⌘- / ⌘0 zoom, loading indicator, light/dark handling and
+fall-back all apply. `renderPage` runs on a background task — poll
+`isCancelled` in long loops. Throwing shows `localizedDescription` in the
+status bar and falls back to the mode the Lister would have used without you
+(text / hex / Quick Look). Call `update` later (any thread) to replace the
+page while it is still showing — e.g. once slow parts are rendered; a
+`.failure` there falls back like a throw; late updates are ignored.
+
+The page loads with JavaScript **disabled** from a private URL that cannot
+fetch anything: inline images / fonts / CSS (data URIs, `<style>`); only
+`#anchor` links and absolute http(s) links (system browser) work. Return
+`true` from `needsRerenderOnAppearanceChange` when your output bakes the
+light/dark theme in (the host then calls `renderPage` again).
+
+The app's own Markdown preview and EPUB / Kindle reader are page viewers
+(`Sources/double-finder/Plugins/BuiltIn/`) — the reference implementations,
+and switchable off in Settings ▸ Plugins. Built-ins are asked first, so a
+bundle only gets `.md` / `.epub` files once the user disables them.
+
 ### 4.3 PackerPlugin (archive format)
 
 ```swift
@@ -302,7 +336,9 @@ and `displayName`s are shown verbatim.
 
 - `PluginKit.apiVersion` is the contract. It is bumped only for incompatible
   changes; a bundle whose `DFPluginAPIVersion` differs is refused with a clear
-  message in Settings ▸ Plugins.
+  message in Settings ▸ Plugins. Additive changes — a new extension point such
+  as `PageViewerPlugin`, a new `DFPlugin` requirement with a default — keep the
+  version: plugins built before them load and simply don't provide the new kind.
 - PluginKit is built with library evolution, so a plugin compiled against an
   older PluginKit of the **same** API version keeps loading after the host is
   rebuilt with a newer compiler.

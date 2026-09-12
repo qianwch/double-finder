@@ -12,6 +12,7 @@ import Foundation
 /// |------|--------------------|------------------------------------------------|
 /// | WFX  | `FileSystemPlugin` | a browsable "drive" (cloud, device, database …) |
 /// | WLX  | `ViewerPlugin`     | a custom F3 Lister view for a file type         |
+/// | WLX  | `PageViewerPlugin` | a file rendered as an HTML page in the Lister   |
 /// | WCX  | `PackerPlugin`     | a browsable / extractable archive format        |
 /// | WDX  | `ContentPlugin`    | custom columns in the file list                 |
 /// | —    | `CommandPlugin`    | a menu / toolbar / shortcut command             |
@@ -74,6 +75,7 @@ public protocol DFPlugin: AnyObject {
     /// Extensions provided by this plugin. Queried once right after `activate`.
     var fileSystems: [FileSystemPlugin] { get }
     var viewers: [ViewerPlugin] { get }
+    var pageViewers: [PageViewerPlugin] { get }
     var commands: [CommandPlugin] { get }
     var packers: [PackerPlugin] { get }
     var contentProviders: [ContentPlugin] { get }
@@ -87,6 +89,7 @@ public extension DFPlugin {
     @MainActor func deactivate() {}
     var fileSystems: [FileSystemPlugin] { [] }
     var viewers: [ViewerPlugin] { [] }
+    var pageViewers: [PageViewerPlugin] { [] }
     var commands: [CommandPlugin] { [] }
     var packers: [PackerPlugin] { [] }
     var contentProviders: [ContentPlugin] { [] }

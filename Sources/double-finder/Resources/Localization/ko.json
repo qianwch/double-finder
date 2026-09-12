@@ -646,5 +646,9 @@
   "KFX books are not supported — showing hexadecimal": "KFX 전자책은 지원되지 않음 — 16진수 표시",
   "Unsupported ebook format — showing hexadecimal": "지원되지 않는 전자책 형식 — 16진수 표시",
   "Cannot read ebook — showing hexadecimal": "전자책을 읽을 수 없음 — 16진수 표시",
-  "Ebook too large to render": "전자책이 너무 커서 렌더링할 수 없음"
+  "Ebook too large to render": "전자책이 너무 커서 렌더링할 수 없음",
+  "Markdown Preview": "Markdown 미리보기",
+  "Ebook Reader": "전자책 리더",
+  "Renders Markdown, mermaid and PlantUML files as a page in the Lister": "Markdown, mermaid, PlantUML 파일을 뷰어에서 페이지로 렌더링",
+  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "EPUB 및 Kindle(MOBI / AZW3) 전자책을 뷰어에서 읽기"
 }

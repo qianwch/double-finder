@@ -169,6 +169,30 @@ public protocol ViewerPlugin: AnyObject {
 `url` 永远是本地文件（远端条目先取下来）。插件认领的文件自动进入插件模式，即第 4 段 / 按键 `4`；1/2/3 切回文本/十六进制/预览。
 `makeView` 抛错则回落内置模式。插件视图不参与 Lister 的查找、缩放、编码控件；⌘方向键翻文件照常（每个文件重建视图）。
 
+### 4.2b PageViewerPlugin（渲染成页面）
+
+```swift
+public protocol PageViewerPlugin: AnyObject {
+    var identifier: String { get }
+    var displayName: String { get }
+    func canRender(url: URL, sample: Data) -> Bool        // sample = 前 ≤64 KiB；要快
+    func renderPage(url: URL, isCancelled: @escaping @Sendable () -> Bool,
+                    update: @escaping @Sendable (Result<String, Error>) -> Void) throws -> String
+    func needsRerenderOnAppearanceChange() -> Bool        // 默认 false
+}
+```
+
+面向文档类格式。你不返回视图，而是返回一段 **HTML 页面**，宿主用 Lister 自己的 web 视图当作「预览(3)」显示：
+⌘=/⌘-/⌘0 缩放、加载指示、明暗切换、失败回退全部由宿主负责。`renderPage` 在后台任务里跑——长循环要轮询 `isCancelled`。
+抛错则把 `localizedDescription` 显示在状态栏并回落到没有你时 Lister 本来会用的模式（文本 / 十六进制 / Quick Look）。
+之后可在任意线程调 `update` 替换仍在显示的页面（例如慢的部分渲染完了）；给 `.failure` 等同于抛错；页面已被离开的迟到更新会被忽略。
+
+页面以 **JavaScript 关闭**、且无法加载任何外部资源的私有 URL 载入：图片 / 字体 / CSS 必须内联（data URI、`<style>`），
+只有 `#锚点` 链接和绝对 http(s) 链接（交给系统浏览器）有效。输出把明暗主题烤进去了（如 SVG）就让 `needsRerenderOnAppearanceChange` 返回 true，宿主会再调一次 `renderPage`。
+
+应用自带的 Markdown 预览和 EPUB / Kindle 阅读器就是页面查看器（`Sources/double-finder/Plugins/BuiltIn/`）——既是参考实现，
+也能在 设置 ▸ 插件 里关掉。内置插件先被询问，所以你的 bundle 只有在用户停用它们后才会拿到 `.md` / `.epub`。
+
 ### 4.3 PackerPlugin（压缩格式）
 
 ```swift

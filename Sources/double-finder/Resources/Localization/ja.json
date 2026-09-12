@@ -646,5 +646,9 @@
   "KFX books are not supported — showing hexadecimal": "KFX 形式には対応していません — 16 進表示",
   "Unsupported ebook format — showing hexadecimal": "対応していない電子書籍形式です — 16 進表示",
   "Cannot read ebook — showing hexadecimal": "電子書籍を読み込めません — 16 進表示",
-  "Ebook too large to render": "電子書籍が大きすぎて描画できません"
+  "Ebook too large to render": "電子書籍が大きすぎて描画できません",
+  "Markdown Preview": "Markdown プレビュー",
+  "Ebook Reader": "電子書籍リーダー",
+  "Renders Markdown, mermaid and PlantUML files as a page in the Lister": "Markdown・mermaid・PlantUML ファイルをビューアでページとして表示",
+  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "EPUB と Kindle（MOBI / AZW3）の書籍をビューアで読む"
 }

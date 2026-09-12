@@ -35,37 +35,31 @@ final class ViewerModeChooserTests: XCTestCase {
                                                  sample: Data([0xC0, 0xC1, 0xFE])).mode, .text)
     }
 
-    func testMarkdownRoutesToPreviewKeepingEncoding() {
+    /// Rendered pages are a PageViewerPlugin decision now (built-in
+    /// MarkdownPreviewPlugin / EbookReaderPlugin): the chooser itself sees a
+    /// markdown file as plain text WITH a detected encoding (what "1" shows),
+    /// and an ebook container as Quick Look (epub) or hex (Kindle).
+    func testMarkdownIsTextWithEncodingForTheChooser() {
         let r = ViewerModeChooser.choose(fileExtension: "md", sample: "# t".data(using: .utf8)!)
-        XCTAssertEqual(r.mode, .preview)
-        XCTAssertNotNil(r.encoding)                       // encoding detection still runs (design §4.1)
-        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "MARKDOWN",
-                                                sample: "x".data(using: .utf8)!).mode, .preview)
-    }
-    func testMarkdownWithNULStillSniffsToHex() {
-        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "md",
-                                                sample: Data([0x4D, 0x00])).mode, .hex)
-    }
-    func testEmptyMarkdownStaysText() {
+        XCTAssertEqual(r.mode, .text)
+        XCTAssertNotNil(r.encoding)
+        for ext in ["mmd", "puml", "plantuml", "MARKDOWN"] {
+            XCTAssertEqual(ViewerModeChooser.choose(fileExtension: ext, sample: Data("graph TD".utf8)).mode, .text, ext)
+        }
+        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "md", sample: Data([0x4D, 0x00])).mode, .hex)
         XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "md", sample: Data()).mode, .text)
     }
 
-    func testEbooksRouteToPreviewWithoutEncoding() {
-        for ext in ["epub", "EPUB", "mobi", "azw", "azw3", "prc"] {
-            let r = ViewerModeChooser.choose(fileExtension: ext, sample: Data([0x50, 0x4B, 0x00]))
-            XCTAssertEqual(r.mode, .preview, ext)     // rendered by the ebook reader, not QL / hex
-            XCTAssertNil(r.encoding, ext)
-            XCTAssertTrue(ViewerModeChooser.isEbook(extension: ext), ext)
-        }
-        XCTAssertFalse(ViewerModeChooser.isEbook(extension: "pdf"))
+    func testEbookContainersWithoutThePluginGoToQuickLookOrHex() {
+        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "epub", sample: Data([0x50, 0x4B, 0x00])).mode, .preview)
+        XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "azw3", sample: Data([0x00, 0x01])).mode, .hex)
     }
 
-    func testDiagramSourceFilesRouteToPreviewWithEncoding() {
-        for ext in ["mmd", "puml", "plantuml", "MMD"] {
-            let r = ViewerModeChooser.choose(fileExtension: ext, sample: Data("graph TD".utf8))
-            XCTAssertEqual(r.mode, .preview, ext)
-            XCTAssertNotNil(r.encoding, ext)    // 按 1 看源码要有编码
-        }
+    func testLooksLikeText() {
+        XCTAssertTrue(ViewerModeChooser.looksLikeText(Data()))
+        XCTAssertTrue(ViewerModeChooser.looksLikeText(Data("abc".utf8)))
+        XCTAssertFalse(ViewerModeChooser.looksLikeText(Data([0x41, 0x00])))
+        XCTAssertTrue(ViewerModeChooser.looksLikeText(Data([0xFF, 0xFE, 0x41, 0x00])), "UTF-16 BOM beats NULs")
     }
 
     func testBinaryDotPumlStillGoesHex() {

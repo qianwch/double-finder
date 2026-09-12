@@ -646,5 +646,9 @@
   "KFX books are not supported — showing hexadecimal": "Les livres KFX ne sont pas pris en charge — affichage hexadécimal",
   "Unsupported ebook format — showing hexadecimal": "Format de livre non pris en charge — affichage hexadécimal",
   "Cannot read ebook — showing hexadecimal": "Impossible de lire le livre — affichage hexadécimal",
-  "Ebook too large to render": "Livre trop volumineux pour être rendu"
+  "Ebook too large to render": "Livre trop volumineux pour être rendu",
+  "Markdown Preview": "Aperçu Markdown",
+  "Ebook Reader": "Lecteur de livres",
+  "Renders Markdown, mermaid and PlantUML files as a page in the Lister": "Affiche les fichiers Markdown, mermaid et PlantUML comme une page dans le visualiseur",
+  "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "Lit les livres EPUB et Kindle (MOBI / AZW3) dans le visualiseur"
 }
