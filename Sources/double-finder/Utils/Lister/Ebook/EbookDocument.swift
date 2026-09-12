@@ -285,8 +285,11 @@ enum EbookHTML {
     /// The whole rendered page: fixed TOC sidebar (title / author / navigation),
     /// cover, then every chapter as a `<section id="ch-N">`. Book CSS is
     /// embedded verbatim; our chrome rules come last and are scoped, so a
-    /// book's `div { … }` rule cannot restyle the sidebar. Always a light
-    /// "paper" scheme: ebook stylesheets assume it.
+    /// book's `div { … }` rule cannot restyle the sidebar. Light "paper" by
+    /// default; in dark mode (`prefers-color-scheme`, follows the app's
+    /// appearance) the chrome switches to a dark scheme and the book's own
+    /// colours — ebook stylesheets assume paper — are neutralised (see
+    /// `chromeCSS`), pictures left alone.
     static func page(for book: EbookBook) -> String {
         var out = ""
         out.reserveCapacity(book.chapters.reduce(4096) { $0 + $1.html.utf8.count + 64 })
@@ -320,7 +323,7 @@ enum EbookHTML {
     static func escape(_ s: String) -> String { MarkdownToHTML.escapeHTML(s) }
 
     private static let chromeCSS = """
-    html { color-scheme: light; }
+    html { color-scheme: light dark; }
     body.ebook-page { margin: 0; background: #fbfaf7; color: #1b1b1b; \
     font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", serif; }
     nav.ebook-toc { position: fixed; left: 0; top: 0; bottom: 0; width: 260px; overflow-y: auto; \
@@ -350,6 +353,28 @@ enum EbookHTML {
     .ebook-missing { display: inline-block; color: #777; background: #e8e6df; border-radius: 4px; \
     padding: 2px 8px; font-size: 0.85em; }
     @media (max-width: 700px) { nav.ebook-toc { display: none; } main.ebook-main { margin-left: 0; } }
+    @media (prefers-color-scheme: dark) {
+      body.ebook-page { background: #1e1e1e !important; color: #d6d3ca !important; }
+      nav.ebook-toc { background: #262626; border-right-color: #3b3b3b; }
+      nav.ebook-toc, nav.ebook-toc * { color: #d6d3ca; }
+      nav.ebook-toc .ebook-meta { border-bottom-color: #3b3b3b; }
+      nav.ebook-toc .ebook-author { color: #a3a098; }
+      nav.ebook-toc .ebook-format { color: #7d7a73; }
+      nav.ebook-toc ol.ebook-nav li a { color: #d6d3ca; }
+      nav.ebook-toc ol.ebook-nav li a:hover { color: #7ab8ff; }
+      main.ebook-main section.ebook-chapter + section.ebook-chapter { border-top-color: #444; }
+      main.ebook-main hr.ebook-pagebreak { border-top-color: #444; }
+      main.ebook-main section.ebook-cover img { box-shadow: 0 2px 12px #000a; }
+      .ebook-missing { color: #9a9a9a !important; background: #333 !important; }
+      /* Book stylesheets are written for paper (black text, white boxes): force
+         the dark scheme onto everything but pictures. `:not(#_)` lifts the
+         specificity above any id-based rule the book may carry. */
+      main.ebook-main *:not(#_):not(img):not(svg):not(svg *):not(image):not(picture):not(video):not(canvas) { \
+    color: #d6d3ca !important; background-color: transparent !important; background-image: none !important; \
+    border-color: #4a4a4a !important; text-shadow: none !important; }
+      main.ebook-main a:not(#_) { color: #7ab8ff !important; }
+      main.ebook-main img, main.ebook-main svg, main.ebook-main image { opacity: 0.92; }
+    }
     """
 
     // MARK: Tag scanner
