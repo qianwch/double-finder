@@ -653,5 +653,6 @@
   "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "在查看器中阅读 EPUB 与 Kindle（MOBI / AZW3）电子书",
   "PDF Viewer": "PDF 查看器",
   "Shows PDF documents in the Lister, dark mode included": "在查看器中显示 PDF 文档，支持黑暗模式",
-  "Cannot open PDF": "无法打开 PDF"
+  "Cannot open PDF": "无法打开 PDF",
+  "Preview failed": "预览失败"
 }

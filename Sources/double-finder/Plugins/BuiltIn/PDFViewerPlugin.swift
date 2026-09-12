@@ -3,12 +3,50 @@ import PDFKit
 import CoreImage
 import DoubleFinderPluginKit
 
-/// Built-in view plugin: PDF documents in a PDFKit `PDFView` that follows the
-/// app's appearance — in dark mode each page is rendered inverted with hues
-/// restored ("smart invert"), so text pages read light-on-dark, while the
-/// pictures on the page are pasted back untouched. Quick Look (Preview, 3)
-/// always shows the page as printed; switch this plugin off in Settings ▸
-/// Plugins and F3 hands `.pdf` straight to Quick Look again.
+/// Light / Dark for the PDF pages, independent of the app's appearance.
+/// Persisted in UserDefaults (`PDFAppearance`: "light" / "dark", absent =
+/// follow the app); every mounted PDF view — Lister windows and the Quick
+/// View pane alike — follows the one value.
+enum PDFAppearanceOverride {
+    static let defaultsKey = "PDFAppearance"
+    static let changed = Notification.Name("PDFAppearanceChanged")
+
+    /// nil = follow the app's appearance.
+    @MainActor static var wantsDark: Bool? {
+        get {
+            switch UserDefaults.standard.string(forKey: defaultsKey) {
+            case "dark": return true
+            case "light": return false
+            default: return nil
+            }
+        }
+        set {
+            guard newValue != wantsDark else { return }
+            if let newValue {
+                UserDefaults.standard.set(newValue ? "dark" : "light", forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            }
+            NotificationCenter.default.post(name: changed, object: nil)
+        }
+    }
+
+    /// Effective mode for a view: the override, else the app's appearance.
+    @MainActor static func isDark(for view: NSView) -> Bool {
+        wantsDark ?? (view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+    }
+}
+
+/// Built-in view plugin: PDF documents in a PDFKit `PDFView`. Dark pages are
+/// rendered inverted with hues restored ("smart invert"), so text reads
+/// light-on-dark while the pictures on the page are pasted back untouched.
+/// Whether a page is dark follows the app's appearance by default; a
+/// Light / Dark switch at the bottom of the view overrides that
+/// (`PDFAppearanceOverride`, one setting shared by the Lister and the Quick
+/// View pane; picking the side the app is already on clears the override).
+/// Quick Look (Preview, 3) always shows the page as printed; switch this
+/// plugin off in Settings ▸ Plugins and F3 hands `.pdf` straight to Quick
+/// Look again.
 final class PDFViewerPlugin: NSObject, DFPlugin {
     static let identifier = "net.qian.double-finder.pdf"
 
@@ -50,16 +88,27 @@ final class PDFDocumentViewer: ViewerPlugin, Sendable {
 /// jumps to its destination and turning pages selects the matching entry.
 final class PDFViewerContainer: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private let pdfView = ListerPDFView(frame: .zero)
+    private let document: ListerPDFDocument
     private let split = NSSplitView()
     private let outline = NSOutlineView()
     private var sidebar: NSScrollView?
     private var syncing = false
+    /// Bottom strip with the Light / Dark switch for the pages.
+    private let styleBar = NSView()
+    private let modeControl = NSSegmentedControl()
+    private static let styleBarHeight: CGFloat = 24
 
     init(document: ListerPDFDocument) {
+        self.document = document
         super.init(frame: .zero)
-        pdfView.document = document
+        // The document is attached in the first real-size layout() — a PDFView
+        // that receives it while still zero-sized (autolayout hosts such as the
+        // Quick View pane) comes up scrolled mid-document once it grows.
         split.isVertical = true
         split.dividerStyle = .thin
+        // Autoresizing keeps the page view sized between layout passes (the
+        // host sets our frame right after makeView); layout() then carves the
+        // style bar out of the bottom.
         split.autoresizingMask = [.width, .height]
         split.frame = bounds
         addSubview(split)
@@ -67,8 +116,11 @@ final class PDFViewerContainer: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             buildSidebar()
         }
         split.addArrangedSubview(pdfView)
+        buildStyleBar()
         NotificationCenter.default.addObserver(self, selector: #selector(pageChanged),
                                                name: .PDFViewPageChanged, object: pdfView)
+        NotificationCenter.default.addObserver(self, selector: #selector(syncModeControl),
+                                               name: PDFAppearanceOverride.changed, object: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -76,12 +128,68 @@ final class PDFViewerContainer: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private var dividerPlaced = false
     override func layout() {
         super.layout()
+        let barH = Self.styleBarHeight
+        styleBar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: barH)
+        split.frame = NSRect(x: 0, y: barH, width: bounds.width, height: max(0, bounds.height - barH))
+        modeControl.frame.origin = NSPoint(x: bounds.width - modeControl.frame.width - 6,
+                                           y: (barH - modeControl.frame.height) / 2)
         // The split position only sticks once the view has a real size
         // (the Lister sizes us after makeView returns).
         if !dividerPlaced, sidebar != nil, bounds.width > 300 {
             dividerPlaced = true
             split.setPosition(240, ofDividerAt: 0)
         }
+        // Size the page view NOW (NSSplitView would do it in its own pass) so
+        // the document is attached to a PDFView that already has its real
+        // frame: PDFKit fixes the auto-scale on first layout, and a zero-sized
+        // view then "restores" the mid-document centre when it grows.
+        split.adjustSubviews()
+        if pdfView.document == nil, pdfView.frame.height > 50 {
+            pdfView.document = document
+            // PDFKit settles scale and scroll in its own first layout (and the
+            // bar may still carve the frame once more): pin page 1's top after that.
+            DispatchQueue.main.async { [weak self] in self?.scrollToTop() }
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        syncModeControl()
+    }
+
+    private func scrollToTop() {
+        guard let first = document.page(at: 0) else { return }
+        let top = first.bounds(for: pdfView.displayBox).maxY
+        pdfView.go(to: PDFDestination(page: first, at: NSPoint(x: kPDFDestinationUnspecifiedValue, y: top)))
+    }
+
+    private func buildStyleBar() {
+        addSubview(styleBar)
+        modeControl.segmentCount = 2
+        modeControl.setLabel(tr("Light"), forSegment: 0)
+        modeControl.setLabel(tr("Dark"), forSegment: 1)
+        modeControl.trackingMode = .selectOne
+        modeControl.controlSize = .small
+        modeControl.font = .systemFont(ofSize: 11)
+        modeControl.target = self
+        modeControl.action = #selector(modePicked(_:))
+        modeControl.sizeToFit()
+        modeControl.autoresizingMask = [.minXMargin]
+        styleBar.addSubview(modeControl)
+        syncModeControl()
+    }
+
+    /// The switch always shows the EFFECTIVE mode (override, else the app's).
+    @objc private func syncModeControl() {
+        modeControl.selectedSegment = PDFAppearanceOverride.isDark(for: self) ? 1 : 0
+    }
+
+    /// Picking the side the app is already on means "follow the app" again;
+    /// the other side is stored as the override. Every PDF view reloads.
+    @objc private func modePicked(_ sender: NSSegmentedControl) {
+        let wantDark = sender.selectedSegment == 1
+        let appDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        PDFAppearanceOverride.wantsDark = wantDark == appDark ? nil : wantDark
     }
 
     private func buildSidebar() {
@@ -108,7 +216,7 @@ final class PDFViewerContainer: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         sidebar = sc
         outline.reloadData()
         outline.expandItem(nil, expandChildren: false)
-        if let root = pdfView.document?.outlineRoot {
+        if let root = document.outlineRoot {
             for i in 0..<root.numberOfChildren { outline.expandItem(root.child(at: i)) }   // first level open
         }
     }
@@ -122,7 +230,7 @@ final class PDFViewerContainer: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     // MARK: Outline data
 
-    private var root: PDFOutline? { pdfView.document?.outlineRoot }
+    private var root: PDFOutline? { document.outlineRoot }
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         ((item as? PDFOutline) ?? root)?.numberOfChildren ?? 0
@@ -168,7 +276,8 @@ final class PDFViewerContainer: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     /// Select the last outline entry whose page is at or before the current one.
     @objc private func pageChanged() {
-        guard sidebar != nil, let doc = pdfView.document, let page = pdfView.currentPage else { return }
+        guard sidebar != nil, let page = pdfView.currentPage else { return }
+        let doc = document
         let current = doc.index(for: page)
         var best: (PDFOutline, Int)?
         func walk(_ node: PDFOutline) {
@@ -209,8 +318,11 @@ final class ListerPDFView: PDFView {
         displayMode = .singlePageContinuous
         displayDirection = .vertical
         applyAppearance()
+        NotificationCenter.default.addObserver(self, selector: #selector(applyAppearance),
+                                               name: PDFAppearanceOverride.changed, object: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     override var document: PDFDocument? {
         didSet { (document as? ListerPDFDocument)?.darkMode = isDark }
@@ -221,16 +333,26 @@ final class ListerPDFView: PDFView {
         applyAppearance()
     }
 
-    private var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+    /// The user's Light / Dark override, else the app's appearance.
+    private var isDark: Bool { PDFAppearanceOverride.isDark(for: self) }
 
-    private func applyAppearance() {
+    /// App appearance changed, or the override did (here or in another PDF view).
+    @objc private func applyAppearance() {
         backgroundColor = isDark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.90, alpha: 1)
         guard let doc = document as? ListerPDFDocument, doc.darkMode != isDark else { return }
         doc.darkMode = isDark
-        // PDFKit caches rendered pages: re-attaching the document is the one
-        // reliable way to flush them. Keep the reading position.
+        reloadKeepingPosition(doc)
+    }
+
+    /// PDFKit caches rendered pages: detaching and re-attaching the document
+    /// is the one reliable way to flush them (assigning the same document
+    /// again is a no-op). Keep the reading position and zoom.
+    private func reloadKeepingPosition(_ doc: ListerPDFDocument) {
         let dest = currentDestination
+        let wasAuto = autoScales, factor = scaleFactor
+        document = nil
         document = doc
+        if wasAuto { autoScales = true } else { scaleFactor = factor }
         if let dest { go(to: dest) }
     }
 

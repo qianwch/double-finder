@@ -653,5 +653,6 @@
   "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "EPUB 및 Kindle(MOBI / AZW3) 전자책을 뷰어에서 읽기",
   "PDF Viewer": "PDF 뷰어",
   "Shows PDF documents in the Lister, dark mode included": "뷰어에서 PDF 문서 표시(다크 모드 지원)",
-  "Cannot open PDF": "PDF를 열 수 없음"
+  "Cannot open PDF": "PDF를 열 수 없음",
+  "Preview failed": "미리보기 실패"
 }

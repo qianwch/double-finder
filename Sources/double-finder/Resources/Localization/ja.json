@@ -653,5 +653,6 @@
   "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "EPUB と Kindle（MOBI / AZW3）の書籍をビューアで読む",
   "PDF Viewer": "PDF ビューア",
   "Shows PDF documents in the Lister, dark mode included": "PDF 文書をビューアで表示（ダークモード対応）",
-  "Cannot open PDF": "PDF を開けません"
+  "Cannot open PDF": "PDF を開けません",
+  "Preview failed": "プレビューに失敗しました"
 }

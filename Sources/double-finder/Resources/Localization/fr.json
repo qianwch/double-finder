@@ -653,5 +653,6 @@
   "Reads EPUB and Kindle (MOBI / AZW3) books in the Lister": "Lit les livres EPUB et Kindle (MOBI / AZW3) dans le visualiseur",
   "PDF Viewer": "Visionneuse PDF",
   "Shows PDF documents in the Lister, dark mode included": "Affiche les documents PDF dans le visualiseur, mode sombre compris",
-  "Cannot open PDF": "Impossible d’ouvrir le PDF"
+  "Cannot open PDF": "Impossible d’ouvrir le PDF",
+  "Preview failed": "Échec de l’aperçu"
 }
