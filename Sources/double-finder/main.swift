@@ -35,6 +35,16 @@ if ProcessInfo.processInfo.environment["NC_PLUGIN_DIAG"] != nil {
     exit(0)
 }
 
+// Headless ebook diagnostic: `NC_EBOOK_DUMP=/path/book.epub [NC_EBOOK_OUT=/path/page.html]`
+// runs the F3 ebook reader (EPUB / MOBI / KF8) on one file, prints the parsed
+// structure (title, chapters, TOC, failure class) and optionally writes the
+// rendered page. The first thing to run when a book renders wrong or falls
+// back to hexadecimal.
+if let path = ProcessInfo.processInfo.environment["NC_EBOOK_DUMP"] {
+    EbookDiagnostic.run(path: path, out: ProcessInfo.processInfo.environment["NC_EBOOK_OUT"])
+    exit(0)
+}
+
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)

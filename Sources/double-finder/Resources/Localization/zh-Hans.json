@@ -641,5 +641,10 @@
   "This plugin has no settings.": "此插件没有可配置项。",
   "Enable the plugin to open its settings.": "请先启用该插件再打开其设置。",
   "Crashed while loading last time — Rescan retries it": "上次加载时崩溃——「重新扫描」可再试一次",
-  "Plugin Development Guide": "插件开发指南"
+  "Plugin Development Guide": "插件开发指南",
+  "Ebook is DRM-protected — cannot display": "电子书受 DRM 保护——无法显示",
+  "KFX books are not supported — showing hexadecimal": "不支持 KFX 格式电子书——已显示十六进制",
+  "Unsupported ebook format — showing hexadecimal": "不支持的电子书格式——已显示十六进制",
+  "Cannot read ebook — showing hexadecimal": "无法读取电子书——已显示十六进制",
+  "Ebook too large to render": "电子书过大，无法渲染"
 }

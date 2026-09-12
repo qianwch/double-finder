@@ -50,6 +50,16 @@ final class ViewerModeChooserTests: XCTestCase {
         XCTAssertEqual(ViewerModeChooser.choose(fileExtension: "md", sample: Data()).mode, .text)
     }
 
+    func testEbooksRouteToPreviewWithoutEncoding() {
+        for ext in ["epub", "EPUB", "mobi", "azw", "azw3", "prc"] {
+            let r = ViewerModeChooser.choose(fileExtension: ext, sample: Data([0x50, 0x4B, 0x00]))
+            XCTAssertEqual(r.mode, .preview, ext)     // rendered by the ebook reader, not QL / hex
+            XCTAssertNil(r.encoding, ext)
+            XCTAssertTrue(ViewerModeChooser.isEbook(extension: ext), ext)
+        }
+        XCTAssertFalse(ViewerModeChooser.isEbook(extension: "pdf"))
+    }
+
     func testDiagramSourceFilesRouteToPreviewWithEncoding() {
         for ext in ["mmd", "puml", "plantuml", "MMD"] {
             let r = ViewerModeChooser.choose(fileExtension: ext, sample: Data("graph TD".utf8))

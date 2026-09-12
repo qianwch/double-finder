@@ -11,8 +11,14 @@ enum ViewerModeChooser {
         "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "heic", "heif", "webp", "icns", "svg",
         "mp4", "mov", "m4v", "avi", "mkv", "mp3", "m4a", "aac", "wav", "flac", "aiff", "ogg",
         "pdf", "rtf", "rtfd", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-        "key", "pages", "numbers", "epub",
+        "key", "pages", "numbers",
     ]
+
+    /// Ebooks rendered by the built-in reader (EPUBReader / MOBIReader →
+    /// ListerWebView) instead of Quick Look, which shows little more than a cover.
+    static let ebookExtensions: Set<String> = ["epub", "mobi", "prc", "azw", "azw3", "kf8"]
+
+    static func isEbook(extension ext: String) -> Bool { ebookExtensions.contains(ext.lowercased()) }
 
     /// Text-decodable sources rendered by ListerWebView instead of raw text:
     /// markdown plus standalone diagram files (mermaid/plantuml).
@@ -20,6 +26,7 @@ enum ViewerModeChooser {
 
     static func choose(fileExtension ext: String, sample: Data?)
         -> (mode: ViewerMode, encoding: String.Encoding?) {
+        if isEbook(extension: ext) { return (.preview, nil) }            // rendered book (design: ebook)
         if previewExtensions.contains(ext.lowercased()) { return (.preview, nil) }
         guard let sample else { return (.preview, nil) }       // unreadable → old QL behavior
         guard !sample.isEmpty else { return (.text, .utf8) }   // empty file → empty text

@@ -23,7 +23,9 @@ SwiftUI), inspired by the Total Commander workflow.
   text, hexadecimal and Quick Look preview (images, PDF, video, audio,
   Office…) — chosen automatically per file and switchable with 1 / 2 / 3.
   Syntax highlighting for 17 languages, Markdown rendered as a page (including
-  mermaid / PlantUML diagrams), ⌘F search, ⌘= / ⌘- / ⌘0 zoom, and
+  mermaid / PlantUML diagrams), EPUB and Kindle books (MOBI / AZW / AZW3, no
+  DRM) rendered as one page with a table-of-contents sidebar — all built in,
+  no external tools — ⌘F search, ⌘= / ⌘- / ⌘0 zoom, and
   ⌘↑ / ⌘↓ to step through the listing; remote and in-archive files are
   fetched on demand.
 - **Fast navigation:** drive bar & dropdown, favorites, command-line bar (⌘L

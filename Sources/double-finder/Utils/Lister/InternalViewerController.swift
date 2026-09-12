@@ -84,11 +84,16 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private var mdRenderFellBack = false
     /// Max markdown size we read fully into memory to render (design §4.1).
     private let mdRenderMaxBytes: UInt64 = 50 << 20
-    /// In-flight background markdown render: read + decode + convert run in a
-    /// detached task so a multi-MB file never freezes the window. Cancelled by
-    /// any mode switch, file change or close; completion is additionally gated
-    /// on `diagramGeneration` so a late result can never land on another page.
-    private var mdRenderTask: Task<Void, Never>?
+    /// Max ebook container size handed to EPUBReader / MOBIReader (the whole
+    /// file is unpacked / decompressed in memory; images are inlined up to a
+    /// separate 48MB budget, see EbookResourceBudget).
+    private let ebookMaxBytes: UInt64 = 512 << 20
+    /// In-flight background web render (markdown OR ebook): read + decode +
+    /// convert run in a detached task so a multi-MB file never freezes the
+    /// window. Cancelled by any mode switch, file change or close; completion
+    /// is additionally gated on `diagramGeneration` so a late result can never
+    /// land on another page.
+    private var webRenderTask: Task<Void, Never>?
     /// Bumped on every setMode/close — a late diagram-SVG substitution must not
     /// reload a page the user already left (design §5, generation token).
     private var diagramGeneration = 0
@@ -250,7 +255,13 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// rather than QLPreviewView. False after a WKWebView crash-give-up.
     private func shouldShowWeb() -> Bool {
         currentMode == .preview && !mdRenderFellBack
-            && (isMarkdownURL(currentURL) || diagramKind(of: currentURL) != nil)
+            && (isMarkdownURL(currentURL) || diagramKind(of: currentURL) != nil || isEbookURL(currentURL))
+    }
+
+    /// EPUB / Kindle books, rendered by the built-in reader into the web view.
+    private func isEbookURL(_ url: URL?) -> Bool {
+        guard let ext = url?.pathExtension else { return false }
+        return ViewerModeChooser.isEbook(extension: ext)
     }
 
     /// Standalone diagram-source files, routed to rendered preview like markdown
@@ -604,7 +615,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     private func setMode(_ mode: ViewerMode, auto: Bool, preserveSearch: Bool = false) {
         if !preserveSearch, !auto { cancelSearch(clearQuery: true) }   // manual switch clears the search (design §6)
         diagramGeneration += 1                       // leaving/reloading a page voids in-flight diagram results
-        cancelMarkdownRender()                       // …and any render still converting for the previous page
+        cancelWebRender()                       // …and any render still converting for the previous page
         // Manual same-file switches keep the reading position by byte offset
         // (same anchoring as encoding changes; TC behavior).
         let anchor: UInt64 = (!auto && mode != .preview) ? currentTopByteOffset() : 0
@@ -640,7 +651,15 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             if anchor > 0 { hexView?.scrollToOffset(anchor) }
             hexView?.focus()
         case .preview:
-            if shouldShowWeb(), let source {
+            if shouldShowWeb(), let source, let url = currentURL, isEbookURL(url) {
+                if source.length > ebookMaxBytes {
+                    setMode(.hex, auto: true)
+                    showStatusNote(tr("Ebook too large to render"))
+                    return
+                }
+                startEbookRender(url: url)
+                mdWebView?.focus()
+            } else if shouldShowWeb(), let source {
                 // Size-before-read (order is critical: never read a huge md fully
                 // into memory). Oversize redirects to source WITHOUT setting
                 // mdRenderFellBack — that flag is crash-only, and setting it here
@@ -864,7 +883,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         let length = Int(source.length)
         mdWebView?.focus()                           // keyboard goes to the page area right away
         beginLoadingIndicator()
-        mdRenderTask = Task.detached(priority: .userInitiated) { [weak self] in
+        webRenderTask = Task.detached(priority: .userInitiated) { [weak self] in
             var rendered: (html: String, diagrams: [DiagramBlock])?
             if let data = source.read(offset: 0, count: length) {
                 var decoder = TextChunkDecoder(encoding: encoding)
@@ -884,7 +903,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             let result = rendered                    // immutable copy for the Sendable hop
             await MainActor.run { [weak self] in
                 guard let self, !Task.isCancelled, self.diagramGeneration == gen else { return }
-                self.mdRenderTask = nil
+                self.webRenderTask = nil
                 self.endLoadingIndicator()
                 guard let doc = result else {
                     self.setMode(.text, auto: true)
@@ -902,12 +921,60 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    // MARK: Ebook rendering (EPUB / MOBI / KF8 → one page with a TOC sidebar)
+
+    /// Parses the book on a detached task (unzip / decompress / sanitize / inline
+    /// images) and loads the assembled page. Failures fall to hexadecimal with a
+    /// status note — DRM and unsupported containers (KFX) are named explicitly.
+    private func startEbookRender(url: URL) {
+        let gen = diagramGeneration
+        mdWebView?.focus()
+        beginLoadingIndicator()
+        webRenderTask = Task.detached(priority: .userInitiated) { [weak self] in
+            var html: String?
+            var failure: String?
+            do {
+                let book: EbookBook
+                if url.pathExtension.lowercased() == "epub" {
+                    book = try EPUBReader.read(url: url, isCancelled: { Task.isCancelled })
+                } else {
+                    book = try MOBIReader.read(url: url, isCancelled: { Task.isCancelled })
+                }
+                if !Task.isCancelled { html = EbookHTML.page(for: book) }
+            } catch EbookError.drm {
+                failure = "Ebook is DRM-protected — cannot display"
+            } catch EbookError.unsupported(let what) {
+                failure = what == "KFX" ? "KFX books are not supported — showing hexadecimal"
+                                        : "Unsupported ebook format — showing hexadecimal"
+            } catch EbookError.cancelled {
+                return
+            } catch {
+                NSLog("[ebook] %@: %@", url.lastPathComponent, String(describing: error))
+                failure = "Cannot read ebook — showing hexadecimal"
+            }
+            guard !Task.isCancelled else { return }
+            let result = html, note = failure
+            await MainActor.run { [weak self] in
+                guard let self, !Task.isCancelled, self.diagramGeneration == gen else { return }
+                self.webRenderTask = nil
+                self.endLoadingIndicator()
+                guard let page = result else {
+                    self.setMode(.hex, auto: true)
+                    self.showStatusNote(tr(note ?? "Cannot read ebook — showing hexadecimal"))
+                    return
+                }
+                self.mdWebView?.loadHTML(page)
+                self.mdWebView?.focus()
+            }
+        }
+    }
+
     /// Stops an in-flight render (the converter polls `Task.isCancelled` and
     /// bails within a few hundred lines) and drops its loading overlay.
-    private func cancelMarkdownRender() {
-        guard let task = mdRenderTask else { return }
+    private func cancelWebRender() {
+        guard let task = webRenderTask else { return }
         task.cancel()
-        mdRenderTask = nil
+        webRenderTask = nil
         endLoadingIndicator()
     }
 
@@ -1038,7 +1105,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         // Esc/close must actually STOP the work, not just ignore its result: a solid-7z
         // pass would otherwise keep a core busy long after the window is gone.
         resolveTask?.cancel(); resolveTask = nil
-        cancelMarkdownRender()
+        cancelWebRender()
         endLoadingIndicator()
         searchTask?.cancel(); searchTask = nil
         // The cancelled task's MainActor.run exits at its isCancelled guard and

@@ -641,5 +641,10 @@
   "This plugin has no settings.": "このプラグインに設定項目はありません。",
   "Enable the plugin to open its settings.": "設定を開くにはプラグインを有効にしてください。",
   "Crashed while loading last time — Rescan retries it": "前回の読み込み時にクラッシュしました — 「再スキャン」で再試行",
-  "Plugin Development Guide": "プラグイン開発ガイド"
+  "Plugin Development Guide": "プラグイン開発ガイド",
+  "Ebook is DRM-protected — cannot display": "この電子書籍は DRM で保護されています — 表示できません",
+  "KFX books are not supported — showing hexadecimal": "KFX 形式には対応していません — 16 進表示",
+  "Unsupported ebook format — showing hexadecimal": "対応していない電子書籍形式です — 16 進表示",
+  "Cannot read ebook — showing hexadecimal": "電子書籍を読み込めません — 16 進表示",
+  "Ebook too large to render": "電子書籍が大きすぎて描画できません"
 }

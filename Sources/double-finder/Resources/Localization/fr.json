@@ -641,5 +641,10 @@
   "This plugin has no settings.": "Ce plugin n’a aucun réglage.",
   "Enable the plugin to open its settings.": "Activez le plugin pour ouvrir ses réglages.",
   "Crashed while loading last time — Rescan retries it": "A planté au dernier chargement — « Réanalyser » réessaie",
-  "Plugin Development Guide": "Guide de développement de plugins"
+  "Plugin Development Guide": "Guide de développement de plugins",
+  "Ebook is DRM-protected — cannot display": "Livre protégé par DRM — affichage impossible",
+  "KFX books are not supported — showing hexadecimal": "Les livres KFX ne sont pas pris en charge — affichage hexadécimal",
+  "Unsupported ebook format — showing hexadecimal": "Format de livre non pris en charge — affichage hexadécimal",
+  "Cannot read ebook — showing hexadecimal": "Impossible de lire le livre — affichage hexadécimal",
+  "Ebook too large to render": "Livre trop volumineux pour être rendu"
 }

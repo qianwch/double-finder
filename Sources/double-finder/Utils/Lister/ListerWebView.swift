@@ -35,15 +35,22 @@ final class ListerWebView: NSView, WKNavigationDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Base URL of every rendered page. A private scheme (never http/https, so
+    /// relative links can never resolve to something the delegate would hand to
+    /// the system browser) and a stable document URL, which is what makes
+    /// `#anchor` clicks same-document navigations (ebook TOC / footnotes) —
+    /// with a nil base the page is about:blank and fragment jumps are ignored.
+    static let pageBase = URL(string: "x-double-finder-lister://document/")!
+
     func loadHTML(_ html: String) {
         lastHTML = html
         crashedOnce = false
-        webView.loadHTMLString(html, baseURL: nil)   // images are inlined data URIs
+        webView.loadHTMLString(html, baseURL: Self.pageBase)   // images are inlined data URIs
     }
 
     func teardown() {                                 // windowWillClose (design §4.1)
         webView.navigationDelegate = nil
-        webView.loadHTMLString("", baseURL: nil)
+        webView.loadHTMLString("", baseURL: Self.pageBase)
         onGiveUp = nil
         onAppearanceChanged = nil
     }
@@ -64,6 +71,13 @@ final class ListerWebView: NSView, WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if navigationAction.navigationType == .linkActivated {
+            // In-page `#anchor` jumps (ebook table of contents / footnotes) resolve
+            // against `pageBase` — same document, just a fragment: let them through.
+            if let url = navigationAction.request.url, url.scheme == Self.pageBase.scheme,
+               url.fragment != nil {
+                decisionHandler(.allow)
+                return
+            }
             // The converter only HTML-escapes hrefs, so `[x](javascript:alert(1))`
             // would produce a clickable link — allow only http/https to the system
             // browser and drop every other scheme (javascript:/file:/data: etc.).
@@ -80,6 +94,6 @@ final class ListerWebView: NSView, WKNavigationDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if crashedOnce { onGiveUp?(); return }
         crashedOnce = true
-        webView.loadHTMLString(lastHTML, baseURL: nil)
+        webView.loadHTMLString(lastHTML, baseURL: Self.pageBase)
     }
 }
