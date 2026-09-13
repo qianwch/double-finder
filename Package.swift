@@ -7,9 +7,20 @@ import Foundation
 // WMV, OGG, APE…). It is fetched by `Tools/fetch-vlckit.sh` (88 MB, not in
 // git). When it is absent the project still builds: the player then covers
 // AVFoundation's formats only and says so for the rest.
-let vlcKitPath = "vendor/VLCKit/VLCKit.xcframework"
-let hasVLCKit = FileManager.default.fileExists(
-    atPath: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(vlcKitPath).path)
+//
+// It is linked LAST on the link line (via -Xlinker, see the app target), not
+// as a binaryTarget: VLCKit statically contains its own libarchive (and more)
+// and exports every archive_* symbol; ld binds an undefined symbol to the
+// first library on the command line that defines it, and SwiftPM puts
+// binary-target frameworks before every linkerSettings flag. As a
+// binaryTarget it therefore captured the app's libarchive calls ("Fatal
+// Internal Error in libarchive: Out of memory" in the archive tests). With
+// the framework last, libarchive, libmtp and libSystem win as they should.
+// The rpath to the vendored slice is what lets the bare `swift build`
+// executable load it; package_app.sh bundles the framework into the .app.
+let vlcKitSlice = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appendingPathComponent("vendor/VLCKit/VLCKit.xcframework/macos-arm64_x86_64").path
+let hasVLCKit = FileManager.default.fileExists(atPath: vlcKitSlice + "/VLCKit.framework/VLCKit")
 
 let package = Package(
     name: "double-finder",
@@ -82,7 +93,7 @@ let package = Package(
             dependencies: [
                 .product(name: "DoubleFinderPluginKit", package: "PluginKit"),
                 "Clibarchive", "Clibmtp", "CSevenZip"
-            ] + (hasVLCKit ? ["VLCKit"] : []),
+            ],
             path: "Sources/double-finder",
             resources: [
                 .copy("Resources/Localization"),
@@ -95,7 +106,7 @@ let package = Package(
                 // clang so the module can actually be built.
                 .unsafeFlags(["-Xcc", "-I/opt/homebrew/include",
                               "-Xcc", "-I/usr/local/include"])
-            ] + (hasVLCKit ? [.define("HAS_VLCKIT")] : []),
+            ] + (hasVLCKit ? [.define("HAS_VLCKIT"), .unsafeFlags(["-F", vlcKitSlice])] : []),
             linkerSettings: [
                 .linkedLibrary("archive"),
                 .linkedLibrary("mtp"),
@@ -123,7 +134,17 @@ let package = Package(
                     "-Xlinker", "__info_plist",
                     "-Xlinker", "Info.plist",
                 ])
-            ]
+            ] + (hasVLCKit ? [.unsafeFlags([
+                // The framework goes through -Xlinker on purpose: swift-driver
+                // groups the link line as "-framework …" then "-l…" then every
+                // "-Xlinker …" in declaration order, so a plain "-framework VLCKit"
+                // would still land before -larchive. Handed straight to ld it comes
+                // after every library — which is the whole point.
+                "-F", vlcKitSlice,
+                "-Xlinker", "-lSystem",        // libc first too: VLCKit also exports timespec_get & co.
+                "-Xlinker", "-framework", "-Xlinker", "VLCKit",
+                "-Xlinker", "-rpath", "-Xlinker", vlcKitSlice,
+            ])] : [])
         ),
         // Unit tests for the pure-logic layer (no AppKit / UI).
         .testTarget(
@@ -135,8 +156,8 @@ let package = Package(
                 // so the tests need libmtp's header path too.
                 .unsafeFlags(["-Xcc", "-I/opt/homebrew/include",
                               "-Xcc", "-I/usr/local/include"])
-            ]
+            ] + (hasVLCKit ? [.unsafeFlags(["-F", vlcKitSlice])] : [])
         )
-    ] + (hasVLCKit ? [.binaryTarget(name: "VLCKit", path: vlcKitPath)] : []),
+    ],
     cxxLanguageStandard: .cxx17
 )
