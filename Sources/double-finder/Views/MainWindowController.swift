@@ -37,19 +37,35 @@ class MainWindowController: NSWindowController {
     // UserDefaults key holding the window frame ("{{x, y}, {w, h}}") from last session.
     private static let frameKey = "MainWindowFrame"
 
+    /// True while the launch frame is being applied: the move / resize
+    /// notifications that fire meanwhile must not overwrite the saved value.
+    private var restoringFrame = false
+
     func showWindow() {
-        showWindow(nil)
-        // Restore the frame saved last session; on first launch (no saved frame)
-        // fall back to maximizing the screen's visible area.
-        if let saved = UserDefaults.standard.string(forKey: Self.frameKey) {
-            window?.setFrame(NSRectFromString(saved), display: true)
-        } else if let screen = window?.screen ?? NSScreen.main {
-            window?.setFrame(screen.visibleFrame, display: true)
+        guard let window else { return }
+        // Restore the frame saved last session BEFORE the window is shown. It
+        // used to be applied after showWindow(nil): on a display too small for
+        // the 1280×768 default frame macOS constrained the window on the way
+        // to the screen, that fired didMove / didResize, the observer saved the
+        // constrained default frame — and the restore that followed read that
+        // freshly overwritten value instead of last session's ("the app never
+        // remembers where I put it" on laptops).
+        restoringFrame = true
+        let screens = NSScreen.screens
+        let visible = ([NSScreen.main].compactMap { $0 } + screens.filter { $0 !== NSScreen.main }).map(\.visibleFrame)
+        if let frame = WindowFramePlacement.frame(saved: UserDefaults.standard.string(forKey: Self.frameKey),
+                                                  visibleFrames: visible) {
+            window.setFrame(frame, display: false)
+        } else if let screen = NSScreen.main {
+            window.setFrame(screen.visibleFrame, display: false)      // first launch: fill the main display
         }
-        window?.makeKeyAndOrderFront(nil)
+        showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+        restoringFrame = false
+        saveFrame()      // whatever macOS made of it on screen is the new truth
     }
 
-    @objc private func frameDidChange() { saveFrame() }
+    @objc private func frameDidChange() { if !restoringFrame { saveFrame() } }
 
     /// Persist the current window frame so it can be restored on next launch.
     func saveFrame() {
