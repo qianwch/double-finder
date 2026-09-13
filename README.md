@@ -161,6 +161,22 @@ Pure AppKit: `NSApplication` → `AppDelegate` → `MainWindowController` →
 (not Combine). There are no unit tests yet for the AppKit layer; pure-logic
 units live under `Tests/`.
 
+## Support the project
+
+Double Finder is free, open source and built in my spare time. If it saves you
+time, a small donation is welcome — it goes toward the **Apple Developer
+Program** membership (so releases can be notarized and open without Gatekeeper
+warnings), the **Claude Code** subscription used to develop it, and the
+occasional **coffee**. Donating is entirely optional: it buys no features, no
+support priority and no say over the roadmap — starring the repo or reporting a
+bug helps just as much.
+
+[![Donate via PayPal](https://img.shields.io/badge/PayPal-paypal.me%2Fqianwch-00457C?logo=paypal&logoColor=white)](https://paypal.me/qianwch)
+
+| PayPal | WeChat Pay (微信) | Alipay (支付宝) |
+|:-:|:-:|:-:|
+| <a href="https://paypal.me/qianwch"><img src="docs/paypal.png" height="200" alt="PayPal QR code — paypal.me/qianwch"></a> | <img src="docs/wechat-pay.png" height="200" alt="WeChat Pay QR code"> | <img src="docs/alipay.png" height="200" alt="Alipay QR code"> |
+
 ## Contributing
 
 Issues and pull requests are welcome. Please:
