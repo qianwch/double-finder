@@ -119,6 +119,27 @@ final class MediaAudioHeader: NSView {
     }
 }
 
+/// The player's volume (0…100), remembered across launches: the value the
+/// user last dragged the control bar to is what the next file opens at.
+/// One setting shared by every media view (Lister windows, the Quick View
+/// pane, VLCKit and AVKit builds alike).
+enum MediaVolume {
+    static let defaultsKey = "MediaVolume"
+    static let `default` = 100
+
+    @MainActor static var value: Int {
+        get {
+            guard UserDefaults.standard.object(forKey: defaultsKey) != nil else { return `default` }
+            return min(100, max(0, UserDefaults.standard.integer(forKey: defaultsKey)))
+        }
+        set {
+            let clamped = min(100, max(0, newValue))
+            guard clamped != value else { return }
+            UserDefaults.standard.set(clamped, forKey: defaultsKey)
+        }
+    }
+}
+
 /// Play / pause · elapsed · scrubber · duration · volume. Pure UI: the owner
 /// wires the callbacks and pushes state in.
 final class MediaControlBar: NSView {
@@ -157,7 +178,7 @@ final class MediaControlBar: NSView {
         scrubber.action = #selector(scrubbed(_:))
         speaker.image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: nil)
         speaker.contentTintColor = .secondaryLabelColor
-        volume.minValue = 0; volume.maxValue = 100; volume.doubleValue = 100
+        volume.minValue = 0; volume.maxValue = 100; volume.doubleValue = Double(MediaVolume.value)
         volume.controlSize = .mini
         volume.isContinuous = true
         volume.target = self
@@ -197,6 +218,9 @@ final class MediaControlBar: NSView {
     func setProgress(_ fraction: Double) {
         if !isScrubbing { scrubber.doubleValue = min(1, max(0, fraction)) }
     }
+
+    /// Moves the volume control without firing `onVolume`.
+    func setVolume(_ percent: Int) { volume.doubleValue = Double(min(100, max(0, percent))) }
 
     /// Labels read on a dark (video) or standard (audio) backdrop.
     func setDarkChrome(_ dark: Bool) {
@@ -265,7 +289,10 @@ final class VLCMediaContainer: NSView, VLCMediaPlayerDelegate, VLCMediaDelegate 
         [videoView, header, bar, statusLabel].forEach(addSubview)
         bar.onTogglePlay = { [weak self] in self?.togglePlay() }
         bar.onSeek = { [weak self] f in self?.player?.position = Float(f) }
-        bar.onVolume = { [weak self] v in self?.player?.audio?.volume = Int32(v) }
+        bar.onVolume = { [weak self] v in
+            MediaVolume.value = v
+            self?.player?.audio?.volume = Int32(v)
+        }
         applyMode()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -279,6 +306,16 @@ final class VLCMediaContainer: NSView, VLCMediaPlayerDelegate, VLCMediaDelegate 
         if window == nil { stop() } else if !started { started = true; start() }
     }
     override func viewDidHide() { super.viewDidHide(); if player?.isPlaying == true { player?.pause() } }
+
+    /// Pushes the remembered volume into libVLC. Called when the player is
+    /// created and again on `.playing`: the audio output only exists once
+    /// playback has started, and a fresh output comes up at libVLC's own
+    /// level rather than the one set before it existed.
+    private func applySavedVolume() {
+        let v = MediaVolume.value
+        bar.setVolume(v)
+        player?.audio?.volume = Int32(v)
+    }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
@@ -324,6 +361,7 @@ final class VLCMediaContainer: NSView, VLCMediaPlayerDelegate, VLCMediaDelegate 
         p.drawable = videoView
         p.media = m
         player = p
+        applySavedVolume()
         _ = m.parse(options: .fetchLocal)      // local parse + cover art → mediaDidFinishParsing
         p.play()
         bar.setPlaying(true)
@@ -363,6 +401,7 @@ final class VLCMediaContainer: NSView, VLCMediaPlayerDelegate, VLCMediaDelegate 
         case .playing:
             bar.setPlaying(true)
             statusLabel.isHidden = true
+            applySavedVolume()
             refreshMode()
         case .esAdded:
             refreshMode()
@@ -424,6 +463,7 @@ final class AVKitMediaContainer: NSView {
     private let header = MediaAudioHeader()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private var player: AVPlayer?
+    private var volumeObservation: NSKeyValueObservation?
     private var started = false
 
     init(url: URL, expectsVideo: Bool) {
@@ -488,6 +528,12 @@ final class AVKitMediaContainer: NSView {
             if !hasVideo { await self.loadTags(asset) }
             guard self.window != nil else { return }
             let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+            p.volume = Float(MediaVolume.value) / 100
+            // AVPlayerView's volume control writes AVPlayer.volume; remember what the user picks.
+            self.volumeObservation = p.observe(\.volume, options: [.new]) { player, _ in
+                let percent = Int((player.volume * 100).rounded())
+                Task { @MainActor in MediaVolume.value = percent }
+            }
             self.player = p
             self.playerView.player = p
             p.play()
@@ -495,6 +541,7 @@ final class AVKitMediaContainer: NSView {
     }
 
     private func stop() {
+        volumeObservation = nil
         player?.pause()
         playerView.player = nil
         player = nil
