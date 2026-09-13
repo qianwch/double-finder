@@ -9,6 +9,7 @@ enum BuiltInPlugins {
         MarkdownPreviewPlugin.self,   // .md / .mmd / .puml → rendered page (PageViewerPlugin)
         EbookReaderPlugin.self,       // .epub / .mobi / .azw3 → rendered book (PageViewerPlugin)
         PDFViewerPlugin.self,         // .pdf → PDFKit view with dark-mode rendering (ViewerPlugin)
+        ImageViewerPlugin.self,       // images incl. camera RAW → zoomable view via Image I/O (ViewerPlugin)
         MediaPlayerPlugin.self,       // video / audio → AVKit player, ffmpeg conversion for foreign formats (ViewerPlugin)
     ]
 }

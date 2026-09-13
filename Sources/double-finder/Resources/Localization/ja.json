@@ -656,6 +656,9 @@
   "Cannot open PDF": "PDF を開けません",
   "Preview failed": "プレビューに失敗しました",
   "Media Player": "メディアプレーヤー",
+  "Image Viewer": "画像ビューア",
+  "Shows images in the Lister with zoom and pan, camera RAW (CR2 / NEF / ARW / DNG…) included": "ビューアで画像を表示します。ズームとパン対応、カメラ RAW（CR2 / NEF / ARW / DNG…）も含む",
+  "Cannot open image": "画像を開けません",
   "Plays video and audio in the Lister (built-in VLC decoders: MKV / WebM / AVI / WMV / FLAC / OGG / APE…)": "ビューアで動画と音声を再生します（内蔵 VLC デコードエンジン：MKV / WebM / AVI / WMV / FLAC / OGG / APE など）",
   "macOS cannot decode this format": "macOS はこの形式をデコードできません",
   "Cannot play this file": "このファイルは再生できません"

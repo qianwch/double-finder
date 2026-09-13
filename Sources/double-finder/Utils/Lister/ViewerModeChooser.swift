@@ -14,7 +14,11 @@ enum ViewerMode { case text, hex, preview, plugin }
 /// `.epub` goes to Quick Look.
 enum ViewerModeChooser {
     static let previewExtensions: Set<String> = [
-        "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "heic", "heif", "webp", "icns", "svg",
+        "png", "jpg", "jpeg", "jpe", "gif", "bmp", "tiff", "tif", "heic", "heif", "heics", "avif", "webp", "icns",
+        "ico", "svg", "psd", "jp2", "exr", "hdr", "tga",
+        // camera RAW — Quick Look renders these through the same Image I/O decoders
+        "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "dng", "raf", "orf", "rw2", "pef", "srw",
+        "3fr", "fff", "erf", "kdc", "dcr", "mef", "mos", "mrw", "x3f", "raw", "rwl", "iiq",
         "mp4", "mov", "m4v", "avi", "mkv", "mp3", "m4a", "aac", "wav", "flac", "aiff", "ogg",
         "pdf", "rtf", "rtfd", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
         "key", "pages", "numbers", "epub",

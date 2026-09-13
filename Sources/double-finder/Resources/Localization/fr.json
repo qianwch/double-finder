@@ -656,6 +656,9 @@
   "Cannot open PDF": "Impossible d’ouvrir le PDF",
   "Preview failed": "Échec de l’aperçu",
   "Media Player": "Lecteur multimédia",
+  "Image Viewer": "Visionneuse d’images",
+  "Shows images in the Lister with zoom and pan, camera RAW (CR2 / NEF / ARW / DNG…) included": "Affiche les images dans le visionneur avec zoom et déplacement, RAW d’appareil photo (CR2 / NEF / ARW / DNG…) compris",
+  "Cannot open image": "Impossible d’ouvrir l’image",
   "Plays video and audio in the Lister (built-in VLC decoders: MKV / WebM / AVI / WMV / FLAC / OGG / APE…)": "Lit vidéo et audio dans le visionneur (décodeurs VLC intégrés : MKV / WebM / AVI / WMV / FLAC / OGG / APE…)",
   "macOS cannot decode this format": "macOS ne décode pas ce format",
   "Cannot play this file": "Impossible de lire ce fichier"

@@ -23,9 +23,10 @@ SwiftUI), inspired by the Total Commander workflow.
   text, hexadecimal and Quick Look preview (images, PDF, video, audio,
   Office…) — chosen automatically per file and switchable with 1 / 2 / 3.
   Built-in plugins add a fourth mode for PDFs (dark mode, outline sidebar),
-  Markdown, EPUB / Kindle books, and video / audio decoded in-process by libVLC
-  (MKV, WebM, AVI, WMV, FLV, OGG / Opus, WMA, APE… play like MP4 and MP3).
-  The Quick View pane (Ctrl+Q) shows the same.
+  Markdown, EPUB / Kindle books, images with zoom and pan (camera RAW such as
+  CR2 / NEF / ARW / DNG included), and video / audio decoded in-process by
+  libVLC (MKV, WebM, AVI, WMV, FLV, OGG / Opus, WMA, APE… play like MP4 and
+  MP3). The Quick View pane (Ctrl+Q) shows the same.
   Syntax highlighting for 17 languages, Markdown rendered as a page (including
   mermaid / PlantUML diagrams), EPUB and Kindle books (MOBI / AZW / AZW3, no
   DRM) rendered as one page with a table-of-contents sidebar — all built in,

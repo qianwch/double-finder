@@ -2,7 +2,7 @@ import XCTest
 import DoubleFinderPluginKit
 @testable import double_finder
 
-/// The built-in plugins (Markdown preview, ebook reader, PDF viewer, media player) go through
+/// The built-in plugins (Markdown preview, ebook reader, PDF viewer, image viewer, media player) go through
 /// the same plugin contracts as a bundle would: claim by extension + sample,
 /// render off-main, report failures as errors the host shows and falls back on.
 final class BuiltInPluginsTests: XCTestCase {
@@ -16,19 +16,37 @@ final class BuiltInPluginsTests: XCTestCase {
         return url
     }
 
-    func testCatalogueShipsMarkdownEbookPDFAndMediaViewers() {
-        XCTAssertEqual(BuiltInPlugins.all.count, 4)
+    func testCatalogueShipsMarkdownEbookPDFImageAndMediaViewers() {
+        XCTAssertEqual(BuiltInPlugins.all.count, 5)
         let ids = BuiltInPlugins.all.map { $0.init().info.identifier }
         XCTAssertEqual(ids, [MarkdownPreviewPlugin.identifier, EbookReaderPlugin.identifier,
-                             PDFViewerPlugin.identifier, MediaPlayerPlugin.identifier])
-        let viewPlugins: Set = [PDFViewerPlugin.identifier, MediaPlayerPlugin.identifier]
+                             PDFViewerPlugin.identifier, ImageViewerPlugin.identifier, MediaPlayerPlugin.identifier])
+        let viewPlugins: Set = [PDFViewerPlugin.identifier, ImageViewerPlugin.identifier, MediaPlayerPlugin.identifier]
         for type in BuiltInPlugins.all {
             let p = type.init()
             let isView = viewPlugins.contains(p.info.identifier)
             XCTAssertEqual(p.pageViewers.count, isView ? 0 : 1, p.info.identifier)  // md / ebook = page viewers
-            XCTAssertEqual(p.viewers.count, isView ? 1 : 0, p.info.identifier)      // pdf / media = view plugins
+            XCTAssertEqual(p.viewers.count, isView ? 1 : 0, p.info.identifier)      // pdf / image / media = view plugins
             XCTAssertTrue(p.fileSystems.isEmpty && p.commands.isEmpty)
         }
+    }
+
+    func testImageViewerClaimsBitmapsAndRAW() {
+        let v = ImageFileViewer()
+        XCTAssertTrue(v.canView(url: URL(fileURLWithPath: "/x/IMG_0001.CR2"), sample: Data()))
+        XCTAssertTrue(v.canView(url: URL(fileURLWithPath: "/x/a.heic"), sample: Data()))
+        XCTAssertTrue(v.canView(url: URL(fileURLWithPath: "/x/a.svg"), sample: Data()))
+        XCTAssertFalse(v.canView(url: URL(fileURLWithPath: "/x/a.mp4"), sample: Data()))
+        XCTAssertFalse(v.canView(url: URL(fileURLWithPath: "/x/a.pdf"), sample: Data()))
+    }
+
+    func testImageZoomFitAndSteps() {
+        XCTAssertEqual(ImageZoom.fit(image: CGSize(width: 4000, height: 3000), in: CGSize(width: 1016, height: 800)), 0.246, accuracy: 0.001)
+        XCTAssertEqual(ImageZoom.fit(image: CGSize(width: 200, height: 100), in: CGSize(width: 1000, height: 800)), 1)   // never upscales
+        XCTAssertEqual(ImageZoom.stepped(1, direction: 1), 1.25)
+        XCTAssertEqual(ImageZoom.stepped(1, direction: -1), 0.8)
+        XCTAssertEqual(ImageZoom.stepped(ImageZoom.maximum, direction: 1), ImageZoom.maximum)
+        XCTAssertEqual(ImageZoom.stepped(0.01, direction: -1), ImageZoom.minimum)
     }
 
     func testMediaViewerClaimsByExtension() {
