@@ -22,6 +22,10 @@ SwiftUI), inspired by the Total Commander workflow.
 - **Built-in viewer (F3):** a Total Commander–style Lister with three modes —
   text, hexadecimal and Quick Look preview (images, PDF, video, audio,
   Office…) — chosen automatically per file and switchable with 1 / 2 / 3.
+  Built-in plugins add a fourth mode for PDFs (dark mode, outline sidebar),
+  Markdown, EPUB / Kindle books, and video / audio decoded in-process by libVLC
+  (MKV, WebM, AVI, WMV, FLV, OGG / Opus, WMA, APE… play like MP4 and MP3).
+  The Quick View pane (Ctrl+Q) shows the same.
   Syntax highlighting for 17 languages, Markdown rendered as a page (including
   mermaid / PlantUML diagrams), EPUB and Kindle books (MOBI / AZW / AZW3, no
   DRM) rendered as one page with a table-of-contents sidebar — all built in,
@@ -67,6 +71,10 @@ SwiftUI), inspired by the Total Commander workflow.
 - Apple Silicon or Intel
 - `brew install libmtp` — required to **build** (the Android/MTP backend links
   it). The packaged `.app` bundles the library, so end users need nothing.
+- `Tools/fetch-vlckit.sh` — optional for a **build**: downloads the VLCKit
+  framework (libVLC, LGPL-2.1, 88 MB) that gives the media player its decoders.
+  `package_app.sh` fetches it on its own; without it the project still builds
+  and the player covers only the formats macOS decodes. End users need nothing.
 
 ## Install
 

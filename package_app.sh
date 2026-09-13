@@ -16,6 +16,13 @@ DIST=".dist"
 APPDIR="$DIST/$APP.app"
 HOST_ARCH="$(uname -m)"
 
+# VLCKit (libVLC framework, LGPL-2.1) gives the media player its decoders.
+# Not in git: fetch it before the build so Package.swift links it. A failed
+# download is not fatal — the app then plays AVFoundation's formats only.
+if [ ! -d vendor/VLCKit/VLCKit.xcframework ]; then
+    Tools/fetch-vlckit.sh || echo "    !! VLCKit not available — media player limited to AVFoundation formats"
+fi
+
 echo "==> Release build for this host ($HOST_ARCH)"
 swift build -c release --arch "$HOST_ARCH"
 BIN="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/$APP"
@@ -43,6 +50,33 @@ cp "$KIT_LIB" "$APPDIR/Contents/Frameworks/libDoubleFinderPluginKit.dylib"
 chmod u+w "$APPDIR/Contents/Frameworks/libDoubleFinderPluginKit.dylib"
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APPDIR/Contents/MacOS/$APP" 2>/dev/null || true
 echo "    bundled libDoubleFinderPluginKit.dylib ($(lipo -archs "$APPDIR/Contents/Frameworks/libDoubleFinderPluginKit.dylib"))"
+
+echo "==> Bundle VLCKit (libVLC media decoding; LGPL-2.1, dynamically linked framework)"
+# Must precede the icon export below, which RUNS the binary: it links
+# @rpath/VLCKit.framework and dyld resolves that through the rpath added above.
+VLCKIT_FW="vendor/VLCKit/VLCKit.xcframework/macos-arm64_x86_64/VLCKit.framework"
+VLCKIT_BUNDLED=0
+if otool -L "$APPDIR/Contents/MacOS/$APP" | grep -q "VLCKit.framework"; then
+    if [ ! -d "$VLCKIT_FW" ]; then
+        echo "ERROR: the binary links VLCKit but $VLCKIT_FW is missing (run Tools/fetch-vlckit.sh)"
+        exit 1
+    fi
+    FW_DST="$APPDIR/Contents/Frameworks/VLCKit.framework"
+    rm -rf "$FW_DST"
+    ditto "$VLCKIT_FW" "$FW_DST"
+    # Runtime needs the binary and Resources only: drop headers / modules and
+    # thin the fat binary to the host architecture (~81 MB → ~40 MB).
+    rm -rf "$FW_DST/Versions/A/Headers" "$FW_DST/Versions/A/PrivateHeaders" "$FW_DST/Versions/A/Modules" \
+           "$FW_DST/Headers" "$FW_DST/PrivateHeaders" "$FW_DST/Modules"
+    FW_BIN="$FW_DST/Versions/A/VLCKit"
+    if [ "$(lipo -archs "$FW_BIN" | wc -w | tr -d ' ')" != "1" ]; then
+        lipo -thin "$HOST_ARCH" "$FW_BIN" -output "$FW_BIN.thin" && mv "$FW_BIN.thin" "$FW_BIN"
+    fi
+    VLCKIT_BUNDLED=1
+    echo "    bundled VLCKit $(cat vendor/VLCKit/VERSION 2>/dev/null || echo unknown) ($(lipo -archs "$FW_BIN"), $(du -sh "$FW_DST" | cut -f1))"
+else
+    echo "    not linked — media player limited to AVFoundation formats"
+fi
 
 echo "==> Bundle Localization resource pack"
 RESBUNDLE="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/double-finder_double-finder.bundle"
@@ -212,6 +246,22 @@ EOF2
 else
     echo "    !! libmtp/libusb not found — the app will NOT launch (brew install libmtp)"
     echo "       looked for: $MTP_LIB"
+fi
+
+if [ "$VLCKIT_BUNDLED" = 1 ]; then
+    echo "==> VLCKit licence + corresponding-source pointers"
+    cp vendor/VLCKit/COPYING.txt "$APPDIR/Contents/Frameworks/VLCKit-COPYING.txt"
+    VLCKIT_VER="$(cat vendor/VLCKit/VERSION 2>/dev/null || echo unknown)"
+    cat >> "$APPDIR/Contents/Frameworks/SOURCES.txt" <<EOF2
+
+VLCKit ${VLCKIT_VER} (libVLC + VLC modules, LGPL-2.1; see VLCKit-COPYING.txt)
+  Double Finder links the unmodified binary framework published by VideoLAN
+  (only its install name is made @rpath-relative) and uses it for decoding /
+  playback in the built-in media player.
+  Binary:  https://download.videolan.org/pub/cocoapods/prod/
+  Source:  https://code.videolan.org/videolan/VLCKit  (tag ${VLCKIT_VER})
+           https://code.videolan.org/videolan/vlc     (VLC 3.0 branch + contribs)
+EOF2
 fi
 
 echo "==> Ad-hoc code signing"

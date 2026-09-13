@@ -1,5 +1,15 @@
 // swift-tools-version:5.9
 import PackageDescription
+import Foundation
+
+// VLCKit (libVLC as a binary framework, LGPL-2.1) powers the built-in media
+// player's decoding of everything AVFoundation cannot open (MKV, WebM, AVI,
+// WMV, OGG, APE…). It is fetched by `Tools/fetch-vlckit.sh` (88 MB, not in
+// git). When it is absent the project still builds: the player then covers
+// AVFoundation's formats only and says so for the rest.
+let vlcKitPath = "vendor/VLCKit/VLCKit.xcframework"
+let hasVLCKit = FileManager.default.fileExists(
+    atPath: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(vlcKitPath).path)
 
 let package = Package(
     name: "double-finder",
@@ -72,7 +82,7 @@ let package = Package(
             dependencies: [
                 .product(name: "DoubleFinderPluginKit", package: "PluginKit"),
                 "Clibarchive", "Clibmtp", "CSevenZip"
-            ],
+            ] + (hasVLCKit ? ["VLCKit"] : []),
             path: "Sources/double-finder",
             resources: [
                 .copy("Resources/Localization"),
@@ -85,7 +95,7 @@ let package = Package(
                 // clang so the module can actually be built.
                 .unsafeFlags(["-Xcc", "-I/opt/homebrew/include",
                               "-Xcc", "-I/usr/local/include"])
-            ],
+            ] + (hasVLCKit ? [.define("HAS_VLCKIT")] : []),
             linkerSettings: [
                 .linkedLibrary("archive"),
                 .linkedLibrary("mtp"),
@@ -127,6 +137,6 @@ let package = Package(
                               "-Xcc", "-I/usr/local/include"])
             ]
         )
-    ],
+    ] + (hasVLCKit ? [.binaryTarget(name: "VLCKit", path: vlcKitPath)] : []),
     cxxLanguageStandard: .cxx17
 )

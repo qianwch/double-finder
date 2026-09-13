@@ -55,6 +55,15 @@ jobs:
       - name: Install libmtp
         run: brew install libmtp
 
+      # libVLC framework for the media player (88 MB, cached by version).
+      - name: Cache VLCKit
+        uses: actions/cache@v4
+        with:
+          path: vendor/VLCKit
+          key: vlckit-${{ hashFiles('Tools/fetch-vlckit.sh') }}
+      - name: Fetch VLCKit
+        run: Tools/fetch-vlckit.sh
+
       - name: Build (debug)
         run: swift build
 
@@ -98,6 +107,14 @@ jobs:
 
       - name: Install libmtp
         run: brew install libmtp
+
+      - name: Cache VLCKit
+        uses: actions/cache@v4
+        with:
+          path: vendor/VLCKit
+          key: vlckit-${{ hashFiles('Tools/fetch-vlckit.sh') }}
+      - name: Fetch VLCKit
+        run: Tools/fetch-vlckit.sh
 
       - name: Package .dmg
         run: ./package_dmg.sh

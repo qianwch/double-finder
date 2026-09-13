@@ -654,5 +654,9 @@
   "PDF Viewer": "PDF ビューア",
   "Shows PDF documents in the Lister, dark mode included": "PDF 文書をビューアで表示（ダークモード対応）",
   "Cannot open PDF": "PDF を開けません",
-  "Preview failed": "プレビューに失敗しました"
+  "Preview failed": "プレビューに失敗しました",
+  "Media Player": "メディアプレーヤー",
+  "Plays video and audio in the Lister (built-in VLC decoders: MKV / WebM / AVI / WMV / FLAC / OGG / APE…)": "ビューアで動画と音声を再生します（内蔵 VLC デコードエンジン：MKV / WebM / AVI / WMV / FLAC / OGG / APE など）",
+  "macOS cannot decode this format": "macOS はこの形式をデコードできません",
+  "Cannot play this file": "このファイルは再生できません"
 }

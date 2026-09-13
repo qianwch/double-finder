@@ -654,5 +654,9 @@
   "PDF Viewer": "Visionneuse PDF",
   "Shows PDF documents in the Lister, dark mode included": "Affiche les documents PDF dans le visualiseur, mode sombre compris",
   "Cannot open PDF": "Impossible d’ouvrir le PDF",
-  "Preview failed": "Échec de l’aperçu"
+  "Preview failed": "Échec de l’aperçu",
+  "Media Player": "Lecteur multimédia",
+  "Plays video and audio in the Lister (built-in VLC decoders: MKV / WebM / AVI / WMV / FLAC / OGG / APE…)": "Lit vidéo et audio dans le visionneur (décodeurs VLC intégrés : MKV / WebM / AVI / WMV / FLAC / OGG / APE…)",
+  "macOS cannot decode this format": "macOS ne décode pas ce format",
+  "Cannot play this file": "Impossible de lire ce fichier"
 }

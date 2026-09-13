@@ -100,6 +100,23 @@ linked libraries, `Contents/Frameworks/`); Help ▸ About opens them.
   at packaging time (or uses a local copy placed at
   `vendor/plantuml/plantuml.jar`). See `vendor/plantuml/README.md`.
 
+## VLCKit / libVLC
+
+- **Project:** <https://code.videolan.org/videolan/VLCKit> (libVLC: <https://code.videolan.org/videolan/vlc>)
+- **License:** GNU Lesser General Public License v2.1 (`Frameworks/VLCKit-COPYING.txt` in the app bundle)
+- **How it is used:** the built-in media player (F3 / Quick View for video and
+  audio) decodes and renders through libVLC, so containers and codecs macOS has
+  no decoder for (MKV, WebM, AVI, WMV, FLV, OGG / Opus, WMA, APE, WavPack…)
+  play in-process. Double Finder links the **unmodified binary framework**
+  published by VideoLAN (`Tools/fetch-vlckit.sh` downloads and checksums it;
+  `package_app.sh` bundles it under `Contents/Frameworks/VLCKit.framework`,
+  thinned to the build architecture) as a **dynamically linked** framework, in
+  keeping with LGPL §6; nothing of it is compiled into the executable. Replace
+  the framework with any other build of VLCKit 3.x and the app keeps working.
+  The exact version and the corresponding source locations are recorded in
+  `Frameworks/SOURCES.txt`. A build without the framework still works, with the
+  player limited to the formats AVFoundation decodes.
+
 ## libmtp / libusb
 
 - **Use:** linked at build time to browse and transfer files on Android phones

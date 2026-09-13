@@ -654,5 +654,9 @@
   "PDF Viewer": "PDF 뷰어",
   "Shows PDF documents in the Lister, dark mode included": "뷰어에서 PDF 문서 표시(다크 모드 지원)",
   "Cannot open PDF": "PDF를 열 수 없음",
-  "Preview failed": "미리보기 실패"
+  "Preview failed": "미리보기 실패",
+  "Media Player": "미디어 플레이어",
+  "Plays video and audio in the Lister (built-in VLC decoders: MKV / WebM / AVI / WMV / FLAC / OGG / APE…)": "뷰어에서 동영상과 음악을 재생합니다(내장 VLC 디코딩 엔진: MKV / WebM / AVI / WMV / FLAC / OGG / APE 등)",
+  "macOS cannot decode this format": "macOS가 이 형식을 디코딩할 수 없습니다",
+  "Cannot play this file": "이 파일을 재생할 수 없습니다"
 }

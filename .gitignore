@@ -23,6 +23,9 @@ Package.resolved
 /vendor/plantuml/plantuml.jar
 /vendor/*/*.tmp
 
+# VLCKit binary framework (libVLC, LGPL-2.1) for the media player — Tools/fetch-vlckit.sh
+/vendor/VLCKit/
+
 # Nested SwiftPM packages (plugin API + example plugin) build here
 /PluginKit/.build/
 /PluginKit/.swiftpm/

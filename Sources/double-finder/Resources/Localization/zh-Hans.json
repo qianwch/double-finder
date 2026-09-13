@@ -654,5 +654,9 @@
   "PDF Viewer": "PDF 查看器",
   "Shows PDF documents in the Lister, dark mode included": "在查看器中显示 PDF 文档，支持黑暗模式",
   "Cannot open PDF": "无法打开 PDF",
-  "Preview failed": "预览失败"
+  "Preview failed": "预览失败",
+  "Media Player": "媒体播放器",
+  "Plays video and audio in the Lister (built-in VLC decoders: MKV / WebM / AVI / WMV / FLAC / OGG / APE…)": "在查看器中播放视频和音频（内置 VLC 解码引擎，支持 MKV / WebM / AVI / WMV / FLAC / OGG / APE 等）",
+  "macOS cannot decode this format": "macOS 无法解码此格式",
+  "Cannot play this file": "无法播放此文件"
 }
