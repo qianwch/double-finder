@@ -106,8 +106,9 @@ swift build -c release
 ```
 
 This builds for **the architecture of the machine you run it on** (arm64 on
-Apple Silicon, x86_64 on Intel), draws the icon, bundles `libmtp`/`libusb`,
-and ad-hoc code-signs the bundle. It is no
+Apple Silicon, x86_64 on Intel), draws the icon, bundles `libmtp`/`libusb` and
+the VLCKit framework (fetched on demand, thinned to that architecture), and
+ad-hoc code-signs the bundle. It is no
 longer universal: Homebrew ships a single arm64 bottle for libmtp and builds
 every other platform from source, so both halves of a universal dylib can't be
 obtained on one machine.
@@ -134,8 +135,9 @@ packaged `.app` behave the same. See `THIRD-PARTY.md` for licensing.
 Double Finder has a Total Commander-style plugin API (`PluginKit/`, module
 `DoubleFinderPluginKit`): **file-system plugins** add a drive to the drive bar
 (like TC's WFX), **viewer plugins** add a Lister mode for a file type (WLX) —
-either a custom view or an HTML page shown in the Lister; the Markdown preview
-and the ebook reader are built-in plugins of this kind and can be switched off —,
+either a custom view or an HTML page shown in the Lister; the Markdown preview,
+the ebook reader, the PDF viewer and the media player are built-in plugins of
+this kind and can be switched off —,
 **packer plugins** make a new archive format browsable and extractable (WCX,
 read-only), **content plugins** add columns to the file list (WDX), and
 **command plugins** add an entry to the Plugins menu, the toolbar and the
