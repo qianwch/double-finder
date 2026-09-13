@@ -6,9 +6,12 @@ SwiftUI), inspired by the Total Commander workflow.
 > Free and open source. No Electron, no cross-platform toolkit — just a fast,
 > native Mac app.
 
-<!-- TODO: add docs/screenshot.png and uncomment
-![Double Finder](docs/screenshot.png)
--->
+![Double Finder main window: two panels, dark mode](docs/screenshots/main-window.png)
+
+<p align="center">
+  <img src="docs/screenshots/quick-view-video.png" width="49%" alt="Quick View pane playing an Ogg Theora video through the built-in libVLC player">
+  <img src="docs/screenshots/lister-pdf.png" width="49%" alt="Lister showing a PDF in dark mode with the outline sidebar">
+</p>
 
 ## Features
 
