@@ -26,6 +26,9 @@ Package.resolved
 # VLCKit binary framework (libVLC, LGPL-2.1) for the media player — Tools/fetch-vlckit.sh
 /vendor/VLCKit/
 
+# libmtp + libusb (LGPL-2.1) built from source for the Android/MTP backend — Tools/build-mtp-libs.sh
+/vendor/mtp/
+
 # Nested SwiftPM packages (plugin API + example plugin) build here
 /PluginKit/.build/
 /PluginKit/.swiftpm/

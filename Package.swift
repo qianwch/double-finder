@@ -22,6 +22,14 @@ let vlcKitSlice = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("vendor/VLCKit/VLCKit.xcframework/macos-arm64_x86_64").path
 let hasVLCKit = FileManager.default.fileExists(atPath: vlcKitSlice + "/VLCKit.framework/VLCKit")
 
+// libmtp + libusb for the Android/MTP backend, built by Tools/build-mtp-libs.sh
+// into vendor/mtp/ with the deployment target pinned to 13.0. Listed *before*
+// the Homebrew prefixes so it wins when present; a brew install still works
+// for development, but its bottle only loads on the macOS it was built on or
+// newer (see the script's header), so releases must use the vendored build.
+let mtpPrefix = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appendingPathComponent("vendor/mtp").path
+
 let package = Package(
     name: "double-finder",
     platforms: [
@@ -46,17 +54,19 @@ let package = Package(
             name: "Clibarchive",
             path: "Sources/Clibarchive"
         ),
-        // libmtp bridge (LGPL-2.1, `brew install libmtp`) for the Android/MTP
-        // backend. macOS ships nothing usable for MTP — ImageCaptureCore only
-        // speaks PTP (photos) and can't see phone storage — so unlike libarchive
-        // this really is an external dependency; package_app.sh bundles the dylib
-        // so the shipped .app needs no brew. Both Homebrew prefixes are listed
-        // because a non-existent -I/-L path is simply ignored.
+        // libmtp bridge (LGPL-2.1; Tools/build-mtp-libs.sh, or `brew install
+        // libmtp` for development) for the Android/MTP backend. macOS ships
+        // nothing usable for MTP — ImageCaptureCore only speaks PTP (photos) and
+        // can't see phone storage — so unlike libarchive this really is an
+        // external dependency; package_app.sh bundles the dylib so the shipped
+        // .app needs nothing installed. All three prefixes are listed because a
+        // non-existent -I/-L path is simply ignored.
         .target(
             name: "Clibmtp",
             path: "Sources/Clibmtp",
             cSettings: [
-                .unsafeFlags(["-I/opt/homebrew/include", "-I/usr/local/include"])
+                .unsafeFlags(["-I\(mtpPrefix)/include",
+                              "-I/opt/homebrew/include", "-I/usr/local/include"])
             ]
         ),
         // In-process 7-Zip engine (LGPL-2.1, vendored under 7zip/): only the 7z
@@ -104,7 +114,8 @@ let package = Package(
                 // and Clibmtp's own cSettings only apply to compiling shim.c —
                 // they don't propagate here. Pass the header path through to
                 // clang so the module can actually be built.
-                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include",
+                .unsafeFlags(["-Xcc", "-I\(mtpPrefix)/include",
+                              "-Xcc", "-I/opt/homebrew/include",
                               "-Xcc", "-I/usr/local/include"])
             ] + (hasVLCKit ? [.define("HAS_VLCKIT"), .unsafeFlags(["-F", vlcKitSlice])] : []),
             linkerSettings: [
@@ -118,16 +129,16 @@ let package = Package(
                 // Bundle.main.bundleIdentifier resolve and UserDefaults.standard
                 // use that domain — even without packaging a .app.
                 .unsafeFlags([
-                    "-L/opt/homebrew/lib", "-L/usr/local/lib",
-                    // Homebrew builds its bottles for the *current* macOS, so
-                    // libmtp.9.dylib carries a newer LC_BUILD_VERSION than this
-                    // package's 13.0 deployment target and ld warns about the
-                    // mismatch. The project keeps a zero-warning build, and ld's
-                    // targeted flags for this (-no_warn_mismatched_dylibs) are
-                    // gone in ld-prime, so warnings are suppressed wholesale.
-                    // Note for distribution: a .app bundling a bottle built on a
-                    // newer macOS is only guaranteed to load on that macOS or
-                    // later — build the release on the oldest system you support.
+                    "-L\(mtpPrefix)/lib", "-L/opt/homebrew/lib", "-L/usr/local/lib",
+                    // When the Homebrew fallback is used, its libmtp.9.dylib was
+                    // built for the *current* macOS and carries a newer
+                    // LC_BUILD_VERSION than this package's 13.0 deployment
+                    // target, and ld warns about the mismatch. The project keeps
+                    // a zero-warning build, and ld's targeted flags for this
+                    // (-no_warn_mismatched_dylibs) are gone in ld-prime, so
+                    // warnings are suppressed wholesale. The vendored build in
+                    // vendor/mtp/ (Tools/build-mtp-libs.sh) has no mismatch and
+                    // is what releases must bundle.
                     "-Xlinker", "-w",
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",

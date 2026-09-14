@@ -23,9 +23,22 @@ if [ ! -d vendor/VLCKit/VLCKit.xcframework ]; then
     Tools/fetch-vlckit.sh || echo "    !! VLCKit not available — media player limited to AVFoundation formats"
 fi
 
+# libmtp + libusb (LGPL-2.1) for the Android/MTP backend, built from source
+# with the deployment target pinned to 13.0 (see Tools/build-mtp-libs.sh for
+# why a Homebrew bottle must not be shipped). Package.swift links vendor/mtp
+# when it exists, but SwiftPM does not notice the directory appearing, so a
+# release binary linked earlier against brew must be relinked: drop it.
+BIN="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/$APP"
+if [ ! -f vendor/mtp/lib/libmtp.9.dylib ]; then
+    if Tools/build-mtp-libs.sh; then
+        rm -f "$BIN"
+    else
+        echo "    !! vendor/mtp build failed — falling back to Homebrew libmtp (release-unsafe on older macOS)"
+    fi
+fi
+
 echo "==> Release build for this host ($HOST_ARCH)"
 swift build -c release --arch "$HOST_ARCH"
-BIN="$(swift build -c release --arch "$HOST_ARCH" --show-bin-path)/$APP"
 
 echo "==> Assembling $APPDIR"
 rm -rf "$APPDIR"
@@ -191,11 +204,33 @@ rm -rf "$ICONSET" "$PNG"
 # exec a binary whose signature no longer matches (SIGKILL). The final
 # codesign --deep below re-signs the app and both dylibs.
 echo "==> Bundle libmtp + libusb (Android/MTP backend; LGPL-2.1, dynamically linked)"
-MTP_PREFIX="$(brew --prefix libmtp 2>/dev/null || echo /opt/homebrew/opt/libmtp)"
-USB_PREFIX="$(brew --prefix libusb 2>/dev/null || echo /opt/homebrew/opt/libusb)"
+# Prefer the build from Tools/build-mtp-libs.sh: it is compiled with the
+# deployment target pinned to 13.0, whereas a Homebrew bottle carries the
+# build machine's macOS as its minimum and dyld refuses to load it on anything
+# older ("built for macOS 15.0 which is newer than running OS") — which would
+# sink the whole app on macOS 13/14, Android or not.
+if [ -f "vendor/mtp/lib/libmtp.9.dylib" ] && [ -f "vendor/mtp/lib/libusb-1.0.0.dylib" ]; then
+    MTP_PREFIX="$PWD/vendor/mtp"; USB_PREFIX="$PWD/vendor/mtp"; MTP_ORIGIN=vendored
+else
+    MTP_PREFIX="$(brew --prefix libmtp 2>/dev/null || echo /opt/homebrew/opt/libmtp)"
+    USB_PREFIX="$(brew --prefix libusb 2>/dev/null || echo /opt/homebrew/opt/libusb)"
+    MTP_ORIGIN=homebrew
+fi
 MTP_LIB="$MTP_PREFIX/lib/libmtp.9.dylib"
 USB_LIB="$USB_PREFIX/lib/libusb-1.0.0.dylib"
 if [ -f "$MTP_LIB" ] && [ -f "$USB_LIB" ]; then
+    echo "    source: $MTP_ORIGIN ($MTP_PREFIX)"
+    # The executable must actually have been linked against this copy — the
+    # load command records the dylib's install name, and the rewrite below keys
+    # on it. A stale .build linked against brew while vendor/mtp exists (or the
+    # reverse) would otherwise bundle one library and load another.
+    MTP_LOAD="$(otool -L "$APPDIR/Contents/MacOS/$APP" | awk '/libmtp\.9\.dylib/{print $1; exit}')"
+    if [ "$MTP_LOAD" != "$MTP_LIB" ]; then
+        echo "ERROR: the binary links $MTP_LOAD but packaging would bundle $MTP_LIB"
+        echo "       rebuild (swift build -c release) so both agree, then package again"
+        exit 1
+    fi
+    USB_LOAD="$(otool -L "$MTP_LIB" | awk '/libusb-1\.0\.0\.dylib/{print $1; exit}')"
     mkdir -p "$APPDIR/Contents/Frameworks"
     cp "$MTP_LIB" "$APPDIR/Contents/Frameworks/libmtp.9.dylib"
     cp "$USB_LIB" "$APPDIR/Contents/Frameworks/libusb-1.0.0.dylib"
@@ -203,28 +238,36 @@ if [ -f "$MTP_LIB" ] && [ -f "$USB_LIB" ]; then
     # Resolve both libs from inside the bundle instead of the Homebrew prefix,
     # so the shipped app needs no brew install. Must happen BEFORE codesign.
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$APPDIR/Contents/MacOS/$APP" 2>/dev/null || true
-    install_name_tool -change "$MTP_LIB" "@rpath/libmtp.9.dylib" "$APPDIR/Contents/MacOS/$APP"
+    install_name_tool -change "$MTP_LOAD" "@rpath/libmtp.9.dylib" "$APPDIR/Contents/MacOS/$APP"
     install_name_tool -id "@rpath/libmtp.9.dylib" "$APPDIR/Contents/Frameworks/libmtp.9.dylib"
     install_name_tool -id "@rpath/libusb-1.0.0.dylib" "$APPDIR/Contents/Frameworks/libusb-1.0.0.dylib"
     # libmtp itself pulls in libusb — repoint that edge too.
-    install_name_tool -change "$USB_LIB" "@rpath/libusb-1.0.0.dylib" "$APPDIR/Contents/Frameworks/libmtp.9.dylib"
+    install_name_tool -change "$USB_LOAD" "@rpath/libusb-1.0.0.dylib" "$APPDIR/Contents/Frameworks/libmtp.9.dylib"
     # LGPL-2.1 compliance: ship the license next to the dynamically linked libs.
-    for lic in "$MTP_PREFIX/COPYING" "$MTP_PREFIX/../../Cellar/libmtp/"*/COPYING; do
+    for lic in "$MTP_PREFIX/libmtp-COPYING.txt" "$MTP_PREFIX/COPYING" "$MTP_PREFIX/../../Cellar/libmtp/"*/COPYING; do
         [ -f "$lic" ] && cp "$lic" "$APPDIR/Contents/Frameworks/libmtp-COPYING.txt" && break
     done
-    for lic in "$USB_PREFIX/COPYING" "$USB_PREFIX/../../Cellar/libusb/"*/COPYING; do
+    for lic in "$USB_PREFIX/libusb-COPYING.txt" "$USB_PREFIX/COPYING" "$USB_PREFIX/../../Cellar/libusb/"*/COPYING; do
         [ -f "$lic" ] && cp "$lic" "$APPDIR/Contents/Frameworks/libusb-COPYING.txt" && break
     done
-    # LGPL-2.1 §4: the shipped dylibs are unmodified Homebrew builds; record the
-    # exact upstream versions and where the corresponding source lives so a
-    # recipient can obtain (and rebuild / replace) them.
-    # Cellar directory names carry a "_N" revision suffix on formula rebuilds
-    # (e.g. 1.1.23_1) — the upstream tarball is named after the bare version.
-    MTP_VER="$(basename "$(readlink -f "$MTP_PREFIX")")"; MTP_VER="${MTP_VER%%_*}"
-    USB_VER="$(basename "$(readlink -f "$USB_PREFIX")")"; USB_VER="${USB_VER%%_*}"
+    # LGPL-2.1 §4: the shipped dylibs are unmodified builds of the upstream
+    # releases; record the exact versions and where the corresponding source
+    # lives so a recipient can obtain (and rebuild / replace) them.
+    if [ "$MTP_ORIGIN" = vendored ]; then
+        MTP_VER="$(awk '/^libmtp /{print $2}' vendor/mtp/VERSION)"
+        USB_VER="$(awk '/^libusb /{print $2}' vendor/mtp/VERSION)"
+        MTP_BUILT_BY="compiled from the unmodified upstream sources by Tools/build-mtp-libs.sh
+(deployment target macOS $(awk '/^deployment-target /{print $2}' vendor/mtp/VERSION))"
+    else
+        # Cellar directory names carry a "_N" revision suffix on formula rebuilds
+        # (e.g. 1.1.23_1) — the upstream tarball is named after the bare version.
+        MTP_VER="$(basename "$(readlink -f "$MTP_PREFIX")")"; MTP_VER="${MTP_VER%%_*}"
+        USB_VER="$(basename "$(readlink -f "$USB_PREFIX")")"; USB_VER="${USB_VER%%_*}"
+        MTP_BUILT_BY="unmodified builds installed by Homebrew (https://brew.sh)"
+    fi
     cat > "$APPDIR/Contents/Frameworks/SOURCES.txt" <<EOF2
-The dynamic libraries in this folder are unmodified builds installed by
-Homebrew (https://brew.sh) and are licensed under the GNU LGPL 2.1 or later
+The dynamic libraries in this folder are ${MTP_BUILT_BY}
+and are licensed under the GNU LGPL 2.1 or later
 (see libmtp-COPYING.txt and libusb-COPYING.txt). Double Finder links them
 dynamically; you may replace them with your own build of the same library.
 
@@ -243,8 +286,20 @@ EOF2
     if ! lipo -archs "$APPDIR/Contents/Frameworks/libmtp.9.dylib" | grep -q "$HOST_ARCH"; then
         echo "    !! WARNING: bundled libmtp does not cover $HOST_ARCH — Android support will fail"
     fi
+    # dyld refuses a dylib whose minimum macOS is newer than the running one,
+    # so a bundled library newer than the app's own deployment target silently
+    # raises the app's real minimum. Compare each against the executable.
+    APP_MINOS="$(otool -l "$APPDIR/Contents/MacOS/$APP" | grep -A3 -m1 LC_BUILD_VERSION | awk '/minos/{print $2}')"
+    for lib in libmtp.9.dylib libusb-1.0.0.dylib; do
+        LIB_MINOS="$(otool -l "$APPDIR/Contents/Frameworks/$lib" | grep -A3 -m1 LC_BUILD_VERSION | awk '/minos/{print $2}')"
+        if [ "$(printf '%s\n%s\n' "$APP_MINOS" "$LIB_MINOS" | sort -V | tail -1)" != "$APP_MINOS" ]; then
+            echo "    !! WARNING: $lib requires macOS $LIB_MINOS but the app declares $APP_MINOS —"
+            echo "       the app will not launch on macOS < $LIB_MINOS. Use Tools/build-mtp-libs.sh for releases."
+        fi
+    done
+    echo "    minimum macOS: app $APP_MINOS, libmtp $(otool -l "$APPDIR/Contents/Frameworks/libmtp.9.dylib" | grep -A3 -m1 LC_BUILD_VERSION | awk '/minos/{print $2}')"
 else
-    echo "    !! libmtp/libusb not found — the app will NOT launch (brew install libmtp)"
+    echo "    !! libmtp/libusb not found — the app will NOT launch (run Tools/build-mtp-libs.sh)"
     echo "       looked for: $MTP_LIB"
 fi
 

@@ -73,8 +73,13 @@ SwiftUI), inspired by the Total Commander workflow.
 
 - macOS 13 (Ventura) or later
 - Apple Silicon or Intel
-- `brew install libmtp` — required to **build** (the Android/MTP backend links
-  it). The packaged `.app` bundles the library, so end users need nothing.
+- `Tools/build-mtp-libs.sh` — required to **build**: compiles libusb + libmtp
+  (the Android/MTP backend links them) from the pinned upstream sources into
+  `vendor/mtp/`, with the deployment target held at macOS 13 so the packaged
+  app really runs there. `brew install libmtp` also works for development, but
+  a Homebrew bottle only loads on the macOS it was built on or newer, so
+  releases must use the script. The packaged `.app` bundles the libraries, so
+  end users need nothing.
 - `Tools/fetch-vlckit.sh` — optional for a **build**: downloads the VLCKit
   framework (libVLC, LGPL-2.1, 88 MB) that gives the media player its decoders.
   `package_app.sh` fetches it on its own; without it the project still builds

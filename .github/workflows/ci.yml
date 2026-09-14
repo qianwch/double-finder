@@ -50,10 +50,18 @@ jobs:
           echo "host arch: $(uname -m)"
 
       # libmtp (+ libusb) back the Android/MTP filesystem; without them the
-      # whole package fails to compile. arm64 gets a bottle, Intel builds from
-      # source — hence the generous job timeout above.
-      - name: Install libmtp
-        run: brew install libmtp
+      # whole package fails to compile. Built from the pinned upstream sources
+      # with the deployment target forced to 13.0 (cached per arch + script
+      # hash): a Homebrew bottle would carry the runner's own macOS (15) as its
+      # minimum, and dyld refuses to load such a dylib on 13/14 — which would
+      # sink the whole app on the versions the README promises.
+      - name: Cache libmtp + libusb
+        uses: actions/cache@v4
+        with:
+          path: vendor/mtp
+          key: mtp-${{ matrix.arch }}-${{ hashFiles('Tools/build-mtp-libs.sh') }}
+      - name: Build libmtp + libusb
+        run: Tools/build-mtp-libs.sh
 
       # libVLC framework for the media player (88 MB, cached by version).
       - name: Cache VLCKit
@@ -105,8 +113,13 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Install libmtp
-        run: brew install libmtp
+      - name: Cache libmtp + libusb
+        uses: actions/cache@v4
+        with:
+          path: vendor/mtp
+          key: mtp-${{ matrix.arch }}-${{ hashFiles('Tools/build-mtp-libs.sh') }}
+      - name: Build libmtp + libusb
+        run: Tools/build-mtp-libs.sh
 
       - name: Cache VLCKit
         uses: actions/cache@v4
@@ -129,7 +142,7 @@ jobs:
       - name: Rename for the release
         run: mv ".dist/Double Finder.dmg" ".dist/Double-Finder-${{ matrix.arch }}.dmg"
 
-      - name: Verify the bundled libmtp matches this architecture
+      - name: Verify the bundled libmtp matches this architecture and the deployment target
         run: |
           set -euo pipefail
           hdiutil attach ".dist/Double-Finder-${{ matrix.arch }}.dmg" -mountpoint /tmp/dfdmg -nobrowse -quiet
@@ -141,6 +154,18 @@ jobs:
             || { echo "libmtp is not bundled (@rpath missing)"; exit 1; }
           lipo -archs "$APP/Contents/Frameworks/libmtp.9.dylib" | grep -q "${{ matrix.arch }}" \
             || { echo "bundled libmtp does not cover ${{ matrix.arch }}"; exit 1; }
+          # Every bundled dylib must load on the app's own minimum macOS: dyld
+          # rejects a library built for a newer macOS than the running one, so a
+          # libmtp with minos 15.0 would make the whole app fail on 13/14.
+          minos() { otool -l "$1" | grep -A3 -m1 LC_BUILD_VERSION | awk '/minos/{print $2}'; }
+          APP_MIN="$(minos "$APP/Contents/MacOS/Double Finder")"
+          echo "minimum macOS: app $APP_MIN"
+          for lib in libmtp.9.dylib libusb-1.0.0.dylib libDoubleFinderPluginKit.dylib; do
+            LIB_MIN="$(minos "$APP/Contents/Frameworks/$lib")"
+            echo "minimum macOS: $lib $LIB_MIN"
+            [ "$(printf '%s\n%s\n' "$APP_MIN" "$LIB_MIN" | sort -V | tail -1)" = "$APP_MIN" ] \
+              || { echo "$lib requires macOS $LIB_MIN, newer than the app's $APP_MIN"; exit 1; }
+          done
           hdiutil detach /tmp/dfdmg -quiet
 
       - uses: actions/upload-artifact@v7
@@ -152,20 +177,14 @@ jobs:
       # LGPL-2.1 §4: the DMG ships libmtp + libusb as dylibs, so the
       # corresponding source must be obtainable "from the same place" as the
       # binaries — a pointer to sourceforge/GitHub in Frameworks/SOURCES.txt is
-      # not enough on its own. Fetch the exact upstream tarballs Homebrew built
-      # the bundled dylibs from (same formula, same version, checksum-verified
-      # against the formula) and attach them to the release next to the DMGs.
+      # not enough on its own. Attach the exact upstream tarballs the bundled
+      # dylibs were just built from (Tools/build-mtp-libs.sh keeps them, checksum-
+      # verified, under vendor/mtp/src) to the release next to the DMGs.
       - name: Collect LGPL corresponding source (libmtp, libusb)
         run: |
           set -euo pipefail
           mkdir -p .dist/lgpl-src
-          for f in libmtp libusb; do
-            url="$(brew info --json=v1 "$f" | jq -r '.[0].urls.stable.url')"
-            sum="$(brew info --json=v1 "$f" | jq -r '.[0].urls.stable.checksum')"
-            out=".dist/lgpl-src/$(basename "$url")"
-            curl -fsSL --retry 3 -o "$out" "$url"
-            echo "$sum  $out" | shasum -a 256 -c -
-          done
+          cp vendor/mtp/src/libmtp-*.tar.gz vendor/mtp/src/libusb-*.tar.bz2 .dist/lgpl-src/
           ls -l .dist/lgpl-src
 
       - uses: actions/upload-artifact@v7

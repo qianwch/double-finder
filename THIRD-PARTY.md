@@ -128,18 +128,19 @@ linked libraries, `Contents/Frameworks/`); Help ▸ About opens them.
   `Contents/Frameworks/` with their install names rewritten to `@rpath` — you
   are free to replace them with your own build of the same library.
 - **Bundled license text:** `Contents/Frameworks/libmtp-COPYING.txt` and
-  `libusb-COPYING.txt` (copied from the installed packages at packaging time).
-- **Corresponding source (LGPL §4):** the dylibs are unmodified Homebrew builds
-  of the upstream releases. `package_app.sh` records the exact versions that
-  went into each build, with the upstream source tarball URLs and the Homebrew
-  formula links, in `Contents/Frameworks/SOURCES.txt`, and every GitHub
-  release carries the two upstream source tarballs (`libmtp-<ver>.tar.gz`,
-  `libusb-<ver>.tar.bz2`, checksum-verified against the Homebrew formula)
-  next to the DMGs, so the source is available from the same place as the
-  binaries.
+  `libusb-COPYING.txt` (copied from the source trees at packaging time).
+- **Corresponding source (LGPL §4):** the dylibs are unmodified builds of the
+  upstream releases, compiled by `Tools/build-mtp-libs.sh` from the pinned,
+  checksum-verified tarballs (with the deployment target held at macOS 13).
+  `package_app.sh` records the exact versions that went into each build, with
+  the upstream source tarball URLs, in `Contents/Frameworks/SOURCES.txt`, and
+  every GitHub release carries the very tarballs the bundled dylibs were built
+  from (`libmtp-<ver>.tar.gz`, `libusb-<ver>.tar.bz2`) next to the DMGs, so
+  the source is available from the same place as the binaries.
 - **Project:** https://libmtp.sourceforge.net/ · https://libusb.info/
-- The dylibs are **not** committed to this repository; they come from
-  `brew install libmtp` on the packaging machine.
+- The dylibs are **not** committed to this repository; `Tools/build-mtp-libs.sh`
+  builds them on the packaging machine (a `brew install libmtp` is accepted as
+  a development-only fallback).
 
 ---
 
