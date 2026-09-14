@@ -275,7 +275,7 @@ jobs:
 
           They are separate rather than universal because the Android/MTP backend links libmtp, and Homebrew publishes it for arm64 only — the other half of a universal library can't be produced on a single machine.
 
-          Drag **Double Finder.app** to /Applications. The build is ad-hoc signed, so on first launch right-click the app → **Open** to bypass Gatekeeper.
+          Drag **Double Finder.app** to /Applications. The build is ad-hoc signed, not notarized, so macOS refuses the first launch. On macOS 15 and later, open **System Settings → Privacy & Security** after that refusal and click **Open Anyway** (right-click → Open no longer works there); on macOS 13 and 14, right-click the app → **Open**. Or clear the quarantine flag once: \`xattr -dr com.apple.quarantine \"/Applications/Double Finder.app\"\`.
 
           The \`libmtp-*.tar.gz\` and \`libusb-*.tar.bz2\` assets are the unmodified upstream sources of the two LGPL-2.1 libraries bundled inside the app (Android/MTP support), provided here as required by the LGPL. See \`THIRD-PARTY.md\` in the app's Resources folder."
 

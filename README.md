@@ -118,8 +118,13 @@ every other platform from source, so both halves of a universal dylib can't be
 obtained on one machine.
 
 > **Gatekeeper note:** the app is **ad-hoc signed**, not notarized by Apple. On
-> first launch macOS may say it "cannot be opened" or is "damaged." Either
-> right-click the app ▸ **Open** and confirm, or clear the quarantine flag:
+> first launch macOS says it "could not verify" the app or that it is
+> "damaged" and refuses to open it. Since macOS 15 (Sequoia) the old
+> right-click ▸ Open trick no longer works for unnotarized apps; instead, after
+> that first refusal, open **System Settings ▸ Privacy & Security**, scroll to
+> the Security section and click **Open Anyway** next to Double Finder, then
+> confirm. On macOS 13 and 14, right-click the app ▸ **Open** still works.
+> Alternatively, clear the quarantine flag once and the app opens normally:
 >
 > ```bash
 > xattr -dr com.apple.quarantine "/Applications/Double Finder.app"
