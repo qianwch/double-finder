@@ -165,7 +165,8 @@ let package = Package(
             swiftSettings: [
                 // `@testable import double_finder` re-resolves the Clibmtp module,
                 // so the tests need libmtp's header path too.
-                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include",
+                .unsafeFlags(["-Xcc", "-I\(mtpPrefix)/include",
+                              "-Xcc", "-I/opt/homebrew/include",
                               "-Xcc", "-I/usr/local/include"])
             ] + (hasVLCKit ? [.unsafeFlags(["-F", vlcKitSlice])] : [])
         )
