@@ -74,6 +74,26 @@ final class QuickViewPane: NSView {
     /// list so Tab / arrows / F-keys keep working while Quick View is up.
     override var acceptsFirstResponder: Bool { false }
 
+    // The pane covers the inactive panel's file list, but AppKit still routes
+    // any mouse event a mounted view leaves unhandled up the responder chain
+    // (NSImageView in the image viewer, QL's remote view, an NSScrollView that
+    // can't scroll further, …), and from there it lands in the covered list:
+    // a click in the preview then moved that list's cursor, activated the
+    // hidden panel, and the pane jumped to the other side. The pane is the end
+    // of the line for mouse input — swallow everything instead of forwarding.
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {}
+    override func mouseDragged(with event: NSEvent) {}
+    override func rightMouseDown(with event: NSEvent) {}
+    override func rightMouseUp(with event: NSEvent) {}
+    override func rightMouseDragged(with event: NSEvent) {}
+    override func otherMouseDown(with event: NSEvent) {}
+    override func otherMouseUp(with event: NSEvent) {}
+    override func otherMouseDragged(with event: NSEvent) {}
+    override func scrollWheel(with event: NSEvent) {}
+    override func magnify(with event: NSEvent) {}
+    override func swipe(with event: NSEvent) {}
+
     /// True when the window's first responder is inside this pane —
     /// QLPreviewView's internal remote view grabs focus when a preview loads.
     func holdsKeyboardFocus(in window: NSWindow?) -> Bool {
