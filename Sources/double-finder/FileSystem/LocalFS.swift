@@ -237,11 +237,12 @@ class LocalFS: VirtualFS {
         }.value
     }
 
-    /// Recursively sums the on-disk allocated size of everything under `path`.
+    /// Recursively sums the logical (actual) byte size of every regular file under `path`,
+    /// matching what the list shows for single files — not the on-disk allocated space.
     func directorySize(_ path: String) async -> Int64 {
         await Task.detached(priority: .utility) {
             let url = URL(fileURLWithPath: path)
-            let keys: Set<URLResourceKey> = [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey]
+            let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
             var total: Int64 = 0
             guard let enumerator = FileManager.default.enumerator(
                 at: url, includingPropertiesForKeys: Array(keys),
@@ -249,7 +250,7 @@ class LocalFS: VirtualFS {
             ) else { return 0 }
             while let fileURL = enumerator.nextObject() as? URL {
                 guard let v = try? fileURL.resourceValues(forKeys: keys), v.isRegularFile == true else { continue }
-                total += Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? v.fileSize ?? 0)
+                total += Int64(v.fileSize ?? 0)
             }
             return total
         }.value
