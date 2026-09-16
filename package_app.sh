@@ -180,6 +180,12 @@ plutil -replace CFBundleVersion -string "$BUILD_NUM" "$APPDIR/Contents/Info.plis
 plutil -replace DFGitRevision -string "$GIT_REV" "$APPDIR/Contents/Info.plist"
 echo "    $SHORT_VER ($BUILD_NUM) $GIT_REV"
 
+# The icon export below RUNS the binary, and the rpath added for the PluginKit
+# dylib above already invalidated the linker's ad-hoc signature — macOS then
+# refuses to exec it ("Killed: 9"). Re-sign before running it; the final
+# codesign --deep at the end signs the finished bundle again anyway.
+codesign --force --sign - "$APPDIR/Contents/MacOS/$APP" 2>/dev/null || true
+
 echo "==> App icon (.icns, drawn in code)"
 ICONSET="$DIST/AppIcon.iconset"
 PNG="$DIST/icon1024.png"

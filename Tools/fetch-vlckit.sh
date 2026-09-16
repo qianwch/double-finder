@@ -41,7 +41,13 @@ fi
 
 echo "==> Unpacking"
 TMP="$(mktemp -d)"
-tar -xJf "$TAR" -C "$TMP"
+# COPYFILE_DISABLE: without it bsdtar materializes the archive's AppleDouble
+# entries as ._* files *inside* the framework, and codesign then refuses it
+# ("unsealed contents present in the root directory of an embedded framework").
+# The framework stays unsigned, and dyld SIGKILLs anything that maps it
+# (EXC_BAD_ACCESS / CODESIGNING "Invalid Page"). Belt and braces: sweep any
+# that slipped in, here or through a file-sync round trip.
+COPYFILE_DISABLE=1 tar -xJf "$TAR" -C "$TMP"
 PKG="$(find "$TMP" -maxdepth 1 -type d -name 'VLCKit*' | head -1)"
 rm -rf "$XC"
 mv "$PKG/VLCKit.xcframework" "$XC"
@@ -58,7 +64,9 @@ rm -rf "$TMP"
 # re-sign ad hoc — the edit voids VideoLAN's signature and dyld refuses
 # unsigned code on Apple silicon.
 FW="$XC/macos-arm64_x86_64/VLCKit.framework"
+find "$XC" \( -name '._*' -o -name '.DS_Store' \) -delete
 install_name_tool -id "@rpath/VLCKit.framework/Versions/A/VLCKit" "$FW/Versions/A/VLCKit"
-codesign --force --sign - "$FW" >/dev/null 2>&1 || codesign --force --deep --sign - "$FW"
+codesign --force --sign - "$FW" || codesign --force --deep --sign - "$FW"
+codesign -v "$FW" || { echo "ERROR: VLCKit.framework did not sign cleanly — see the ._* note above"; exit 1; }
 echo "    $XC"
 echo "    $(lipo -archs "$XC/macos-arm64_x86_64/VLCKit.framework/VLCKit") · VLCKit $VLCKIT_VERSION"
