@@ -1772,12 +1772,13 @@ class MainViewController: NSViewController {
         guard let window = view.window else { return }
         let items = pruneSelectedAncestors(activePanelVC.selectedOrCurrent)
         guard !items.isEmpty else { return }
-        // TC convention: pack into the target (other) panel's folder.
+        // TC convention: pack into the target (other) panel's folder, but name the
+        // archive after the source: the single selected item, else the source folder.
         let destDir = inactivePanelVC.panelState.currentPath
-        let defaultBase = items.count == 1
-            ? (items[0].name as NSString).deletingPathExtension
-            : (destDir as NSString).lastPathComponent
-        let sheet = PackSheet(defaultBaseName: defaultBase.isEmpty ? "archive" : defaultBase, destDir: destDir)
+        let defaultBase = PackDefaultName.suggest(
+            itemNames: items.map { (name: $0.name, isDirectory: $0.isDirectory) },
+            sourceDir: activePanelVC.panelState.currentPath)
+        let sheet = PackSheet(defaultBaseName: defaultBase, destDir: destDir)
         activePackSheet = sheet
         sheet.onPack = { [weak self] opts in
             guard let self = self else { return }

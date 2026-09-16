@@ -1,5 +1,24 @@
 import Foundation
 
+/// Default base name the Pack dialog starts with. TC names the archive after
+/// the *source*: a single selected item keeps its own name (directories keep
+/// their full name, files drop the extension), a multi-item selection takes the
+/// source folder's name. Never the destination folder's name.
+enum PackDefaultName {
+    static func suggest(itemNames: [(name: String, isDirectory: Bool)], sourceDir: String) -> String {
+        let base: String
+        if itemNames.count == 1 {
+            // `name` may carry a display path in search / branch listings.
+            let leaf = (itemNames[0].name as NSString).lastPathComponent
+            base = itemNames[0].isDirectory ? leaf : (leaf as NSString).deletingPathExtension
+        } else {
+            let leaf = (sourceDir as NSString).lastPathComponent
+            base = (leaf == "/") ? "" : leaf
+        }
+        return base.isEmpty ? "archive" : base
+    }
+}
+
 /// A format the Pack dialog can write: a built-in `ArchiveFormat` (libarchive /
 /// 7-Zip engine) or a packer plugin that implements `create`.
 enum PackFormat {
