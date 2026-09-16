@@ -147,8 +147,8 @@ final class MultiRenameSheet: NSWindowController {
         window?.sheetParent?.endSheet(window!, returnCode: .cancel)
     }
 
-    func beginSheet(on parent: NSWindow) {
-        parent.beginSheet(window!, completionHandler: nil)
+    func beginSheet(on parent: NSWindow, completion: @escaping () -> Void = {}) {
+        parent.beginSheet(window!) { _ in completion() }
     }
 }
 

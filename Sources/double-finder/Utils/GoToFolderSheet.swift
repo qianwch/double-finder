@@ -55,8 +55,8 @@ final class GoToFolderSheet: NSWindowController, NSTextFieldDelegate {
         content.addSubview(go)
     }
 
-    func beginSheet(on parent: NSWindow) {
-        parent.beginSheet(window!) { _ in }
+    func beginSheet(on parent: NSWindow, completion: @escaping () -> Void = {}) {
+        parent.beginSheet(window!) { _ in completion() }
         window?.makeFirstResponder(field)
     }
 

@@ -23,20 +23,19 @@ class MainViewController: NSViewController {
     private static let commandLineBarHeight: CGFloat = 22
     private static let functionKeyBarHeight: CGFloat = 28
     private var splitViewItem: NSSplitViewItem!
-    private var activeProgressSheet: ProgressSheet?
+    /// Keeps sheet controllers alive while their sheet is on screen. AppKit does
+    /// not retain a window's controller, and a second `beginSheet` on the same
+    /// window is *queued* rather than refused — so the one-slot strong reference
+    /// this used to be let a queued sheet overwrite (and deallocate) the sheet
+    /// already up. What was left on screen was dead: its buttons' target had
+    /// gone nil, so neither Cancel nor Esc closed it. Keyed by identity, so any
+    /// number can coexist (progress on top of a sheet, results after progress…).
+    private var liveSheets: [ObjectIdentifier: NSWindowController] = [:]
     /// Retains lazy Open-With submenu delegates while a context menu is open.
     private var openWithDelegates: [OpenWithMenuDelegate] = []
     private let transferQueue = TransferQueue()
     private var queueIndicator: QueueToolbarController?
     private var serverSheet: ServerConnectionSheet?
-    private var activeRenameSheet: MultiRenameSheet?
-    private var activeFindSheet: FindFilesSheet?
-    private var activeGoToSheet: GoToFolderSheet?
-    private var activePackSheet: PackSheet?
-    private var activeChecksumSheet: ChecksumSheet?
-    private var activeChecksumResults: ChecksumResultsSheet?
-    private var activeSplitSheet: SplitSheet?
-    private var activeEncodeSheet: EncodeSheet?
     private var compareWindows: [CompareFilesWindow] = []
     private var quickViewPane: QuickViewPane?
     private var quickViewTimer: Timer?
@@ -1415,17 +1414,15 @@ class MainViewController: NSViewController {
         }
     }
 
-    private var activeConfirmSheet: TransferConfirmSheet?
-
     /// Shows the Copy/Move confirmation with an editable destination, then calls
     /// `completion` with the chosen path (or nothing if cancelled).
     private func confirmTransfer(verb: String, items: [FileItem], defaultDest: String,
                                  completion: @escaping (String, Bool) -> Void) {
         guard let window = view.window else { completion(defaultDest, false); return }
         let sheet = TransferConfirmSheet(verb: verb, items: items, defaultDest: defaultDest)
-        activeConfirmSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onConfirm = completion
-        sheet.beginSheet(on: window) { [weak self] in self?.activeConfirmSheet = nil }
+        sheet.beginSheet(on: window) { done() }
     }
 
     func actionMove() {
@@ -1645,7 +1642,7 @@ class MainViewController: NSViewController {
     /// MTP connection it is browsing, or the archive it is inside. Only the S3
     /// account root (no bucket yet) has nothing to search.
     func actionFindFiles() {
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let panel = appState.activePanelState
         guard let endpoint = panel.searchEndpoint else {
             let alert = NSAlert()
@@ -1656,11 +1653,8 @@ class MainViewController: NSViewController {
         }
         let startDir = endpoint.base
         let sheet = FindFilesSheet(endpoint: endpoint)
-        activeFindSheet = sheet
-        sheet.onGoTo = { [weak self] path in
-            self?.goToFile(path)
-            self?.activeFindSheet = nil
-        }
+        let done = keepAlive(sheet)
+        sheet.onGoTo = { [weak self] path in self?.goToFile(path) }
         sheet.onFeed = { [weak self] paths, meta in
             guard let self = self else { return }
             if endpoint.hitsAreVirtual {
@@ -1674,11 +1668,10 @@ class MainViewController: NSViewController {
                 let archiveMeta = meta.filter { FileSearch.isArchiveHit($0.key) }
                 panel.feedSearchResults(paths, base: startDir, archiveMeta: archiveMeta)
             }
-            self.activeFindSheet = nil
         }
         sheet.onEdit = { [weak self] url in self?.openInEditor(url) }
         sheet.onViewVirtual = { [weak self] hits in self?.viewVirtualSearchHits(hits, using: panel) }
-        sheet.beginSheet(on: window)
+        sheet.beginSheet(on: window) { done() }
     }
 
     /// F3 / Space on a search result that has no file on disk (remote, or inside
@@ -1709,13 +1702,12 @@ class MainViewController: NSViewController {
     /// Finder-style ⌘⇧G — type a path relative to the active panel (or
     /// absolute / ~-relative), with Tab folder completion, then navigate there.
     func actionGoToFolder() {
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let startDir = appState.activePanelState.currentPath
         let sheet = GoToFolderSheet(startDir: startDir)
-        activeGoToSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onGo = { [weak self] input in
             guard let self = self else { return }
-            self.activeGoToSheet = nil
             let resolved = self.resolveGoToPath(input, base: startDir)
             var isDir: ObjCBool = false
             guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDir), isDir.boolValue else {
@@ -1724,7 +1716,7 @@ class MainViewController: NSViewController {
             }
             self.appState.activePanelState.navigate(to: resolved)
         }
-        sheet.beginSheet(on: window)
+        sheet.beginSheet(on: window) { done() }
     }
 
     /// Resolves a Go-to-Folder entry: absolute, ~-relative, or relative to `base`.
@@ -1746,12 +1738,12 @@ class MainViewController: NSViewController {
     }
 
     func actionMultiRename() {
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let items = activePanelVC.selectedOrCurrent
         guard !items.isEmpty else { return }
         let dir = appState.activePanelState.currentPath
         let sheet = MultiRenameSheet(names: items.map { $0.name })
-        activeRenameSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onApply = { [weak self] changes in
             guard let self = self else { return }
             Task {
@@ -1759,17 +1751,14 @@ class MainViewController: NSViewController {
                     let src = dir + "/" + change.old
                     try? await self.appState.activePanelState.fs.rename(at: src, to: change.new)
                 }
-                await MainActor.run {
-                    self.activePanelVC.panelState.refresh()
-                    self.activeRenameSheet = nil
-                }
+                await MainActor.run { self.activePanelVC.panelState.refresh() }
             }
         }
-        sheet.beginSheet(on: window)
+        sheet.beginSheet(on: window) { done() }
     }
 
     func actionPackZip() {
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let items = pruneSelectedAncestors(activePanelVC.selectedOrCurrent)
         guard !items.isEmpty else { return }
         // TC convention: pack into the target (other) panel's folder, but name the
@@ -1779,7 +1768,7 @@ class MainViewController: NSViewController {
             itemNames: items.map { (name: $0.name, isDirectory: $0.isDirectory) },
             sourceDir: activePanelVC.panelState.currentPath)
         let sheet = PackSheet(defaultBaseName: defaultBase, destDir: destDir)
-        activePackSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onPack = { [weak self] opts in
             guard let self = self else { return }
             let archivePath = destDir + "/" + opts.baseName + "." + opts.format.fileExtension
@@ -1791,7 +1780,7 @@ class MainViewController: NSViewController {
             self.packCheckingOverwrite(archivePath: archivePath, sources: sources,
                                        opts: opts, baseDir: baseDir, window: window)
         }
-        sheet.beginSheet(on: window) { [weak self] in self?.activePackSheet = nil }
+        sheet.beginSheet(on: window) { done() }
     }
 
     /// Before packing, guard against clobbering an existing archive: offer
@@ -2017,7 +2006,7 @@ class MainViewController: NSViewController {
     @objc func actionCreateChecksum_menu() { actionCreateChecksum() }
 
     func actionCreateChecksum() {
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let ps = activePanelVC.panelState
         guard !ps.isRemote, PanelState.archiveRoot(in: ps.currentPath) == nil else {
             NSSound.beep(); return
@@ -2030,11 +2019,11 @@ class MainViewController: NSViewController {
             : (dir as NSString).lastPathComponent
         let sheet = ChecksumSheet(defaultBaseName: defaultBase.isEmpty ? "checksums" : defaultBase,
                                   destDir: dir, fileCount: items.count)
-        activeChecksumSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onCreate = { [weak self] opts in
             self?.runCreateChecksum(items: items, dir: dir, opts: opts, window: window)
         }
-        sheet.beginSheet(on: window) { [weak self] in self?.activeChecksumSheet = nil }
+        sheet.beginSheet(on: window) { done() }
     }
 
     private func runCreateChecksum(items: [FileItem], dir: String,
@@ -2130,7 +2119,7 @@ class MainViewController: NSViewController {
     @objc func actionSplitFile_menu() { actionSplitFile() }
 
     func actionSplitFile() {
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let src = activePanelVC.panelState
         let dst = inactivePanelVC.panelState
         guard !src.isRemote, !dst.isRemote,
@@ -2142,11 +2131,11 @@ class MainViewController: NSViewController {
         }
         let destDir = dst.currentPath
         let sheet = SplitSheet(fileName: item.name, fileSize: item.size, destDir: destDir)
-        activeSplitSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onSplit = { [weak self] partSize in
             self?.runSplit(item: item, destDir: destDir, partSize: partSize, window: window)
         }
-        sheet.beginSheet(on: window) { [weak self] in self?.activeSplitSheet = nil }
+        sheet.beginSheet(on: window) { done() }
     }
 
     private func runSplit(item: FileItem, destDir: String, partSize: Int64, window: NSWindow) {
@@ -2455,7 +2444,7 @@ class MainViewController: NSViewController {
     @objc func actionEncodeFile_menu() { actionEncodeFile() }
 
     func actionEncodeFile() {
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let src = activePanelVC.panelState
         let dst = inactivePanelVC.panelState
         guard !src.isRemote, !dst.isRemote,
@@ -2470,7 +2459,7 @@ class MainViewController: NSViewController {
         }
         let destDir = dst.currentPath
         let sheet = EncodeSheet(sourceName: item.name, destDir: destDir)
-        activeEncodeSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onEncode = { [weak self] opts in
             self?.runCodec(title: tr("Encoding"), window: window) {
                 let data = try Data(contentsOf: URL(fileURLWithPath: item.path))
@@ -2480,7 +2469,7 @@ class MainViewController: NSViewController {
                 try text.write(toFile: destDir + "/" + opts.fileName, atomically: true, encoding: .utf8)
             }
         }
-        sheet.beginSheet(on: window) { [weak self] in self?.activeEncodeSheet = nil }
+        sheet.beginSheet(on: window) { done() }
     }
 
     @objc func actionDecodeFile_menu() { actionDecodeFile() }
@@ -2634,8 +2623,8 @@ class MainViewController: NSViewController {
         runOperation(op, on: window) { [weak self] in
             guard let self = self, !op.isCancelled, !box.results.isEmpty else { return }
             let sheet = ChecksumResultsSheet(results: box.results)
-            self.activeChecksumResults = sheet
-            sheet.beginSheet(on: window) { [weak self] in self?.activeChecksumResults = nil }
+            let done = self.keepAlive(sheet)
+            sheet.beginSheet(on: window) { done() }
         }
     }
 
@@ -2967,8 +2956,6 @@ class MainViewController: NSViewController {
     // MARK: - Compare & synchronize
     /// Marks (selects) the differing files in both panels: files unique to a side,
     /// or newer than the same-named file on the other side. (TC "Compare dirs".)
-    private var activeSyncSheet: SyncDirsSheet?
-
     /// Opens the Synchronize Directories window (recursive compare + per-row
     /// direction + one-click sync). Both Compare and Synchronize menus open it.
     func actionCompareDirectories() { actionSynchronize() }
@@ -2998,10 +2985,10 @@ class MainViewController: NSViewController {
         guard let le = makeSyncEndpoint(l), let re = makeSyncEndpoint(r) else {
             NSSound.beep(); return    // archive / S3 bucket root not supported
         }
-        guard let window = view.window else { return }
+        guard let window = sheetHost() else { return }
         let sheet = SyncDirsSheet(left: le, right: re,
                                   leftLabel: l.currentPath, rightLabel: r.currentPath)
-        activeSyncSheet = sheet
+        let done = keepAlive(sheet)
         sheet.onRunOperation = { [weak self, weak sheet] op, done in
             // Attach progress to the Synchronize sheet's own window (sheet-on-sheet),
             // not the main window which still hosts the Synchronize sheet.
@@ -3019,7 +3006,7 @@ class MainViewController: NSViewController {
         sheet.onClosed = { [weak self] in
             self?.leftPanelVC.panelState.refresh()
             self?.rightPanelVC.panelState.refresh()
-            self?.activeSyncSheet = nil
+            done()
         }
         sheet.show(relativeTo: window)
     }
@@ -3329,13 +3316,34 @@ class MainViewController: NSViewController {
     /// the sheet to a window other than the main one — e.g. the Synchronize sheet's
     /// own window, since a window can't host two sheets at once (the progress sheet
     /// would otherwise stay hidden behind the still-open Synchronize sheet).
+    /// Retains `sheet` for as long as it is on screen and returns the teardown to
+    /// run from its `beginSheet` completion — never from an onConfirm/onApply
+    /// handler, which would release the controller owning the closure that is
+    /// still running (see spec/conventions.md).
+    @discardableResult
+    func keepAlive(_ sheet: NSWindowController) -> () -> Void {
+        let key = ObjectIdentifier(sheet)
+        liveSheets[key] = sheet
+        return { [weak self] in self?.liveSheets.removeValue(forKey: key) }
+    }
+
+    /// Host window for a sheet the user just asked for, or nil when one is
+    /// already attached: AppKit would queue the second sheet behind the first
+    /// instead of refusing it, and a menu item and its key binding can both fire
+    /// while a sheet is up. Beeps so the keystroke isn't silently swallowed.
+    func sheetHost() -> NSWindow? {
+        guard let window = view.window else { return nil }
+        guard window.attachedSheet == nil else { NSSound.beep(); return nil }
+        return window
+    }
+
     func runOperation(_ op: FileOperation, on parentWindow: NSWindow? = nil, completion: @escaping () -> Void) {
         guard let window = parentWindow ?? view.window else { return }
         let sheet = ProgressSheet(operation: op)
         // Retain the window controller for the sheet's lifetime. Without this it
         // deallocates as soon as this method returns, killing its completion
         // timer (weak self) so the sheet never dismisses.
-        activeProgressSheet = sheet
+        let done = keepAlive(sheet)
 
         // Runs the post-transfer finish logic exactly once: panel refresh +
         // generic failure report (unless the coordinator handles failures itself).
@@ -3355,8 +3363,8 @@ class MainViewController: NSViewController {
         }
 
         op.start()
-        sheet.beginSheet(on: window) { [weak self] in
-            self?.activeProgressSheet = nil
+        sheet.beginSheet(on: window) {
+            done()
             if backgrounded { return }   // queue's onFinish will run finish()
             finish()
         }

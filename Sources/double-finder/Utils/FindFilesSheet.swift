@@ -509,7 +509,7 @@ final class FindFilesSheet: NSWindowController {
         window?.sheetParent?.endSheet(window!, returnCode: .cancel)
     }
 
-    func beginSheet(on parent: NSWindow) {
+    func beginSheet(on parent: NSWindow, completion: @escaping () -> Void = {}) {
         // Dismissal must stop an in-flight scan, and there are three ways out
         // (Close, Go to File, Feed to Panel) that all route through `endSheet`.
         // The completion handler is the one hook that sees every one of them:
@@ -523,6 +523,7 @@ final class FindFilesSheet: NSWindowController {
         parent.beginSheet(window!) { [weak self] _ in
             self?.searchTask?.cancel()
             self?.searchTask = nil
+            completion()
         }
         window?.makeFirstResponder(nameField)
     }
