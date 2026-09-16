@@ -83,6 +83,15 @@ echo "==> Building libusb $LIBUSB_VERSION (arch $HOST_ARCH, macOS >= $DEPLOYMENT
 tar -xjf "$SRC/$LIBUSB_FILE" -C "$BUILD"
 (
     cd "$BUILD/libusb-$LIBUSB_VERSION"
+    # configure's AC_CHECK_FUNCS is a bare link test against the SDK's .tbd
+    # stubs, so any libSystem call the SDK is newer than the deployment target
+    # for "exists", gets weak-imported, and resolves to NULL on a macOS that
+    # lacks it. The macOS 27 SDK added pipe2(): libusb then called it from
+    # usbi_create_event() and every libusb_init() -- i.e. opening Connect to
+    # Server (⌘K), which scans for Android devices -- crashed at address 0 on
+    # macOS 26 and older (2026-09-16). Force the pipe()+fcntl() fallback,
+    # which is what libusb uses on every other macOS anyway.
+    export ac_cv_func_pipe2=no
     ./configure --prefix="$DEST" --disable-static --disable-dependency-tracking \
         --disable-silent-rules >configure.log 2>&1 || { cat configure.log; exit 1; }
     make -j"$(sysctl -n hw.ncpu)" >make.log 2>&1 || { tail -50 make.log; exit 1; }
@@ -122,6 +131,15 @@ for lib in "$MTP_LIB" "$USB_LIB"; do
     echo "    $(basename "$lib"): archs $(lipo -archs "$lib"), minos $minos"
     if [ "$minos" != "$DEPLOYMENT_TARGET" ]; then
         echo "!! $(basename "$lib") was built for macOS $minos, expected $DEPLOYMENT_TARGET" >&2
+        exit 1
+    fi
+    # A weak import means configure found a libSystem call the SDK has but the
+    # deployment target does not guarantee; on an older macOS it binds to NULL
+    # and the first call crashes (pipe2 on the macOS 27 SDK, see above).
+    weak="$(nm -mu "$lib" | grep 'weak external' || true)"
+    if [ -n "$weak" ]; then
+        echo "!! $(basename "$lib") weak-imports symbols missing on macOS $DEPLOYMENT_TARGET:" >&2
+        echo "$weak" >&2
         exit 1
     fi
 done
