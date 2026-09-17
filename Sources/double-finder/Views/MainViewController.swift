@@ -314,6 +314,7 @@ class MainViewController: NSViewController {
         case .openInOther: openInOtherPanel()
         case .matchOther: matchOtherPanelToActive()
         case .openTerminal: actionOpenTerminal()
+        case .checkForUpdates: checkForUpdates_menu()
         }
     }
 
@@ -3211,6 +3212,7 @@ class MainViewController: NSViewController {
         settingsWindow = win
         return win
     }
+    @objc func checkForUpdates_menu() { AppUpdater.shared.checkNow(host: view.window) }
     @objc func openSettings_menu()    { settings().show(on: view.window) }
     @objc func openSettingsToolbar()   { settings().show(select: "toolbar",   on: view.window) }
     @objc func openSettingsShortcuts() { settings().show(select: "shortcuts", on: view.window) }

@@ -68,6 +68,11 @@ SwiftUI), inspired by the Total Commander workflow.
   (⌘⇧B).
 - **Customizable:** toolbar, keyboard shortcuts, file-type coloring, icon
   size, visible columns — all in a unified Settings window (⌘,).
+- **Auto-update:** checks GitHub Releases in the background (daily by
+  default, configurable in Settings ▸ Updates, or on demand via Double
+  Finder ▸ Check for Updates…), downloads and checksum-verifies the DMG for
+  your Mac, then — only once you confirm — replaces the app and relaunches,
+  clearing the quarantine flag so Gatekeeper doesn't prompt again.
 
 ## Requirements
 

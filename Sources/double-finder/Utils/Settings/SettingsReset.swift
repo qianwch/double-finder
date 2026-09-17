@@ -38,6 +38,9 @@ enum SettingsReset {
         "shortcuts": [],
         // Favorites are data, not preferences — never reset.
         "favorites": [],
+        "updates": [
+            "AutoUpdateEnabled", "AutoUpdateIntervalDays",
+        ],
     ]
 
     /// Key prefixes a category owns wholesale (dynamic, one key per command).
@@ -46,7 +49,7 @@ enum SettingsReset {
     ]
 
     /// Categories that offer a "Reset This Page" button, in sidebar order.
-    static let resettableCategories = ["general", "appearance", "panels", "toolbar", "shortcuts"]
+    static let resettableCategories = ["general", "appearance", "panels", "toolbar", "shortcuts", "updates"]
 
     /// Keys a reset must never touch: user data, address books, session state.
     /// Anything added here is a promise that "Reset All Settings" keeps it.

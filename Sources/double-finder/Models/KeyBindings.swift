@@ -56,7 +56,7 @@ enum AppCommand: String, CaseIterable {
     case refresh, copy, move, newDir, delete, pack, extract, find, multiRename
     case sftp, swap, branch, tree, commandLine, rename, quickLook
     case viewFull, viewBrief, viewThumbnails, filter, selectAll, newTab, closeTab
-    case openInOther, matchOther, openTerminal
+    case openInOther, matchOther, openTerminal, checkForUpdates
 
     var label: String {
         switch self {
@@ -86,6 +86,7 @@ enum AppCommand: String, CaseIterable {
         case .openInOther: return "Open Folder in Other Panel"
         case .matchOther: return "Same Folder as Active in Other Panel"
         case .openTerminal: return "Open in Terminal"
+        case .checkForUpdates: return "Check for Updates…"
         }
     }
 
@@ -110,6 +111,7 @@ enum AppCommand: String, CaseIterable {
         case .tree: return "tree"
         case .commandLine: return "commandline"
         case .openTerminal: return "terminal"
+        case .checkForUpdates: return "checkupdates"
         default: return nil
         }
     }
@@ -135,6 +137,7 @@ enum AppCommand: String, CaseIterable {
         // feedback — users reported the terminal button "doing nothing".
         case .commandLine: return "rectangle.bottomthird.inset.filled"
         case .openTerminal: return "terminal.fill"
+        case .checkForUpdates: return "arrow.down.circle"
         default: return nil
         }
     }
@@ -160,6 +163,7 @@ enum AppCommand: String, CaseIterable {
         case .tree: return "Directory Tree"
         case .commandLine: return "Command Line"
         case .openTerminal: return "Open in Terminal"
+        case .checkForUpdates: return "Check for Updates…"
         default: return nil
         }
     }
@@ -168,7 +172,7 @@ enum AppCommand: String, CaseIterable {
     /// Toolbar lists them (= `ToolbarConfig.defaultIDs` order).
     static var toolbarCommands: [AppCommand] {
         [.refresh, .copy, .move, .newDir, .delete, .pack, .extract, .find, .multiRename,
-         .sftp, .swap, .branch, .tree, .commandLine, .openTerminal]
+         .sftp, .swap, .branch, .tree, .commandLine, .openTerminal, .checkForUpdates]
     }
 
     /// Built-in default shortcut, shown for reference in the editor.
@@ -200,6 +204,7 @@ enum AppCommand: String, CaseIterable {
         case .openInOther: return "⌘⇧O"
         case .matchOther: return "⌘="
         case .openTerminal: return "⌘⇧T"
+        case .checkForUpdates: return "—"
         }
     }
 }

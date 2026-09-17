@@ -95,6 +95,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             SettingsCategory(id: "plugins", title: tr("Plugins"), symbol: "puzzlepiece.extension") {
                 PluginsSettingsView()
             },
+            SettingsCategory(id: "updates", title: tr("Updates"), symbol: "arrow.triangle.2.circlepath") {
+                UpdatesSettingsView()
+            },
         ]
     }
 

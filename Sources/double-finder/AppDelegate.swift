@@ -39,6 +39,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowController = MainWindowController(appState: appState)
         windowController.showWindow()
         setupMenus()
+        // Silent unless (and until) it actually finds something to install —
+        // see AppUpdater's doc comment for the full flow.
+        AppUpdater.shared.checkOnLaunchIfDue()
 
         // Catch external changes made while the app was in the background.
         NotificationCenter.default.addObserver(
@@ -144,6 +147,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // then the standard Hide / Quit block.
         let appMenu = NSMenu(title: "Double Finder")
         appMenu.addItem(item("About Double Finder", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        appMenu.addItem(item("Check for Updates…", #selector(menuCheckForUpdates)))
         appMenu.addItem(.separator())
         appMenu.addItem(item("Settings…", #selector(menuSettings), ","))
         appMenu.addItem(item("Customize Shortcuts…", #selector(menuCustomizeShortcuts)))
@@ -596,6 +600,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func menuSettings() {
         mainVC()?.perform(#selector(MainViewController.openSettings_menu))
+    }
+    @objc private func menuCheckForUpdates() {
+        mainVC()?.perform(#selector(MainViewController.checkForUpdates_menu))
     }
     @objc private func menuShowHelp() {
         mainVC()?.perform(#selector(MainViewController.actionShowHelp_menu))

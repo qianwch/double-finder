@@ -4,7 +4,8 @@ import AppKit
 enum ToolbarConfig {
     static let defaultIDs = ["refresh", "copy", "move", "newdir", "delete",
                              "pack", "extract", "find", "multirename",
-                             "sftp", "swap", "branch", "tree", "commandline", "terminal"]
+                             "sftp", "swap", "branch", "tree", "commandline", "terminal",
+                             "checkupdates"]
     static var ids: [String] {
         get { UserDefaults.standard.stringArray(forKey: "ToolbarButtonIDs") ?? defaultIDs }
         set { UserDefaults.standard.set(newValue, forKey: "ToolbarButtonIDs") }

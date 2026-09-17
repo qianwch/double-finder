@@ -318,6 +318,29 @@ enum AppSettings {
     static func resetCommandLineColors(dark: Bool) {
         UserDefaults.standard.removeObject(forKey: cmdLineKey(dark: dark))
     }
+
+    // MARK: - Auto-update (Settings ▸ Updates)
+
+    /// Automatically check GitHub Releases for a newer version. Default on.
+    static var autoUpdateEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "AutoUpdateEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "AutoUpdateEnabled") }
+    }
+
+    /// How often to check, in days. Default 1 (once per day).
+    static var autoUpdateIntervalDays: Int {
+        get { (UserDefaults.standard.object(forKey: "AutoUpdateIntervalDays") as? Int) ?? 1 }
+        set { UserDefaults.standard.set(newValue, forKey: "AutoUpdateIntervalDays") }
+    }
+
+    /// When the last automatic check ran; nil if never (always due).
+    static var autoUpdateLastCheckedAt: Date? {
+        get {
+            let v = UserDefaults.standard.double(forKey: "AutoUpdateLastCheckedAt")
+            return v > 0 ? Date(timeIntervalSince1970: v) : nil
+        }
+        set { UserDefaults.standard.set(newValue?.timeIntervalSince1970 ?? 0, forKey: "AutoUpdateLastCheckedAt") }
+    }
 }
 
 // MARK: - CommandLineColorRole
