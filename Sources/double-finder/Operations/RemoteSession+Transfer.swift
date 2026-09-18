@@ -26,7 +26,8 @@ extension RemoteSession {
     }
 
     /// Two different stores of the same kind that can relay through a temp file
-    /// (today: S3 ↔ S3 across services). nil = no special path, use download/upload.
+    /// (today: S3 ↔ S3 across services). nil = unsupported remote pair; the
+    /// planner must reject it, never interpret the remote target as local.
     func crossStoreProvider(to other: RemoteSession) -> TransferProvider? {
         if case .s3(let a, let sa) = self, case .s3(let b, let sb) = other {
             return S3CrossStoreProvider(srcClient: a.makeClient(secret: sa), dstClient: b.makeClient(secret: sb))

@@ -1224,8 +1224,12 @@ class MainViewController: NSViewController {
     func actionCopy() {
         let src = activePanelVC.panelState
         let dst = inactivePanelVC.panelState
-        let provider = transferProvider(forCopyFrom: src, to: dst)
-        runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst, provider: provider)
+        do {
+            let provider = try transferProvider(forCopyFrom: src, to: dst)
+            runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst, provider: provider)
+        } catch {
+            if let window = view.window { presentLocalizedError(error, in: window) }
+        }
     }
 
     /// One transfer pipeline for every backend: prune → confirm → unified conflict
@@ -1260,6 +1264,7 @@ class MainViewController: NSViewController {
         let singleName = pruned.count == 1 ? pruned[0].name : nil
         let dest0 = (destPanel.currentPath as NSString).appendingPathComponent(singleName ?? "*.*")
         let destIsLocal = destPanel.remote == nil
+        let conflictDestination: TransferConflictDestination = destIsLocal ? .local : .remote(destPanel.fs)
         // A cross-backend move runs the copy pipeline, but the user asked for a
         // move — the confirm dialog must say so, not "Download"/"Upload".
         let verb = deleteProvider == nil ? provider.verb : tr("Move")
@@ -1291,8 +1296,9 @@ class MainViewController: NSViewController {
                 return
             }
             Task { @MainActor in
-                let existing = await self.existingDestNames(of: pruned, at: dest,
-                                                            destPanel: destPanel, renameTo: renameTo)
+                guard let existing = await self.existingDestNames(of: pruned, at: dest,
+                                                                  destination: conflictDestination,
+                                                                  renameTo: renameTo) else { return }
                 let conflicts = pruned.filter { existing.contains(renameTo ?? $0.name) }
                 self.promptConflicts(conflicts) { [weak self] policy in
                     guard let self = self, let policy = policy else { return }
@@ -1321,23 +1327,18 @@ class MainViewController: NSViewController {
         }
     }
 
-    /// Names that already exist at the destination. Local dest → raw FileManager
-    /// read (incl. hidden, matches destinationExists precision); remote dest →
-    /// the destination FS listing. Failure → empty (no conflicts).
-    /// `renameTo` (single-item rename-on-transfer) makes the check target the
-    /// new name instead of the source's own.
+    /// UI boundary for conflict checking. nil means the check failed and the
+    /// transfer must stop; an empty set means it succeeded with no conflicts.
     private func existingDestNames(of items: [FileItem], at dest: String,
-                                   destPanel: PanelState, renameTo: String? = nil) async -> Set<String> {
-        if destPanel.remote == nil {
-            // Local destination: precise per-name existence (includes hidden).
-            return Set(items.compactMap { item -> String? in
-                let name = renameTo ?? item.name
-                let target = (dest as NSString).appendingPathComponent(name)
-                return FileManager.default.fileExists(atPath: target) ? name : nil
-            })
+                                   destination: TransferConflictDestination,
+                                   renameTo: String? = nil) async -> Set<String>? {
+        do {
+            return try await TransferConflictChecker.existingNames(of: items, at: dest,
+                                                                    destination: destination, renameTo: renameTo)
+        } catch {
+            if let window = view.window { presentLocalizedError(error, in: window) }
+            return nil
         }
-        let listed = (try? await destPanel.fs.listDirectory(dest)) ?? []
-        return Set(listed.map { $0.name })
     }
 
     /// True when both panels address the same filesystem namespace — both
@@ -1352,32 +1353,15 @@ class MainViewController: NSViewController {
     }
 
     /// Pick the provider for a copy from `src` panel to `dst` panel.
-    private func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) -> TransferProvider {
-        if let provider = remoteTransferProvider(from: src, to: dst, move: false) { return provider }
+    private func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) throws -> TransferProvider {
+        if let provider = try TransferPlanner.remoteProvider(from: src.remote, to: dst.remote, move: false) {
+            return provider
+        }
         // Inside an archive, or a search listing holding archive entries: copy by
         // extracting through the source FS (which routes per path in the latter).
         let archive = PanelState.archiveRoot(in: src.currentPath) != nil
             || src.searchResultsIncludeArchiveEntries
         return LocalCopyProvider(srcFS: src.fs, archiveRoot: archive)
-    }
-
-    /// The provider for a transfer touching at least one remote panel, nil when
-    /// both are local. Order: same namespace (server-side / on-device, no
-    /// round-trip) → a cross-store relay the backend offers (S3 ↔ S3) → plain
-    /// download / upload through the remote side's session.
-    private func remoteTransferProvider(from src: PanelState, to dst: PanelState, move: Bool) -> TransferProvider? {
-        switch (src.remote, dst.remote) {
-        case (let s?, let d?) where s.sharesNamespace(with: d):
-            return s.sameStoreProvider(move: move)
-        case (let s?, let d?):
-            return s.crossStoreProvider(to: d) ?? s.transferProvider(download: true)
-        case (let s?, nil):
-            return s.transferProvider(download: true)
-        case (nil, let d?):
-            return d.transferProvider(download: false)
-        case (nil, nil):
-            return nil
-        }
     }
 
     /// Routes a finished-conflict-resolution operation either to the modal
@@ -1443,9 +1427,13 @@ class MainViewController: NSViewController {
             let del = DeleteProvider(sftp: src.sftp,
                                      remoteFS: (src.remote != nil && src.sftp == nil) ? src.fs : nil,
                                      permanent: true)
-            runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst,
-                        provider: transferProvider(forCopyFrom: src, to: dst),
-                        moveDeletingWith: del)
+            do {
+                let copyProvider = try transferProvider(forCopyFrom: src, to: dst)
+                runTransfer(items: activePanelVC.selectedOrCurrent, destPanel: dst,
+                            provider: copyProvider, moveDeletingWith: del)
+            } catch {
+                if let window = view.window { presentLocalizedError(error, in: window) }
+            }
             return
         } else {
             // Entries found inside archives by a local search can't be removed
@@ -2750,8 +2738,10 @@ class MainViewController: NSViewController {
         let items = urls.compactMap { Self.localItem(at: $0.path) }
         guard !items.isEmpty else { NSSound.beep(); return }
         let provider = session.transferProvider(download: false)
+        let conflictDestination = TransferConflictDestination.remote(destPanel.fs)
         Task { @MainActor in
-            let existing = await self.existingDestNames(of: items, at: destDir, destPanel: destPanel)
+            guard let existing = await self.existingDestNames(of: items, at: destDir,
+                                                              destination: conflictDestination) else { return }
             let conflicts = items.filter { existing.contains($0.name) }
             self.promptConflicts(conflicts) { [weak self] policy in
                 guard let self = self, let policy = policy else { return }

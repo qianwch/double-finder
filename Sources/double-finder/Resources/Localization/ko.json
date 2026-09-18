@@ -521,6 +521,7 @@
   "Tools": "도구",
   "Transfer Queue": "전송 대기열",
   "Transfer failed or was cancelled": "전송에 실패했거나 취소되었습니다",
+  "Transfers between these remote locations are not supported. Copy to a local folder first.": "이 원격 위치 간 전송은 지원되지 않습니다. 먼저 로컬 폴더에 복사하세요.",
   "Unreadable": "읽을 수 없음",
   "Unselect": "선택 해제",
   "Unselect Files by Pattern": "패턴으로 파일 선택 해제",

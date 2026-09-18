@@ -521,6 +521,7 @@
   "Tools": "Werkzeuge",
   "Transfer Queue": "Übertragungswarteschlange",
   "Transfer failed or was cancelled": "Übertragung fehlgeschlagen oder abgebrochen",
+  "Transfers between these remote locations are not supported. Copy to a local folder first.": "Übertragungen zwischen diesen entfernten Speicherorten werden nicht unterstützt. Kopieren Sie die Dateien zuerst in einen lokalen Ordner.",
   "Unreadable": "Nicht lesbar",
   "Unselect": "Abwählen",
   "Unselect Files by Pattern": "Dateiauswahl nach Muster aufheben",

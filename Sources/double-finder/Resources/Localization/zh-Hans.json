@@ -521,6 +521,7 @@
   "Tools": "工具",
   "Transfer Queue": "传输队列",
   "Transfer failed or was cancelled": "传输失败或已取消",
+  "Transfers between these remote locations are not supported. Copy to a local folder first.": "暂不支持在这两个远端位置之间传输。请先复制到本地文件夹。",
   "Unreadable": "无法读取",
   "Unselect": "取消选择",
   "Unselect Files by Pattern": "按模式取消选择文件",

@@ -521,6 +521,7 @@
   "Tools": "ツール",
   "Transfer Queue": "転送キュー",
   "Transfer failed or was cancelled": "転送に失敗またはキャンセルされました",
+  "Transfers between these remote locations are not supported. Copy to a local folder first.": "これらのリモートの場所間での転送には対応していません。まずローカルフォルダにコピーしてください。",
   "Unreadable": "読み取り不可",
   "Unselect": "選択解除",
   "Unselect Files by Pattern": "パターンでファイルの選択を解除",
