@@ -36,7 +36,8 @@ extension TransferProvider {
 ///    preserving path structure below the common ancestor.
 /// 2. **Expanded items** (any `item.depth > 0`): preserve structure below the
 ///    common ancestor using `LocalFS.copyPreservingPath`.
-/// 3. **Flat** (neither of the above): byte-mode with `totalBytes` / `bytesTransferred`.
+/// 3. **Flat / renamed**: copyfile reports byte deltas to the operation's counter;
+///    directory source sizing is deferred until start(), off the main actor.
 struct LocalCopyProvider: TransferProvider {
     let srcFS: VirtualFS
     let archiveRoot: Bool
@@ -87,10 +88,12 @@ struct LocalCopyProvider: TransferProvider {
         } else if let newName = newName {
             // Single-item rename-on-copy: explicit target path.
             let target = (destPath as NSString).appendingPathComponent(newName)
-            op.totalBytes = items.reduce(0) { $0 + FileOperation.sizeOnDisk($1.path) }
-            op.bytesTransferred = { FileOperation.sizeOnDisk(target) }
-            op.perItemOperation = { path in
-                try await LocalFS().copy(from: path, toFile: target)
+            configureByteProgress(op, items: items)
+            op.perItemOperation = { [weak op] path in
+                guard let op else { return }
+                try await LocalFS().copy(from: path, toFile: target,
+                                         progress: { [weak op] in op?.reportBytes($0) },
+                                         shouldCancel: { [weak op] in op?.cancelRequested ?? true })
             }
         } else if items.contains(where: { $0.depth > 0 }) {
             // Some selected items come from expanded sub-folders: preserve
@@ -104,14 +107,36 @@ struct LocalCopyProvider: TransferProvider {
                 try await LocalFS().copyPreservingPath(from: path, toBaseDir: dest, relativePath: rel)
             }
         } else {
-            op.totalBytes = items.reduce(0) { $0 + FileOperation.sizeOnDisk($1.path) }
-            let names = items.map { $0.name }
-            let dest = destPath
-            op.bytesTransferred = {
-                names.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk((dest as NSString).appendingPathComponent($1)) }
+            configureByteProgress(op, items: items)
+            op.perItemOperation = { [weak op] path in
+                guard let op else { return }
+                let target = FileOperation.destinationURL(source: path, in: destPath).path
+                try await LocalFS().copy(from: path, toFile: target,
+                                         progress: { [weak op] in op?.reportBytes($0) },
+                                         shouldCancel: { [weak op] in op?.cancelRequested ?? true })
             }
         }
         return op
+    }
+
+    @MainActor
+    private func configureByteProgress(_ op: FileOperation, items: [FileItem]) {
+        op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+        // File-list metadata already supplies ordinary file sizes. Directories
+        // need one background source scan, never a scan of growing output trees.
+        if items.contains(where: { $0.isDirectory && !$0.isSymlink }) {
+            let paths = items.map { $0.path }
+            op.indeterminate = true
+            op.prepareByteProgress = { [weak op] in
+                guard let op else { return }
+                op.totalBytes = await Task.detached(priority: .utility) {
+                    LocalCopyProgress.totalSize(paths, shouldCancel: { op.cancelRequested })
+                }.value
+                op.indeterminate = false
+            }
+        } else {
+            op.totalBytes = items.reduce(0) { $0 + ($1.isSymlink ? 0 : $1.size) }
+        }
     }
 }
 

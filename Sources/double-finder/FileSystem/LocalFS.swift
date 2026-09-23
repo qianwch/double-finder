@@ -100,6 +100,20 @@ class LocalFS: VirtualFS {
         }.value
     }
 
+    /// Progress-capable local copy, including AFP/SMB-mounted destinations.
+    func copy(from: String, toFile target: String,
+              progress: @escaping @Sendable (Int64) -> Void,
+              shouldCancel: @escaping @Sendable () -> Bool) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            if shouldCancel() { throw CancellationError() }
+            let fm = FileManager.default
+            // lstat also recognizes dangling destination symlinks.
+            var info = stat()
+            if lstat(target, &info) == 0 { try fm.removeItem(atPath: target) }
+            try LocalCopyProgress.copy(from: from, to: target, report: progress, shouldCancel: shouldCancel)
+        }.value
+    }
+
     /// Move to an explicit target path (rename-on-move); overwrites an existing target.
     func move(from: String, toFile target: String) async throws {
         try await Task.detached(priority: .userInitiated) {

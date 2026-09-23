@@ -99,8 +99,13 @@ class FileOperation: ObservableObject {
     /// Total bytes to transfer; when > 0 with `bytesTransferred` the progress
     /// sheet shows a byte-accurate bar plus transfer speed.
     var totalBytes: Int64 = 0
-    /// Returns bytes transferred so far (typically the destination's size).
+    /// Returns bytes transferred so far. Local copy reads the locked byte counter;
+    /// UI consumers call this synchronously, so providers must avoid blocking I/O.
     var bytesTransferred: (() -> Int64)?
+
+    /// Optional one-time asynchronous sizing. Runs after the progress UI opens,
+    /// before copying; synchronous filesystem work must be detached by the caller.
+    var prepareByteProgress: (() async -> Void)?
 
     /// When true, `runOperation`'s generic failure alert is suppressed. Set by
     /// coordinators (e.g. `runExtractOperation`) that handle `op.failures` themselves
@@ -171,6 +176,7 @@ class FileOperation: ObservableObject {
             return
         }
         task = Task { @MainActor in
+            await prepareByteProgress?()
             let total = Double(sourcePaths.count)
             for (index, path) in sourcePaths.enumerated() {
                 guard !isCancelled else { break }
@@ -201,6 +207,8 @@ class FileOperation: ObservableObject {
                     case .delete:
                         try await fs.delete(path)
                     }
+                } catch is CancellationError {
+                    break
                 } catch {
                     // One item failing must NOT abort the whole batch (e.g. a
                     // single locked/permission-denied file in a large delete).
