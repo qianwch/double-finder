@@ -95,27 +95,43 @@ enum UpdateInstaller {
             .appendingPathComponent("Logs/DoubleFinderUpdater.log")
         try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(),
                                                   withIntermediateDirectories: true)
-        let q = ToolbarCommand.shellQuote
-        let script = """
-        #!/bin/sh
-        exec >> \(q(logURL.path)) 2>&1
-        echo "--- $(date) updating to \(q(source.lastPathComponent))"
-        PID=\(pid)
-        for i in $(seq 1 150); do
-            kill -0 "$PID" 2>/dev/null || break
-            sleep 0.1
-        done
-        rm -rf \(q(target.path))
-        ditto --noqtn \(q(source.path)) \(q(target.path))
-        hdiutil detach \(q(mountPoint.path)) -quiet -force
-        rm -f \(q(dmg.path))
-        open \(q(target.path))
-        rm -f "$0"
-        """
+        let script = helperScript(pid: pid, target: target, source: source,
+                                  mountPoint: mountPoint, dmg: dmg, logURL: logURL)
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("DoubleFinderUpdateHelper-\(UUID().uuidString).sh")
         try script.write(to: scriptURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
         return scriptURL
+    }
+
+    /// Pure script generation so process-lifecycle behavior can be tested
+    /// against disposable bundles without mounting or updating a real app.
+    static func helperScript(pid: Int32, target: URL, source: URL, mountPoint: URL,
+                             dmg: URL, logURL: URL, waitAttempts: Int = 150) -> String {
+        let q = ToolbarCommand.shellQuote
+        return """
+        #!/bin/sh
+        exec >> \(q(logURL.path)) 2>&1
+        set -e
+        cleanup() {
+            hdiutil detach \(q(mountPoint.path)) -quiet -force || true
+            rm -f "$0"
+        }
+        trap cleanup EXIT
+        echo "--- $(date) updating to \(q(source.lastPathComponent))"
+        PID=\(pid)
+        for i in $(seq 1 \(waitAttempts)); do
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Update aborted: old process $PID did not exit; app and download preserved."
+            exit 1
+        fi
+        rm -rf \(q(target.path))
+        ditto --noqtn \(q(source.path)) \(q(target.path))
+        rm -f \(q(dmg.path))
+        open \(q(target.path))
+        """
     }
 }

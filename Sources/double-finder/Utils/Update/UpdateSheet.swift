@@ -94,12 +94,19 @@ final class UpdateSheet: NSWindowController {
 
     func beginSheet(on parent: NSWindow, completion: @escaping () -> Void = {}) {
         guard let window else { return }
-        parent.beginSheet(window) { _ in completion() }
+        parent.beginSheet(window) { [self] response in
+            // Capture the action before completion releases the controller's
+            // keepAlive slot. Termination must happen AFTER the modal sheet
+            // has ended, on the next run-loop turn.
+            let install = response == .OK ? onInstall : nil
+            completion()
+            if let install { DispatchQueue.main.async(execute: install) }
+        }
     }
 
     func dismiss() {
         guard let window, window.sheetParent != nil else { return }
-        window.sheetParent?.endSheet(window)
+        window.sheetParent?.endSheet(window, returnCode: .cancel)
     }
 
     // MARK: - States
@@ -138,6 +145,10 @@ final class UpdateSheet: NSWindowController {
     }
 
     @objc private func cancelClicked() { onCancel?(); dismiss() }
-    @objc private func installClicked() { onInstall?(); dismiss() }
+    @objc private func installClicked() {
+        guard let window, let parent = window.sheetParent else { return }
+        installButton.isEnabled = false
+        parent.endSheet(window, returnCode: .OK)
+    }
     @objc private func laterClicked() { onLater?(); dismiss() }
 }

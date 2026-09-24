@@ -14,7 +14,20 @@ final class ListerWebView: NSView, WKNavigationDelegate {
     var onAppearanceChanged: (() -> Void)?
 
     private let webView: WKWebView
+    private let styleBar = NSView()
+    private let appearanceControl = NSSegmentedControl()
+    var showsMarkdownAppearance = false {
+        didSet {
+            styleBar.isHidden = !showsMarkdownAppearance
+            applyMarkdownAppearance()
+            needsLayout = true
+        }
+    }
     private var lastHTML = ""
+    var needsMarkdownDiagramRefresh: Bool {
+        showsMarkdownAppearance && MarkdownAppearanceOverride.needsDiagramRefresh(
+            html: lastHTML, dark: MarkdownAppearanceOverride.isDark)
+    }
     private var crashedOnce = false
 
     override init(frame: NSRect) {
@@ -37,8 +50,51 @@ final class ListerWebView: NSView, WKNavigationDelegate {
         webView.autoresizingMask = [.width, .height]
         webView.frame = bounds
         addSubview(webView)
+        styleBar.isHidden = true
+        addSubview(styleBar)
+        appearanceControl.segmentCount = 2
+        appearanceControl.setLabel(tr("Light"), forSegment: 0)
+        appearanceControl.setLabel(tr("Dark"), forSegment: 1)
+        appearanceControl.trackingMode = .selectOne
+        appearanceControl.controlSize = .small
+        appearanceControl.font = .systemFont(ofSize: 11)
+        appearanceControl.target = self
+        appearanceControl.action = #selector(appearancePicked(_:))
+        appearanceControl.sizeToFit()
+        styleBar.addSubview(appearanceControl)
+        NotificationCenter.default.addObserver(self, selector: #selector(markdownAppearanceChanged),
+                                               name: MarkdownAppearanceOverride.changed, object: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    override func layout() {
+        super.layout()
+        let barHeight: CGFloat = showsMarkdownAppearance ? 28 : 0
+        styleBar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: barHeight)
+        appearanceControl.frame.origin = NSPoint(x: max(0, bounds.width - appearanceControl.frame.width - 6),
+                                                y: (barHeight - appearanceControl.frame.height) / 2)
+        webView.frame = NSRect(x: 0, y: barHeight, width: bounds.width, height: max(0, bounds.height - barHeight))
+    }
+
+    private func applyMarkdownAppearance() {
+        let dark = MarkdownAppearanceOverride.isDark
+        webView.appearance = showsMarkdownAppearance
+            ? NSAppearance(named: dark ? .darkAqua : .aqua) : nil
+        appearanceControl.selectedSegment = dark ? 1 : 0
+    }
+
+    @objc private func markdownAppearanceChanged() {
+        guard showsMarkdownAppearance else { return }
+        applyMarkdownAppearance()
+        onAppearanceChanged?()
+    }
+
+    @objc private func appearancePicked(_ sender: NSSegmentedControl) {
+        let dark = sender.selectedSegment == 1
+        let appDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        MarkdownAppearanceOverride.wantsDark = dark == appDark ? nil : dark
+    }
 
     /// Base URL of every rendered page. A private scheme (never http/https, so
     /// relative links can never resolve to something the delegate would hand to
@@ -64,6 +120,7 @@ final class ListerWebView: NSView, WKNavigationDelegate {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        applyMarkdownAppearance()
         onAppearanceChanged?()
     }
 

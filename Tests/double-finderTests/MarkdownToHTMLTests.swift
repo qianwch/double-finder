@@ -2,6 +2,17 @@ import XCTest
 @testable import double_finder
 
 final class MarkdownToHTMLTests: XCTestCase {
+    func testDiagramThemeIsTrackedPerPage() {
+        let lightDiagram = "<!--df-markdown-diagrams:light--><html></html>"
+        let plainPage = "<html>plain</html>"
+        XCTAssertTrue(MarkdownAppearanceOverride.needsDiagramRefresh(html: lightDiagram, dark: true))
+        XCTAssertFalse(MarkdownAppearanceOverride.needsDiagramRefresh(html: plainPage, dark: true))
+        XCTAssertTrue(MarkdownAppearanceOverride.needsDiagramRefresh(html: lightDiagram, dark: true))
+        XCTAssertFalse(MarkdownAppearanceOverride.needsDiagramRefresh(html: lightDiagram, dark: false))
+        XCTAssertTrue(MarkdownAppearanceOverride.needsDiagramRefresh(
+            html: "<!--df-markdown-diagrams:dark--><html></html>", dark: false))
+    }
+
     private func body(_ md: String) -> String { MarkdownToHTML.render(md, baseDir: nil) }
 
     func testHeadings() {
@@ -14,6 +25,15 @@ final class MarkdownToHTMLTests: XCTestCase {
         let h = body("line a\nline b\n\nsecond para")
         XCTAssertTrue(h.contains("<p>line a\nline b</p>"))
         XCTAssertTrue(h.contains("<p>second para</p>"))
+    }
+
+    func testTwoSpaceHardBreaksInCRLFParagraph() {
+        let h = body("　　供应商表  \r\n　　账簿表  \r\n　　科目表  \r\n")
+        XCTAssertTrue(h.contains("<p>　　供应商表<br>\n　　账簿表<br>\n　　科目表  </p>"))
+    }
+
+    func testSingleTrailingSpaceRemainsSoftBreak() {
+        XCTAssertTrue(body("first \nsecond").contains("<p>first \nsecond</p>"))
     }
 
     func testFencedCodeBlockHighlighted() {

@@ -152,7 +152,15 @@ enum MarkdownToHTML {
             out.add("<p>")
             for (n, p) in paragraph.enumerated() {
                 if n > 0 { out.append(0x0A) }
-                inline(p, baseDir: baseDir, into: &out)
+                // Two trailing ASCII spaces request a hard break only when
+                // another line follows in this paragraph (not at block end).
+                if n + 1 < paragraph.count, p.hasSuffix("  ") {
+                    let content = p.dropLast(p.utf8.reversed().prefix { $0 == 0x20 }.count)
+                    inline(content, baseDir: baseDir, into: &out)
+                    out.add("<br>")
+                } else {
+                    inline(p, baseDir: baseDir, into: &out)
+                }
             }
             out.add("</p>\n")
             paragraph = []

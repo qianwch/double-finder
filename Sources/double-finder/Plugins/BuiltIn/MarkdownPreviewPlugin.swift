@@ -1,6 +1,41 @@
 import AppKit
 import DoubleFinderPluginKit
 
+/// Markdown page appearance, independent of the PDF preference; absent means follow the app.
+enum MarkdownAppearanceOverride {
+    static let defaultsKey = "MarkdownAppearance"
+    static let changed = Notification.Name("MarkdownAppearanceChanged")
+
+    /// nil = follow the app's appearance.
+    @MainActor static var wantsDark: Bool? {
+        get {
+            switch UserDefaults.standard.string(forKey: defaultsKey) {
+            case "dark": return true
+            case "light": return false
+            default: return nil
+            }
+        }
+        set {
+            guard newValue != wantsDark else { return }
+            if let newValue {
+                UserDefaults.standard.set(newValue ? "dark" : "light", forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            }
+            NotificationCenter.default.post(name: changed, object: nil)
+        }
+    }
+
+    static func needsDiagramRefresh(html: String, dark: Bool) -> Bool {
+        html.hasPrefix("<!--df-markdown-diagrams:\(dark ? "light" : "dark")-->")
+    }
+
+    /// Both the page CSS and diagram SVGs use this same effective theme.
+    @MainActor static var isDark: Bool {
+        wantsDark ?? (NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+    }
+}
+
 /// Built-in page viewer: Markdown (`.md` / `.markdown`) and standalone diagram
 /// sources (`.mmd` / `.puml` / `.plantuml`) rendered as a page in the Lister.
 /// Phase 1 returns the converted document with diagram placeholders (source
@@ -27,19 +62,13 @@ final class MarkdownPreviewPlugin: NSObject, DFPlugin {
 }
 
 /// The `PageViewerPlugin` behind `MarkdownPreviewPlugin`. Thread-safe by
-/// construction: `renderPage` touches only locals; `lastDiagramDark` is the one
-/// shared field and is guarded.
+/// construction: render and diagram theme state live in each returned page.
 final class MarkdownPageViewer: PageViewerPlugin, @unchecked Sendable {
     let identifier = "markdown"
     var displayName: String { MainActor.assumeIsolated { tr("Markdown Preview") } }
 
     /// Max size read fully into memory to render (design §4.1).
     static let maxBytes = 50 << 20
-
-    /// Theme baked into the SVGs of the page currently showing; nil = the last
-    /// page had no rendered diagrams (its CSS adapts by itself).
-    private var lastDiagramDark: Bool?
-    private let lock = NSLock()
 
     /// Which markup a file holds by extension; nil = not ours.
     enum Kind { case markdown, diagram(DiagramKind) }
@@ -83,7 +112,6 @@ final class MarkdownPageViewer: PageViewerPlugin, @unchecked Sendable {
             doc = MarkdownToHTML.renderDocument("```\(fence)\n\(text)\n```", baseDir: nil, isCancelled: isCancelled)
         }
         if isCancelled() { throw CancellationError() }
-        lock.withLock { lastDiagramDark = nil }
         if !doc.diagrams.isEmpty {
             resolveDiagrams(doc, standalone: standalone, isCancelled: isCancelled, update: update)
         }
@@ -99,7 +127,7 @@ final class MarkdownPageViewer: PageViewerPlugin, @unchecked Sendable {
                                  isCancelled: @escaping @Sendable () -> Bool,
                                  update: @escaping @Sendable (Result<String, Error>) -> Void) {
         Task { @MainActor [weak self] in
-            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let dark = MarkdownAppearanceOverride.isDark
             var results: [Int: MarkdownToHTML.DiagramSubstitute] = [:]
             var failureNote: String?
             for (idx, block) in doc.diagrams.enumerated() {
@@ -114,6 +142,12 @@ final class MarkdownPageViewer: PageViewerPlugin, @unchecked Sendable {
                 }
             }
             guard let self, !isCancelled() else { return }
+            // An appearance switch during the asynchronous render must never
+            // publish SVGs made for the previous theme.
+            guard dark == MarkdownAppearanceOverride.isDark else {
+                resolveDiagrams(doc, standalone: standalone, isCancelled: isCancelled, update: update)
+                return
+            }
             if standalone, let note = failureNote {
                 update(.failure(PageError(note)))
                 return
@@ -122,19 +156,12 @@ final class MarkdownPageViewer: PageViewerPlugin, @unchecked Sendable {
             // Only count the theme as "baked in" when at least one SVG landed —
             // an all-failure page has nothing theme-dependent to re-render.
             let anySVG = results.values.contains { if case .svg = $0 { return true } else { return false } }
-            self.lock.withLock { self.lastDiagramDark = anySVG ? dark : nil }
-            update(.success(MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams, results: results)))
+            let marker = anySVG ? "<!--df-markdown-diagrams:\(dark ? "dark" : "light")-->" : ""
+            update(.success(marker + MarkdownToHTML.substituteDiagrams(doc.html, diagrams: doc.diagrams, results: results)))
         }
     }
 
-    /// Mermaid themes are BAKED into the rendered SVG (unlike the page CSS,
-    /// which adapts via prefers-color-scheme): re-render when the shown SVGs
-    /// were made for the other appearance. Cache keyed by theme makes it instant.
-    func needsRerenderOnAppearanceChange() -> Bool {
-        guard let last = lock.withLock({ lastDiagramDark }) else { return false }
-        let dark = MainActor.assumeIsolated { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
-        return dark != last
-    }
+
 }
 
 /// Error whose `localizedDescription` is the status-bar note the host should

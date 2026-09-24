@@ -868,6 +868,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// it). A throw / failed update shows its message and falls back to the
     /// chooser's mode for the file (md → source, epub → QL, mobi → hex).
     private func startPageRender(_ viewer: PageViewerPlugin, url: URL) {
+        mdWebView?.showsMarkdownAppearance = viewer is MarkdownPageViewer
         let gen = pageGeneration
         let cancel = CancelFlag()
         pageCancel = cancel
@@ -935,7 +936,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     /// current page when the plugin says its output depends on the appearance
     /// (mermaid SVGs are baked for one theme; the SVG cache makes it instant).
     private func appearanceChangedInPreview() {
-        guard shouldShowWeb(), let viewer = pageViewer, viewer.needsRerenderOnAppearanceChange() else { return }
+        guard shouldShowWeb(), let viewer = pageViewer,
+              mdWebView?.needsMarkdownDiagramRefresh == true || viewer.needsRerenderOnAppearanceChange() else { return }
         setMode(.plugin, auto: true)
     }
 

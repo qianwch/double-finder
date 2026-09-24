@@ -106,7 +106,8 @@ final class QuickViewPane: NSView {
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         // Pages whose output bakes the appearance in (Markdown diagrams) ask
         // to be rendered again; CSS-adaptive pages (ebooks) need nothing.
-        if let page = currentPage, webView?.isHidden == false, page.viewer.needsRerenderOnAppearanceChange() {
+        if let page = currentPage, webView?.isHidden == false,
+           webView?.needsMarkdownDiagramRefresh == true || page.viewer.needsRerenderOnAppearanceChange() {
             startPageRender(page.viewer, url: page.url, title: page.title)
         }
     }
@@ -203,6 +204,12 @@ final class QuickViewPane: NSView {
             guard let self, let page = self.currentPage else { return }
             self.pageRenderFailed(PageError("Preview failed"), title: page.title, url: page.url)
         }
+        wv.onAppearanceChanged = { [weak self] in
+            guard let self, let page = self.currentPage,
+                  self.webView?.isHidden == false,
+                  self.webView?.needsMarkdownDiagramRefresh == true || page.viewer.needsRerenderOnAppearanceChange() else { return }
+            self.startPageRender(page.viewer, url: page.url, title: page.title)
+        }
         addSubview(wv)
         pin(wv)
         webView = wv
@@ -221,6 +228,7 @@ final class QuickViewPane: NSView {
         webCancel = cancel
         currentPage = (viewer, url, title)
         let wv = ensureWebView()
+        wv.showsMarkdownAppearance = viewer is MarkdownPageViewer
         wv.isHidden = true
         wv.loadHTML("")                         // never show the previous file's page under the new title
         loadingDelay = Task { @MainActor [weak self] in
