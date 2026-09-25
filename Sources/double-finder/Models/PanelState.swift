@@ -67,13 +67,18 @@ class PanelState: ObservableObject {
 
     /// Normalized memory key — resolves symlinks (e.g. /tmp → /private/tmp) so a
     /// directory matches whether reached directly or via a child's resolved path.
-    static func memoryKey(_ path: String) -> String {
+    nonisolated static func memoryKey(_ path: String) -> String {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().path
     }
 
+    // Resolve symlinks only while loading in the background. Cursor movement,
+    // selection and redraws must never stat an unresponsive mounted share.
+    private var memoryKeys: [String: String] = [:]
+    var currentMemoryKey: String { memoryKeys[currentPath] ?? currentPath }
+
     private func rememberCursor() {
         if let name = currentItem?.name, name != ".." {
-            cursorMemory[Self.memoryKey(currentPath)] = name
+            cursorMemory[currentMemoryKey] = name
         }
     }
 
@@ -527,7 +532,13 @@ class PanelState: ObservableObject {
     /// and auto-refresh) the cursor and selection are restored by file name, so
     /// an external change doesn't make them jump; navigation passes false to
     /// reset to the top.
+    private var loadGeneration = 0
+
     func loadDirectory(preserveSelection: Bool = false) {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let sourceFS = fs
+        let local = !isRemote
         // Navigating to a new directory drops any in-place expansion; a refresh
         // (preserveSelection) keeps it.
         if !preserveSelection { clearExpansion() }
@@ -570,47 +581,56 @@ class PanelState: ObservableObject {
                         Self.branchItems(root: path, showHidden: showHiddenSnapshot)
                     }.value
                 } else {
-                    loaded = try await fs.listDirectory(path)
+                    loaded = try await sourceFS.listDirectory(path)
                     if !showHidden { loaded = loaded.filter { !$0.isHidden } }
                 }
-                let sorted = sortItems(loaded)
+                guard generation == loadGeneration else { return }
+                let pathKey = await Task.detached(priority: .utility) {
+                    local ? Self.memoryKey(path) : path
+                }.value
                 // On a refresh, also re-read the children of any expanded folders,
                 // so in-place edits inside them (rename/create/delete) show up —
                 // the expandedChildren cache would otherwise stay stale.
                 var reloadedChildren: [String: [FileItem]] = [:]
                 if preserveSelection && !self.expandedPaths.isEmpty {
                     for p in self.expandedPaths {
-                        if var kids = try? await self.fs.listDirectory(p) {
+                        if var kids = try? await sourceFS.listDirectory(p) {
                             if !self.showHidden { kids = kids.filter { !$0.isHidden } }
-                            reloadedChildren[p] = self.sortItems(kids)
+                            reloadedChildren[p] = kids
                         }
                     }
                 }
-                await MainActor.run {
-                    self.allLoadedItems = sorted   // full list cache (sorted, no "..", no text filter)
-                    for (k, v) in reloadedChildren { self.expandedChildren[k] = v }
-                    self.isLoading = false
-                    // On refresh keep the current cursor; on navigation restore the
-                    // remembered cursor for this path (so back/up lands where you were).
-                    // An explicit one-shot request (e.g. F7 new directory) wins over both.
-                    var cursorName = preserveSelection ? prevCursorName : self.cursorMemory[Self.memoryKey(path)]
-                    if let pending = pendingCursor {
-                        cursorName = pending
-                        self.pendingScrollToCursor = true
-                    }
-                    self.rebuildItems(selectedNames: prevSelectedNames, cursorName: cursorName, sizes: prevSizes)
-                    self.watcher.watch(path)
-                    self.rememberVolumePath(path)
-                    // A load also means "something may have changed on disk"
-                    // (navigation, F5 refresh, post-copy/delete refresh, watcher).
-                    self.refreshDiskSpace()
+                let childPaths = Array(reloadedChildren.keys)
+                let sortedGroups = await sortGroupsForDisplay([loaded] + childPaths.map { reloadedChildren[$0]! })
+                guard generation == self.loadGeneration else { return }
+                self.memoryKeys[path] = pathKey
+                self.allLoadedItems = sortedGroups[0]   // full list cache (sorted, no "..", no text filter)
+                for (index, path) in childPaths.enumerated() where self.expandedPaths.contains(path) {
+                    self.expandedChildren[path] = sortedGroups[index + 1]
                 }
+                self.isLoading = false
+                // On refresh keep the current cursor; on navigation restore the
+                // remembered cursor for this path (so back/up lands where you were).
+                // An explicit one-shot request (e.g. F7 new directory) wins over both.
+                var cursorName = preserveSelection ? prevCursorName : self.cursorMemory[pathKey]
+                if let pending = pendingCursor {
+                    cursorName = pending
+                    self.pendingScrollToCursor = true
+                }
+                self.rebuildItems(selectedNames: prevSelectedNames, cursorName: cursorName, sizes: prevSizes)
+                self.watcher.watch(path)
+                self.rememberVolumePath(path)
+                // A load also means "something may have changed on disk"
+                // (navigation, F5 refresh, post-copy/delete refresh, watcher).
+                self.refreshDiskSpace()
             } catch let enc as ArchiveEncryptedError {
+                guard generation == loadGeneration else { return }
                 await MainActor.run {
                     self.isLoading = false
                     self.onNeedsPassword?(enc.archivePath)   // prompt; keeps current view until answered
                 }
             } catch {
+                guard generation == loadGeneration else { return }
                 await MainActor.run {
                     self.isLoading = false
                     let remote = self.isRemote
@@ -706,17 +726,18 @@ class PanelState: ObservableObject {
     }
 
     private func loadChildren(_ path: String) {
+        let generation = loadGeneration
+        let sourceFS = fs
         Task {
             var kids: [FileItem] = []
             do {
-                var loaded = try await fs.listDirectory(path)
+                var loaded = try await sourceFS.listDirectory(path)
                 if !showHidden { loaded = loaded.filter { !$0.isHidden } }
-                kids = sortItems(loaded)
+                kids = await sortItemsForDisplay(loaded)
             } catch { kids = [] }
-            await MainActor.run {
-                self.expandedChildren[path] = kids
-                self.rebuildPreservingState()
-            }
+            guard generation == loadGeneration, expandedPaths.contains(path) else { return }
+            self.expandedChildren[path] = kids
+            self.rebuildPreservingState()
         }
     }
 
@@ -808,7 +829,7 @@ class PanelState: ObservableObject {
             expandedPaths = expandedPaths.filter { $0 != oldPath && !$0.hasPrefix(oldPath) }
             expandedChildren = expandedChildren.filter { $0.key != oldPath && !$0.key.hasPrefix(oldPath) }
         }
-        cursorMemory[Self.memoryKey(currentPath)] = newName
+        cursorMemory[currentMemoryKey] = newName
         rebuildItems(selectedNames: [], cursorName: newPath, sizes: [:])
     }
 
@@ -1156,35 +1177,76 @@ class PanelState: ObservableObject {
         rebuildItems(selectedNames: selectedNames, cursorName: cursorName, sizes: sizes)
     }
 
+    /// Snapshot UI settings before sorting on a worker; no UserDefaults reads
+    /// inside the O(n log n) comparator and no sorting on the UI actor during IO refreshes.
+    func sortItemsForDisplay(_ items: [FileItem]) async -> [FileItem] {
+        await sortGroupsForDisplay([items])[0]
+    }
+
+    private func sortGroupsForDisplay(_ groups: [[FileItem]]) async -> [[FileItem]] {
+        while true {
+            let column = sortColumn
+            let ascending = sortAscending
+            let foldersFirst = AppSettings.foldersFirst
+            let sorted = await Task.detached(priority: .userInitiated) {
+                groups.map { Self.sortedItems($0, column: column, ascending: ascending, foldersFirst: foldersFirst) }
+            }.value
+            // A header click while the worker was running wins over its snapshot.
+            if column == sortColumn, ascending == sortAscending, foldersFirst == AppSettings.foldersFirst {
+                return sorted
+            }
+        }
+    }
+
     func sortItems(_ items: [FileItem]) -> [FileItem] {
+        Self.sortedItems(items, column: sortColumn, ascending: sortAscending,
+                         foldersFirst: AppSettings.foldersFirst)
+    }
+
+    nonisolated static func sortedItems(_ items: [FileItem], column: SortColumn,
+                                        ascending: Bool, foldersFirst: Bool) -> [FileItem] {
+        // Type descriptions may query LaunchServices. Resolve each distinct
+        // extension once, rather than for both operands on every comparison.
+        var kinds: [String: String] = [:]
+        if column == .kind {
+            for item in items where !item.isDirectory && !item.isSymlink {
+                let ext = (item.name as NSString).pathExtension
+                if kinds[ext] == nil { kinds[ext] = item.kind }
+            }
+        }
+        func kind(_ item: FileItem) -> String {
+            if item.isDirectory { return "Folder" }
+            if item.isSymlink { return "Alias" }
+            return kinds[(item.name as NSString).pathExtension] ?? "Document"
+        }
         return items.sorted { a, b in
             // ".." parent entry always first.
-            if a.name == ".." { return true }
+            if a.name == ".." { return b.name != ".." }
             if b.name == ".." { return false }
             // Folders before files, unless intermixing is enabled.
-            if AppSettings.foldersFirst, a.isDirectory != b.isDirectory {
+            if foldersFirst, a.isDirectory != b.isDirectory {
                 return a.isDirectory
             }
-            switch sortColumn {
+            switch column {
             case .name:
                 let result = a.name.localizedCaseInsensitiveCompare(b.name)
-                return sortAscending ? result == .orderedAscending : result == .orderedDescending
+                return ascending ? result == .orderedAscending : result == .orderedDescending
             case .size:
-                return sortAscending ? a.effectiveSize < b.effectiveSize : a.effectiveSize > b.effectiveSize
+                return ascending ? a.effectiveSize < b.effectiveSize : a.effectiveSize > b.effectiveSize
             case .modified:
-                return sortAscending ? a.modified < b.modified : a.modified > b.modified
+                return ascending ? a.modified < b.modified : a.modified > b.modified
             case .dateAdded:
                 // Missing dates sort to the bottom in ascending order.
                 let l = a.dateAdded ?? .distantPast
                 let r = b.dateAdded ?? .distantPast
-                return sortAscending ? l < r : l > r
+                return ascending ? l < r : l > r
             case .dateCreated:
                 let l = a.dateCreated ?? .distantPast
                 let r = b.dateCreated ?? .distantPast
-                return sortAscending ? l < r : l > r
+                return ascending ? l < r : l > r
             case .kind:
-                let result = a.kind.localizedCaseInsensitiveCompare(b.kind)
-                return sortAscending ? result == .orderedAscending : result == .orderedDescending
+                let result = kind(a).localizedCaseInsensitiveCompare(kind(b))
+                return ascending ? result == .orderedAscending : result == .orderedDescending
             }
         }
     }

@@ -67,38 +67,45 @@ struct AndroidTransferProvider: TransferProvider {
 
         case .upload:
             op.transferUnitsProvider = {
-                var units: [FileOperation.Unit] = []
-                let fm = FileManager.default
-                for item in items {
-                    var isDir: ObjCBool = false
-                    fm.fileExists(atPath: item.path, isDirectory: &isDir)
-                    if isDir.boolValue {
-                        let root = item.path
-                        let rootName = newName ?? item.name
-                        let subs = (fm.subpaths(atPath: root) ?? []).filter { sub in
-                            var d: ObjCBool = false
-                            fm.fileExists(atPath: (root as NSString).appendingPathComponent(sub),
-                                          isDirectory: &d)
-                            return !d.boolValue
-                        }
-                        for sub in subs {
-                            let full = (root as NSString).appendingPathComponent(sub)
-                            let remoteDir = MTPPath(dest).appending(rootName).raw
-                                + ((sub as NSString).deletingLastPathComponent.isEmpty
-                                   ? "" : "/" + (sub as NSString).deletingLastPathComponent)
+                let preparation = Task.detached(priority: .userInitiated) { () -> [FileOperation.Unit] in
+                    var units: [FileOperation.Unit] = []
+                    let fm = FileManager.default
+                    for item in items {
+                            if Task.isCancelled { return [] }
+                        var isDir: ObjCBool = false
+                        fm.fileExists(atPath: item.path, isDirectory: &isDir)
+                        if isDir.boolValue {
+                            let root = item.path
+                            let rootName = newName ?? item.name
+                            guard let entries = fm.enumerator(atPath: root) else { continue }
+                            while let sub = entries.nextObject() as? String {
+                                if Task.isCancelled { return [] }
+                                let full = (root as NSString).appendingPathComponent(sub)
+                                var directory: ObjCBool = false
+                                fm.fileExists(atPath: full, isDirectory: &directory)
+                                if directory.boolValue { continue }
+                                let remoteDir = MTPPath(dest).appending(rootName).raw
+                                    + ((sub as NSString).deletingLastPathComponent.isEmpty
+                                       ? "" : "/" + (sub as NSString).deletingLastPathComponent)
+                                units.append(Self.uploadUnit(registry: registry, sessionID: sessionID,
+                                                             local: full, remoteDir: remoteDir,
+                                                             name: (sub as NSString).lastPathComponent,
+                                                             size: FileOperation.sizeOnDisk(full)))
+                            }
+                        } else {
                             units.append(Self.uploadUnit(registry: registry, sessionID: sessionID,
-                                                         local: full, remoteDir: remoteDir,
-                                                         name: (sub as NSString).lastPathComponent,
-                                                         size: FileOperation.sizeOnDisk(full)))
+                                                         local: item.path, remoteDir: MTPPath(dest).raw,
+                                                         name: newName ?? item.name,
+                                                         size: FileOperation.sizeOnDisk(item.path)))
                         }
-                    } else {
-                        units.append(Self.uploadUnit(registry: registry, sessionID: sessionID,
-                                                     local: item.path, remoteDir: MTPPath(dest).raw,
-                                                     name: newName ?? item.name,
-                                                     size: FileOperation.sizeOnDisk(item.path)))
                     }
+                    return units
                 }
-                return units
+                return await withTaskCancellationHandler {
+                    await preparation.value
+                } onCancel: {
+                    preparation.cancel()
+                }
             }
         }
 
@@ -132,7 +139,7 @@ struct AndroidTransferProvider: TransferProvider {
     -> FileOperation.Unit {
         FileOperation.Unit(label: (remote as NSString).lastPathComponent, bytes: size) { report in
             let dir = (local as NSString).deletingLastPathComponent
-            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try await LocalFS().createDirectory(dir)
             try await registry.download(sessionID, path: remote, to: local,
                                         progress: clamped(size, report))
         }

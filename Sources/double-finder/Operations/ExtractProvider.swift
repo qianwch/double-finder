@@ -18,7 +18,7 @@ struct ExtractProvider {
             if intoSubfolders {
                 let base = FileItem.archiveBaseName(of: (path as NSString).lastPathComponent)
                 target = (destPath as NSString).appendingPathComponent(base)
-                try? FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: true)
+                try await LocalFS().createDirectory(target)
             } else {
                 target = destPath
             }

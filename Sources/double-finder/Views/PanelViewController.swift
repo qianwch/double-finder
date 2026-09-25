@@ -598,7 +598,7 @@ class PanelViewController: NSViewController {
     }
 
     func updateDisplay() {
-        let newPath = PanelState.memoryKey(panelState.currentPath)
+        let newPath = panelState.currentMemoryKey
         let pathChanged = newPath != lastDisplayedPath
         // Dismiss the quick-filter bar when the directory changes.
         if pathChanged && filterField != nil && !filterField.isHidden {
@@ -804,7 +804,7 @@ class PanelViewController: NSViewController {
         driveStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard AppSettings.showDriveBar else { return }
         // On a remote connection (SFTP/S3) no local volume is "current".
-        let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
+        let current = panelState.isRemote ? nil : Volumes.mountPoint(of: panelState.currentPath)
         // Every open remote session (app-global) leads the bar as its own "drive",
         // the one this panel is in highlighted; ⏏ disconnects the session app-wide.
         let activeID = panelState.activeRemoteSessionID
@@ -1084,7 +1084,7 @@ class PanelViewController: NSViewController {
             menu.addItem(item)
         }
         if !sessions.isEmpty || !pluginDrives.isEmpty { menu.addItem(.separator()) }
-        let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
+        let current = panelState.isRemote ? nil : Volumes.mountPoint(of: panelState.currentPath)
         for vol in Volumes.mounted() {
             let item = NSMenuItem(title: vol.menuTitle, action: #selector(driveMenuSelected(_:)), keyEquivalent: "")
             item.target = self
@@ -1117,7 +1117,7 @@ class PanelViewController: NSViewController {
     /// session id — the namespaces can't collide (ids have a scheme prefix).
     private func updateDriveSelection() {
         guard driveStack != nil, AppSettings.showDriveBar else { return }
-        let current = panelState.isRemote ? nil : Volumes.containing(panelState.currentPath)?.url.path
+        let current = panelState.isRemote ? nil : Volumes.mountPoint(of: panelState.currentPath)
         let activeID = panelState.activeRemoteSessionID
         for sub in driveStack.arrangedSubviews {
             // Plain button, or the nav button is the first item of an ejectable row.

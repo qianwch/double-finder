@@ -70,7 +70,7 @@ struct LocalCopyProvider: TransferProvider {
                 let rel = LocalFS.relativePath(path, base: base)
                 let relParent = (rel as NSString).deletingLastPathComponent
                 let targetDir = relParent.isEmpty ? dest : (dest as NSString).appendingPathComponent(relParent)
-                try FileManager.default.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
+                try await LocalFS().createDirectory(targetDir)
                 try await capturedSrcFS.copy(from: path, to: targetDir)
                 // Rename-on-copy: ZipFS extracts under the entry's own name;
                 // move the extracted result to the requested one.
@@ -79,9 +79,7 @@ struct LocalCopyProvider: TransferProvider {
                         .appendingPathComponent((path as NSString).lastPathComponent)
                     let target = (targetDir as NSString).appendingPathComponent(newName)
                     if extracted != target {
-                        let fm = FileManager.default
-                        if fm.fileExists(atPath: target) { try fm.removeItem(atPath: target) }
-                        try fm.moveItem(atPath: extracted, toPath: target)
+                        try await LocalFS().move(from: extracted, toFile: target)
                     }
                 }
             }
@@ -318,107 +316,115 @@ struct S3TransferProvider: TransferProvider {
         let newName = items.count == 1 ? renameTo : nil
 
         op.transferUnitsProvider = {
-            var units: [FileOperation.Unit] = []
-            if capturedDownloading {
-                // Each selected S3 item → file units.
-                for item in items {
-                    let (b, key) = parseS3Path(item.path)
-                    guard let b = b else { continue }
-                    if item.isDirectory || key.hasSuffix("/") {
-                        let folderKey = key.hasSuffix("/") ? key : key + "/"
-                        // M3: surface listing failures instead of silently yielding zero units.
-                        // listAllObjects (not listAllKeys) so each unit carries its byte
-                        // size for the progress sheet's transfer-speed readout.
-                        let objs: [S3ObjectInfo]
-                        do {
-                            objs = try await capturedClient.listAllObjects(bucket: b, prefix: folderKey)
-                        } catch {
-                            let capturedError = error
-                            units.append(FileOperation.Unit(label: item.name) { _ in
-                                throw capturedError
-                            })
-                            continue
-                        }
-                        for o in objs where !o.key.hasSuffix("/") {
-                            let k = o.key
-                            let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
+            let preparation = Task.detached(priority: .userInitiated) { () -> [FileOperation.Unit] in
+                var units: [FileOperation.Unit] = []
+                if capturedDownloading {
+                    // Each selected S3 item → file units.
+                    for item in items {
+                        if Task.isCancelled { return [] }
+                        let (b, key) = parseS3Path(item.path)
+                        guard let b = b else { continue }
+                        if item.isDirectory || key.hasSuffix("/") {
+                            let folderKey = key.hasSuffix("/") ? key : key + "/"
+                            // M3: surface listing failures instead of silently yielding zero units.
+                            // listAllObjects (not listAllKeys) so each unit carries its byte
+                            // size for the progress sheet's transfer-speed readout.
+                            let objs: [S3ObjectInfo]
+                            do {
+                                objs = try await capturedClient.listAllObjects(bucket: b, prefix: folderKey)
+                            } catch {
+                                let capturedError = error
+                                units.append(FileOperation.Unit(label: item.name) { _ in
+                                    throw capturedError
+                                })
+                                continue
+                            }
+                            for o in objs where !o.key.hasSuffix("/") {
+                            if Task.isCancelled { return [] }
+                                let k = o.key
+                                let local = S3TransferPlanner.downloadLocalPath(key: k, folderKey: folderKey,
+                                                                                destDir: destPath,
+                                                                                renameTo: newName)
+                                // C1: reject keys that escape the destination directory.
+                                guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
+                                    units.append(FileOperation.Unit(label: k) { _ in
+                                        throw FSUnsupportedError(message: "Unsafe path in key: \(k)")
+                                    })
+                                    continue
+                                }
+                                let sz = o.size
+                                units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent, bytes: sz) { report in
+                                    let dir = (local as NSString).deletingLastPathComponent
+                                    try await LocalFS().createDirectory(dir)
+                                    try await capturedClient.getObject(bucket: b, key: k, toLocalPath: local, progress: report)
+                                })
+                            }
+                        } else {
+                            let local = S3TransferPlanner.downloadLocalPath(key: key, folderKey: nil,
                                                                             destDir: destPath,
                                                                             renameTo: newName)
                             // C1: reject keys that escape the destination directory.
                             guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
-                                units.append(FileOperation.Unit(label: k) { _ in
-                                    throw FSUnsupportedError(message: "Unsafe path in key: \(k)")
+                                units.append(FileOperation.Unit(label: key) { _ in
+                                    throw FSUnsupportedError(message: "Unsafe path in key: \(key)")
                                 })
                                 continue
                             }
-                            let sz = o.size
-                            units.append(FileOperation.Unit(label: (k as NSString).lastPathComponent, bytes: sz) { report in
+                            // M1: ensure parent directory exists before writing the file.
+                            let sz = item.size
+                            units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent, bytes: sz) { report in
                                 let dir = (local as NSString).deletingLastPathComponent
-                                try FileManager.default.createDirectory(atPath: dir,
-                                                                        withIntermediateDirectories: true)
-                                try await capturedClient.getObject(bucket: b, key: k, toLocalPath: local, progress: report)
+                                try await LocalFS().createDirectory(dir)
+                                try await capturedClient.getObject(bucket: b, key: key, toLocalPath: local, progress: report)
                             })
                         }
-                    } else {
-                        let local = S3TransferPlanner.downloadLocalPath(key: key, folderKey: nil,
-                                                                        destDir: destPath,
-                                                                        renameTo: newName)
-                        // C1: reject keys that escape the destination directory.
-                        guard S3TransferPlanner.isWithin(local, destDir: destPath) else {
-                            units.append(FileOperation.Unit(label: key) { _ in
-                                throw FSUnsupportedError(message: "Unsafe path in key: \(key)")
-                            })
-                            continue
-                        }
-                        // M1: ensure parent directory exists before writing the file.
-                        let sz = item.size
-                        units.append(FileOperation.Unit(label: (key as NSString).lastPathComponent, bytes: sz) { report in
-                            let dir = (local as NSString).deletingLastPathComponent
-                            try FileManager.default.createDirectory(atPath: dir,
-                                                                    withIntermediateDirectories: true)
-                            try await capturedClient.getObject(bucket: b, key: key, toLocalPath: local, progress: report)
-                        })
                     }
-                }
-            } else {
-                // Upload: each selected local item → file units; dest is /bucket/prefix.
-                let (db, dkDirRaw) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
-                guard let db = db else { return units }
-                let destPrefix = dkDirRaw
-                for item in items {
-                    var isDir: ObjCBool = false
-                    FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir)
-                    if isDir.boolValue {
-                        let root = item.path
-                        let files = (FileManager.default.subpaths(atPath: root) ?? []).compactMap { sub -> String? in
-                            let full = (root as NSString).appendingPathComponent(sub)
-                            var d: ObjCBool = false
-                            FileManager.default.fileExists(atPath: full, isDirectory: &d)
-                            return d.boolValue ? nil : full
-                        }
-                        for f in files {
-                            let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
+                } else {
+                    // Upload: each selected local item → file units; dest is /bucket/prefix.
+                    let (db, dkDirRaw) = parseS3Path(destPath.hasSuffix("/") ? destPath : destPath + "/")
+                    guard let db = db else { return units }
+                    let destPrefix = dkDirRaw
+                    for item in items {
+                        if Task.isCancelled { return [] }
+                        var isDir: ObjCBool = false
+                        FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir)
+                        if isDir.boolValue {
+                            let root = item.path
+                            guard let entries = FileManager.default.enumerator(atPath: root) else { continue }
+                            while let sub = entries.nextObject() as? String {
+                                if Task.isCancelled { return [] }
+                                let f = (root as NSString).appendingPathComponent(sub)
+                                var directory: ObjCBool = false
+                                FileManager.default.fileExists(atPath: f, isDirectory: &directory)
+                                if directory.boolValue { continue }
+                                let key = S3TransferPlanner.uploadKey(localPath: f, folderRoot: root,
+                                                                      destPrefix: destPrefix,
+                                                                      renameTo: newName)
+                                let sz = FileOperation.sizeOnDisk(f)
+                                units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent,
+                                                                bytes: sz) { report in
+                                    try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: f, progress: report)
+                                })
+                            }
+                        } else {
+                            let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
                                                                   destPrefix: destPrefix,
                                                                   renameTo: newName)
-                            let sz = FileOperation.sizeOnDisk(f)
-                            units.append(FileOperation.Unit(label: (f as NSString).lastPathComponent,
+                            let sz = FileOperation.sizeOnDisk(item.path)
+                            units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent,
                                                             bytes: sz) { report in
-                                try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: f, progress: report)
+                                try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: item.path, progress: report)
                             })
                         }
-                    } else {
-                        let key = S3TransferPlanner.uploadKey(localPath: item.path, folderRoot: nil,
-                                                              destPrefix: destPrefix,
-                                                              renameTo: newName)
-                        let sz = FileOperation.sizeOnDisk(item.path)
-                        units.append(FileOperation.Unit(label: (item.path as NSString).lastPathComponent,
-                                                        bytes: sz) { report in
-                            try await capturedClient.putObject(bucket: db, key: key, fromLocalPath: item.path, progress: report)
-                        })
                     }
                 }
+                return units
             }
-            return units
+            return await withTaskCancellationHandler {
+                await preparation.value
+            } onCancel: {
+                preparation.cancel()
+            }
         }
 
         return op

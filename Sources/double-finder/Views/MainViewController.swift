@@ -1215,10 +1215,7 @@ class MainViewController: NSViewController {
     /// expanded view), only the inner selection is acted on — the parent folder
     /// selection is ignored.
     private func pruneSelectedAncestors(_ items: [FileItem]) -> [FileItem] {
-        let paths = items.map { $0.path }
-        return items.filter { item in
-            !paths.contains { other in other != item.path && other.hasPrefix(item.path + "/") }
-        }
+        TransferPlanner.pruneSelectedAncestors(items)
     }
 
     func actionCopy() {
@@ -1270,32 +1267,34 @@ class MainViewController: NSViewController {
         let verb = deleteProvider == nil ? provider.verb : tr("Move")
         confirmTransfer(verb: verb, items: pruned, defaultDest: dest0) { [weak self] destInput, queued in
             guard let self = self else { return }
-            let parsed = TransferDestination.parse(destInput, singleSourceName: singleName,
-                                                   isExistingDir: { path in
-                // Only the local backend can probe cheaply; remote dirs are
-                // forced with a trailing "/" instead.
-                guard destIsLocal else { return false }
-                var isDir: ObjCBool = false
-                return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-            })
-            let dest = parsed.dir
-            let renameTo = parsed.renameTo
-            if guardSelfTransfer,
-               !FileOperation.selfTransferSources(pruned.map { $0.path }, destDir: dest,
-                                                  renameTo: renameTo).isEmpty {
-                // Refuse outright: the local overwrite path deletes the
-                // destination first — which IS the source — so proceeding
-                // would destroy data, not just be a no-op.
-                if let window = self.view.window {
-                    let alert = NSAlert()
-                    alert.alertStyle = .warning
-                    alert.messageText = tr("Source and destination are the same")
-                    alert.informativeText = tr("Cannot transfer an item onto itself or a folder into itself.")
-                    alert.beginSheetModal(for: window)
-                }
-                return
-            }
             Task { @MainActor in
+                let parsed = await Task.detached(priority: .userInitiated) {
+                    TransferDestination.parse(destInput, singleSourceName: singleName,
+                                              isExistingDir: { path in
+                        // Mounted SMB/AFP paths use LocalFS too; even one stat can
+                        // block for seconds, so resolve it off the main actor.
+                        guard destIsLocal else { return false }
+                        var isDir: ObjCBool = false
+                        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+                    })
+                }.value
+                let dest = parsed.dir
+                let renameTo = parsed.renameTo
+                if guardSelfTransfer,
+                   !FileOperation.selfTransferSources(pruned.map { $0.path }, destDir: dest,
+                                                      renameTo: renameTo).isEmpty {
+                    // Refuse outright: the local overwrite path deletes the
+                    // destination first — which IS the source — so proceeding
+                    // would destroy data, not just be a no-op.
+                    if let window = self.view.window {
+                        let alert = NSAlert()
+                        alert.alertStyle = .warning
+                        alert.messageText = tr("Source and destination are the same")
+                        alert.informativeText = tr("Cannot transfer an item onto itself or a folder into itself.")
+                        alert.beginSheetModal(for: window, completionHandler: nil)
+                    }
+                    return
+                }
                 guard let existing = await self.existingDestNames(of: pruned, at: dest,
                                                                   destination: conflictDestination,
                                                                   renameTo: renameTo) else { return }
