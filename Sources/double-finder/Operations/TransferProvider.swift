@@ -117,6 +117,37 @@ struct LocalCopyProvider: TransferProvider {
         return op
     }
 
+    /// Drag-and-drop/paste has paths rather than cached file-list metadata.
+    /// Use the same copy callbacks as F5 and size the source on a worker once.
+    @MainActor
+    static func configurePathCopy(_ op: FileOperation, paths: [String], destination: String) {
+        op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
+        op.indeterminate = true
+        op.prepareByteProgress = { [weak op] in
+            guard let op else { return }
+            op.totalBytes = await Task.detached(priority: .utility) {
+                LocalCopyProgress.totalSize(paths, shouldCancel: { op.cancelRequested })
+            }.value
+            op.indeterminate = false
+        }
+        op.perItemOperation = { [weak op] path in
+            guard let op else { return }
+            // Recheck at execution time: an item may appear while queued.
+            if op.conflictPolicy == .skip,
+               FileOperation.destinationExists(source: path, in: destination) {
+                let skipped = await Task.detached(priority: .utility) {
+                    LocalCopyProgress.totalSize([path], shouldCancel: { op.cancelRequested })
+                }.value
+                op.totalBytes = max(0, op.totalBytes - skipped)
+                return
+            }
+            let target = FileOperation.destinationURL(source: path, in: destination).path
+            try await LocalFS().copy(from: path, toFile: target,
+                                     progress: { [weak op] in op?.reportBytes($0) },
+                                     shouldCancel: { [weak op] in op?.cancelRequested ?? true })
+        }
+    }
+
     @MainActor
     private func configureByteProgress(_ op: FileOperation, items: [FileItem]) {
         op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }

@@ -76,7 +76,7 @@ final class QueueToolbarController: NSObject {
 
         if let provider = op.bytesTransferred, op.totalBytes > 0 {
             current = provider(); total = op.totalBytes; hasBytes = true
-            fraction = min(1, Double(current) / Double(total))
+            fraction = FileOperation.byteProgressFraction(bytes: current, total: total, isComplete: op.isComplete)
         } else if op.totalUnits > 0 {
             if op.totalBytes > 0 {                       // sizes known (S3) → byte bar
                 current = op.transferredBytes; total = op.totalBytes; hasBytes = true

@@ -2876,6 +2876,20 @@ class MainViewController: NSViewController {
         }
     }
 
+    /// Shared operation factory for local drag-and-drop and paste.
+    static func makeExternalImportOperation(sources: [String], destination dest: String,
+                                            move: Bool, policy: ConflictPolicy) -> FileOperation {
+        let included = policy == .skip
+            ? sources.filter { !FileOperation.destinationExists(source: $0, in: dest) }
+            : sources
+        let op = FileOperation(type: move ? .move : .copy, sources: included,
+                               destination: dest, conflictPolicy: policy)
+        if !move {
+            LocalCopyProvider.configurePathCopy(op, paths: included, destination: dest)
+        }
+        return op
+    }
+
     /// Copies (or moves) external file URLs into `dest`, with a conflict prompt.
     /// Shared by paste and drag-and-drop. Local destination only.
     private func importExternalFiles(_ urls: [URL], into dest: String, move: Bool,
@@ -2886,18 +2900,13 @@ class MainViewController: NSViewController {
 
         let run: (ConflictPolicy) -> Void = { [weak self] policy in
             guard let self = self else { return }
-            let op = FileOperation(type: move ? .move : .copy, sources: sources,
-                                   destination: dest, conflictPolicy: policy)
-            op.totalBytes = sources.reduce(0) { $0 + FileOperation.sizeOnDisk($1) }
-            let names = sources.map { ($0 as NSString).lastPathComponent }
-            op.bytesTransferred = {
-                names.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk((dest as NSString).appendingPathComponent($1)) }
-            }
+            let op = Self.makeExternalImportOperation(sources: sources, destination: dest,
+                                                       move: move, policy: policy)
             self.runOperation(op, completion: onDone)
         }
 
         let conflicts = sources.filter {
-            FileManager.default.fileExists(atPath: (dest as NSString).appendingPathComponent(($0 as NSString).lastPathComponent))
+            FileOperation.destinationExists(source: $0, in: dest)
         }
         guard !conflicts.isEmpty, let window = view.window else { run(.overwrite); return }
 

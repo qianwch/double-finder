@@ -133,6 +133,13 @@ class FileOperation: ObservableObject {
         return total
     }
 
+    /// Shared byte progress for the foreground sheet and background queue.
+    nonisolated static func byteProgressFraction(bytes: Int64, total: Int64, isComplete: Bool) -> Double {
+        guard total > 0 else { return 0 }
+        // Data can finish before metadata and recursive directory cleanup.
+        return max(0, min(isComplete ? 1 : 0.99, Double(bytes) / Double(total)))
+    }
+
     /// Holds the currently running external process (scp) so cancel can kill it.
     let processBox = ProcessBox()
 
@@ -276,7 +283,9 @@ class FileOperation: ObservableObject {
     }
 
     static func destinationExists(source: String, in destination: String) -> Bool {
-        FileManager.default.fileExists(atPath: destinationURL(source: source, in: destination).path)
+        // A dangling symlink is still an existing item for Skip Existing.
+        var info = stat()
+        return lstat(destinationURL(source: source, in: destination).path, &info) == 0
     }
 
     /// Sources whose transfer into `destDir` would target themselves — either the

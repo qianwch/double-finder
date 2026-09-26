@@ -3,6 +3,108 @@ import XCTest
 
 @MainActor
 final class DiskProgressTests: XCTestCase {
+    func testByteProgressWaitsForOperationCompletion() {
+        XCTAssertEqual(FileOperation.byteProgressFraction(bytes: 50, total: 100, isComplete: false), 0.5)
+        XCTAssertLessThan(FileOperation.byteProgressFraction(bytes: 100, total: 100, isComplete: false), 1)
+        XCTAssertLessThan(FileOperation.byteProgressFraction(bytes: 110, total: 100, isComplete: false), 1)
+        XCTAssertEqual(FileOperation.byteProgressFraction(bytes: 100, total: 100, isComplete: true), 1)
+        XCTAssertEqual(FileOperation.byteProgressFraction(bytes: 0, total: 0, isComplete: false), 0)
+    }
+
+    func testExternalImportDoesNotCountExistingDestinationAndSkipsExcludedBytes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source")
+        let dest = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: source.appendingPathComponent("folder"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 4096).write(to: source.appendingPathComponent("folder/file"))
+        try Data(repeating: 2, count: 2048).write(to: source.appendingPathComponent("other"))
+        let original = Data(repeating: 3, count: 65536)
+        for policy in [ConflictPolicy.overwrite, .skip] {
+            let target = dest.appendingPathComponent("folder")
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            try original.write(to: target.appendingPathComponent("old"))
+            let op = MainViewController.makeExternalImportOperation(
+                sources: [source.appendingPathComponent("folder").path, source.appendingPathComponent("other").path],
+                destination: dest.path, move: false, policy: policy)
+            XCTAssertEqual(op.bytesTransferred?(), 0, "Existing output is not transferred data")
+            XCTAssertEqual(op.totalBytes, 0, "Sizing must be deferred off the main actor")
+            let done = expectation(description: "Import completes")
+            op.onComplete = { done.fulfill() }
+            op.start()
+            await fulfillment(of: [done], timeout: 10)
+            XCTAssertTrue(op.failures.isEmpty)
+            let expected: Int64 = policy == .skip ? 2048 : 6144
+            XCTAssertEqual(op.totalBytes, expected)
+            XCTAssertEqual(op.bytesTransferred?(), expected)
+            XCTAssertEqual(try Data(contentsOf: dest.appendingPathComponent("other")), Data(repeating: 2, count: 2048))
+            if policy == .skip {
+                XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent("old")), original)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("file").path))
+            } else {
+                XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent("file")), Data(repeating: 1, count: 4096))
+                XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("old").path))
+            }
+            try FileManager.default.removeItem(at: dest)
+            XCTAssertEqual(op.bytesTransferred?(), expected, "Progress must not depend on rescanning output")
+            try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        }
+    }
+
+    func testExternalImportSkipsTargetsCreatedWhileQueuedIncludingDanglingLinks() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dest = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("file")
+        let target = dest.appendingPathComponent("file")
+        try Data(repeating: 1, count: 4096).write(to: source)
+        for danglingLink in [false, true] {
+            let op = MainViewController.makeExternalImportOperation(sources: [source.path], destination: dest.path,
+                                                                   move: false, policy: .skip)
+            // The destination appears after the user chose Skip Existing.
+            if danglingLink {
+                try FileManager.default.createSymbolicLink(atPath: target.path, withDestinationPath: "missing")
+            } else {
+                try Data([9]).write(to: target)
+            }
+            let done = expectation(description: "Queued import completes")
+            op.onComplete = { done.fulfill() }
+            op.start()
+            await fulfillment(of: [done], timeout: 10)
+            XCTAssertTrue(op.failures.isEmpty)
+            XCTAssertEqual(op.totalBytes, 0)
+            XCTAssertEqual(op.bytesTransferred?(), 0)
+            if danglingLink {
+                XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: target.path), "missing")
+            } else {
+                XCTAssertEqual(try Data(contentsOf: target), Data([9]))
+            }
+            try FileManager.default.removeItem(at: target)
+        }
+    }
+
+    func testExternalMoveUsesItemProgress() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dest = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("file")
+        try Data([1, 2, 3]).write(to: source)
+        let op = MainViewController.makeExternalImportOperation(sources: [source.path], destination: dest.path,
+                                                               move: true, policy: .overwrite)
+        XCTAssertNil(op.bytesTransferred)
+        XCTAssertEqual(op.totalBytes, 0)
+        let done = expectation(description: "Move completes")
+        op.onComplete = { done.fulfill() }
+        op.start()
+        await fulfillment(of: [done], timeout: 10)
+        XCTAssertTrue(op.failures.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertEqual(try Data(contentsOf: dest.appendingPathComponent("file")), Data([1, 2, 3]))
+    }
+
     func testStreamingAndCloneCopiesPreserveContentsAndMetadata() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

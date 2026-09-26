@@ -134,7 +134,8 @@ class ProgressSheet: NSWindowController {
             let speed = Self.speedText(totalBytes: operation.totalBytes,
                                        bytesRate: sampleRate(Double(bytes)), filesRate: 0)
             progressBar.isIndeterminate = false
-            progressBar.doubleValue = min(1.0, Double(bytes) / Double(operation.totalBytes))
+            progressBar.doubleValue = FileOperation.byteProgressFraction(bytes: bytes, total: operation.totalBytes,
+                                                                           isComplete: operation.isComplete)
             fileLabel.stringValue = "\(operation.currentFile)  ·  \(Self.byteFmt.string(fromByteCount: bytes)) / \(Self.byteFmt.string(fromByteCount: operation.totalBytes))  ·  \(speed)"
         } else if operation.totalUnits > 0 {
             progressBar.isIndeterminate = false
