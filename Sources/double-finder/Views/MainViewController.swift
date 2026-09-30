@@ -2707,19 +2707,11 @@ class MainViewController: NSViewController {
         // Same guard F5/F6 uses: a folder dropped onto itself, into its own
         // subtree, or an item dropped back into its own parent. The local
         // overwrite path deletes the destination first — which would BE the
-        // source — so this refuses outright rather than silently no-op'ing.
+        // source. Ignore blocked drops silently: a small accidental drag often
+        // lands back on the source. F5/F6 keep their explicit warning.
         let blocked = Set(FileOperation.selfTransferSources(urls.map { $0.path }, destDir: destDir))
         let sources = urls.filter { !blocked.contains($0.path) }
-        guard !sources.isEmpty else {
-            if let window = view.window {
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = tr("Source and destination are the same")
-                alert.informativeText = tr("Cannot transfer an item onto itself or a folder into itself.")
-                alert.beginSheetModal(for: window)
-            }
-            return
-        }
+        guard !sources.isEmpty else { return }
 
         importExternalFiles(sources, into: destDir, move: move) { [weak self] in
             self?.leftPanelVC.panelState.refresh()

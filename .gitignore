@@ -13,6 +13,8 @@
 Package.resolved
 
 # AI assistant support files (not part of the public project)
+/AGENT.md
+/AGENTS.md
 /CLAUDE.md
 /spec/
 /docs/superpowers/
