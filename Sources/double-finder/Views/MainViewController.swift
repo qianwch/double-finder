@@ -40,6 +40,8 @@ class MainViewController: NSViewController {
     private var quickViewPane: QuickViewPane?
     private var quickViewTimer: Timer?
     private var quickViewLastPath: String?
+    private var quickViewLoadTask: Task<Void, Never>?
+    private var quickViewLoadGeneration = UUID()
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
     /// True while restoreTabs() is importing saved tabs at startup. Importing into
@@ -2289,23 +2291,45 @@ class MainViewController: NSViewController {
            let target = activePanelVC.fileTableView?.firstResponderTarget {
             view.window?.makeFirstResponder(target)
         }
-        let item = activePanelVC.panelState.currentItem
-        let path = item?.path ?? ""
+        let panel = activePanelVC.panelState
+        let item = panel.currentItem
+        // Paths alone are not unique across connected devices or panel tabs.
+        let path = "\(ObjectIdentifier(panel))|\(panel.remote?.id ?? "local")|\(item?.path ?? "")"
         guard path != quickViewLastPath else { return }
         quickViewLastPath = path
+        quickViewLoadTask?.cancel()
+        quickViewLoadTask = nil
+        let generation = UUID()
+        quickViewLoadGeneration = generation
         guard let item = item, item.name != ".." else {
             pane.show(url: nil, title: "")
             return
         }
-        // Local files (and folders) preview directly; remote/virtual items
-        // would need a download — show the placeholder instead.
-        let isLocal = !activePanelVC.panelState.isRemote
-            && PanelState.archiveRoot(in: item.path) == nil
-            && FileManager.default.fileExists(atPath: item.path)
-        pane.show(url: isLocal ? URL(fileURLWithPath: item.path) : nil, title: item.name)
+        let isLocal = isLocalPanel(panel)
+            && !(panel.searchResultsIncludeArchiveEntries && PanelState.isInsideArchive(item.path))
+        if isLocal {
+            pane.show(url: URL(fileURLWithPath: item.path), title: item.name)
+            return
+        }
+        pane.show(url: nil, title: item.name)
+        // Do not recursively download a remote directory just to preview it.
+        guard !item.isDirectory else { return }
+        let fs = panel.fs
+        quickViewLoadTask = Task { [weak self, weak pane] in
+            guard let self else { return }
+            let url = await self.materializeOne(item, using: fs)
+            guard !Task.isCancelled,
+                  self.quickViewLoadGeneration == generation,
+                  let pane, self.quickViewPane === pane else { return }
+            pane.show(url: url, title: item.name)
+            self.quickViewLoadTask = nil
+        }
     }
 
     private func dismissQuickView() {
+        quickViewLoadTask?.cancel()
+        quickViewLoadTask = nil
+        quickViewLoadGeneration = UUID()
         quickViewTimer?.invalidate()
         quickViewTimer = nil
         quickViewPane?.shutDown()

@@ -112,7 +112,7 @@ final class QuickViewPane: NSView {
         }
     }
 
-    /// nil URL shows the "No preview" placeholder (remote/virtual items).
+    /// nil URL shows the "No preview" placeholder (including pending downloads).
     func show(url: URL?, title: String) {
         titleLabel.stringValue = title
         cancelPageRender()
