@@ -42,6 +42,7 @@ class MainViewController: NSViewController {
     private var quickViewLastPath: String?
     private var quickViewLoadTask: Task<Void, Never>?
     private var quickViewLoadGeneration = UUID()
+    private var quickViewMediaStream: AndroidMediaStream?
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
     /// True while restoreTabs() is importing saved tabs at startup. Importing into
@@ -1024,7 +1025,9 @@ class MainViewController: NSViewController {
     /// nothing, which matters most on a solid 7z where one entry means a full pass
     /// over the archive. F4 (edit) deliberately passes false: it must start from the
     /// remote bytes, otherwise a second F4 would reopen the user's own unsaved edits.
-    private func materializeOne(_ item: FileItem, using fs: VirtualFS, useCache: Bool = false) async -> URL? {
+    private func materializeOne(_ item: FileItem, using fs: VirtualFS, useCache: Bool = false,
+                                onProgress: (@Sendable (Int64) -> Void)? = nil,
+                                onError: ((Error) -> Void)? = nil) async -> URL? {
         let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-View")
         let slug = useCache
             ? MaterializedCache.slug(path: item.path, size: item.size, modified: item.modified)
@@ -1040,9 +1043,15 @@ class MainViewController: NSViewController {
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(atPath: dest)
         do {
-            try await fs.copy(from: item.path, to: dir)   // scp download / archive extract
+            try Task.checkCancellation()
+            if let android = fs as? AndroidFS, let onProgress {
+                try await AndroidDeviceRegistry.shared.download(android.device.sessionID, path: item.path,
+                                                                to: dest, progress: onProgress)
+            } else {
+                try await fs.copy(from: item.path, to: dir)   // remote download / archive extract
+            }
             if FileManager.default.fileExists(atPath: dest) { return URL(fileURLWithPath: dest) }
-        } catch { }
+        } catch { onError?(error) }
         return nil
     }
 
@@ -2299,6 +2308,8 @@ class MainViewController: NSViewController {
         quickViewLastPath = path
         quickViewLoadTask?.cancel()
         quickViewLoadTask = nil
+        quickViewMediaStream?.stop()
+        quickViewMediaStream = nil
         let generation = UUID()
         quickViewLoadGeneration = generation
         guard let item = item, item.name != ".." else {
@@ -2314,14 +2325,52 @@ class MainViewController: NSViewController {
         pane.show(url: nil, title: item.name)
         // Do not recursively download a remote directory just to preview it.
         guard !item.isDirectory else { return }
+        if let device = panel.android,
+           panel.remoteArchive == nil,
+           PanelState.archiveRoot(in: item.path) == nil,
+           MediaViewer.videoExtensions.contains((item.path as NSString).pathExtension.lowercased()),
+           AndroidDeviceRegistry.shared.info(device.sessionID)?.supportsPartialRead == true {
+            pane.showStatus(tr("Loading…"), title: item.name)
+            do {
+                let stream = try AndroidMediaStream(sessionID: device.sessionID, path: item.path, size: item.size)
+                quickViewMediaStream = stream
+                quickViewLoadTask = Task { [weak self, weak pane] in
+                    do {
+                        let url = try await stream.start()
+                        guard let self, !Task.isCancelled,
+                              self.quickViewLoadGeneration == generation,
+                              let pane, self.quickViewPane === pane else { stream.stop(); return }
+                        pane.showMediaStream(url: url, title: item.name)
+                        self.quickViewLoadTask = nil
+                    } catch {
+                        guard let self, !Task.isCancelled, self.quickViewLoadGeneration == generation else { return }
+                        pane?.showStatus(error.localizedDescription, title: item.name)
+                        stream.stop()
+                    }
+                }
+            } catch { pane.showStatus(error.localizedDescription, title: item.name) }
+            return
+        }
+        pane.showStatus(tr("Downloading"), title: item.name)
         let fs = panel.fs
         quickViewLoadTask = Task { [weak self, weak pane] in
             guard let self else { return }
-            let url = await self.materializeOne(item, using: fs)
+            var failure = tr("Preview failed")
+            var downloaded: Int64 = 0
+            let url = await self.materializeOne(item, using: fs, onProgress: { [weak self, weak pane] delta in
+                Task { @MainActor in
+                    guard let self, self.quickViewLoadGeneration == generation,
+                          self.quickViewLoadTask != nil else { return }
+                    downloaded += delta
+                    let percentage = item.size > 0 ? min(100, Int(Double(downloaded) / Double(item.size) * 100)) : 0
+                    pane?.showStatus("\(tr("Downloading")) \(percentage)%", title: item.name)
+                }
+            }, onError: { failure = tr($0.localizedDescription) })
             guard !Task.isCancelled,
                   self.quickViewLoadGeneration == generation,
                   let pane, self.quickViewPane === pane else { return }
-            pane.show(url: url, title: item.name)
+            if let url { pane.show(url: url, title: item.name) }
+            else { pane.showStatus(failure, title: item.name) }
             self.quickViewLoadTask = nil
         }
     }
@@ -2329,6 +2378,8 @@ class MainViewController: NSViewController {
     private func dismissQuickView() {
         quickViewLoadTask?.cancel()
         quickViewLoadTask = nil
+        quickViewMediaStream?.stop()
+        quickViewMediaStream = nil
         quickViewLoadGeneration = UUID()
         quickViewTimer?.invalidate()
         quickViewTimer = nil

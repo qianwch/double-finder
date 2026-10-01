@@ -1210,3 +1210,7 @@ The "Reset to Defaults" key tables. These run against a private UserDefaults sui
   - `SFTPDirectorySizeLiveTests.testDirectorySizeMatchesTheFilesWePut`
   - `SFTPSameHostLiveTests.testServerSideCopyAndMove`
 - 执行前后核对：`net.qian.double-finder` 的 UserDefaults 导出无差异，钥匙串 `double-finder / S3Secrets` 条目仍在。
+
+### `MediaByteRangeTests` / `AndroidMediaStreamTests`
+
+Quick View Android 视频分段读取：完整、开放、后缀、截断及无效 Range；真实 loopback HTTP 后缀 Range 只读取请求字节，HEAD/416 不访问 USB，stop 取消正在执行的异步读取。测试使用注入读取器，不需手机，也不写 UserDefaults。

@@ -139,6 +139,18 @@ final class QuickViewPane: NSView {
         showQuickLook(url)
     }
 
+    func showStatus(_ message: String, title: String) {
+        show(url: nil, title: title)
+        emptyLabel.stringValue = message
+    }
+
+    func showMediaStream(url: URL, title: String) {
+        show(url: nil, title: title)
+        emptyLabel.isHidden = true
+        do { mount(try MediaViewer().makeView(for: url)) }
+        catch { showStatus(error.localizedDescription, title: title) }
+    }
+
     private func showQuickLook(_ url: URL?) {
         preview.isHidden = url == nil
         preview.previewItem = url as QLPreviewItem?

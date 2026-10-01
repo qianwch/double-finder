@@ -468,7 +468,7 @@ struct MTPChild {
 private final class MTPProgressBox {
     let report: (Int64) -> Void
     var lastSent: UInt64 = 0
-    var cancelled = false
+    let cancellation = CancelFlag()
     init(report: @escaping (Int64) -> Void) { self.report = report }
 }
 
@@ -480,23 +480,56 @@ private let mtpProgressCallback: LIBMTP_progressfunc_t = { sent, total, data in
         box.report(Int64(sent - box.lastSent))
         box.lastSent = sent
     }
-    return box.cancelled ? 1 : 0   // non-zero aborts the transfer
+    return box.cancellation.isCancelled ? 1 : 0   // non-zero aborts the transfer
 }
 
 extension AndroidDeviceRegistry {
     /// Downloads one file to a local path.
     func download(_ sessionID: String, path: String, to localPath: String,
                   progress: @escaping (Int64) -> Void) async throws {
-        try await perform(sessionID) { s in
-            let node = try Self.resolve(s, path: path)
-            let box = MTPProgressBox(report: progress)
-            let rc = LIBMTP_Get_File_To_File(s.device, node.objectID, localPath,
-                                             mtpProgressCallback,
-                                             Unmanaged.passUnretained(box).toOpaque())
-            guard rc == 0 else {
-                throw MTPError(message: "Could not download \(MTPPath(path).name) from the device")
+        let box = MTPProgressBox(report: progress)
+        try await withTaskCancellationHandler {
+            try await perform(sessionID) { s in
+                guard !box.cancellation.isCancelled else { throw CancellationError() }
+                let node = try Self.resolve(s, path: path)
+                let rc = LIBMTP_Get_File_To_File(s.device, node.objectID, localPath,
+                                                mtpProgressCallback,
+                                                Unmanaged.passUnretained(box).toOpaque())
+                if box.cancellation.isCancelled {
+                    try? FileManager.default.removeItem(atPath: localPath)
+                    LIBMTP_Clear_Errorstack(s.device)
+                    throw CancellationError()
+                }
+                guard rc == 0 else {
+                    LIBMTP_Clear_Errorstack(s.device)
+                    throw MTPError(message: "Could not download \(MTPPath(path).name) from the device")
+                }
             }
+        } onCancel: {
+            box.cancellation.cancel()
         }
+    }
+
+    /// A bounded random-access read; never hold the USB queue for a whole movie.
+    func readPartial(_ sessionID: String, path: String, offset: UInt64, count: UInt32) async throws -> Data {
+        let cancellation = CancelFlag()
+        return try await withTaskCancellationHandler {
+            try await perform(sessionID) { s in
+                guard !cancellation.isCancelled else { throw CancellationError() }
+                guard s.info.supportsPartialRead else { throw MTPError(message: "Partial reads are not supported by this device") }
+                let node = try Self.resolve(s, path: path)
+                var buffer: UnsafeMutablePointer<UInt8>?
+                var actual: UInt32 = 0
+                let rc = LIBMTP_GetPartialObject(s.device, node.objectID, offset, count, &buffer, &actual)
+                defer { free(buffer) }
+                guard !cancellation.isCancelled else { throw CancellationError() }
+                guard rc == 0, let buffer else {
+                    LIBMTP_Clear_Errorstack(s.device)
+                    throw MTPError(message: "Could not read media from the device")
+                }
+                return Data(bytes: buffer, count: Int(actual))
+            }
+        } onCancel: { cancellation.cancel() }
     }
 
     /// Uploads one local file into `destDir` on the device.
