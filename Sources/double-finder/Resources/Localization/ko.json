@@ -688,5 +688,8 @@
   "No download was published for this Mac's processor architecture.": "이 Mac의 프로세서 아키텍처용 다운로드가 게시되지 않았습니다.",
   "The downloaded file did not match the checksum GitHub published for it.": "다운로드한 파일이 GitHub에 게시된 체크섬과 일치하지 않습니다.",
   "The update disk image did not contain Double Finder.app.": "업데이트 디스크 이미지에 Double Finder.app이 없습니다.",
-  "The downloaded update is not Double Finder.": "다운로드한 업데이트는 Double Finder가 아닙니다."
+  "The downloaded update is not Double Finder.": "다운로드한 업데이트는 Double Finder가 아닙니다.",
+  "Zoom In": "확대",
+  "Zoom Out": "축소",
+  "Reset Zoom": "확대/축소 초기화"
 }

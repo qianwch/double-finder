@@ -688,5 +688,8 @@
   "No download was published for this Mac's processor architecture.": "未发布适用于此 Mac 处理器架构的下载。",
   "The downloaded file did not match the checksum GitHub published for it.": "下载的文件与 GitHub 发布的校验和不一致。",
   "The update disk image did not contain Double Finder.app.": "更新用的磁盘映像中未包含 Double Finder.app。",
-  "The downloaded update is not Double Finder.": "下载的更新不是 Double Finder。"
+  "The downloaded update is not Double Finder.": "下载的更新不是 Double Finder。",
+  "Zoom In": "放大",
+  "Zoom Out": "缩小",
+  "Reset Zoom": "重置缩放"
 }

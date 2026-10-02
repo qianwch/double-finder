@@ -510,6 +510,16 @@ class MainViewController: NSViewController {
             return true
         }
 
+        if let pane = quickViewPane,
+           flags.intersection([.command, .control, .option]) == .command {
+            switch chars {
+            case "=", "+": pane.adjustZoom(1); return true
+            case "-": pane.adjustZoom(-1); return true
+            case "0": pane.adjustZoom(0); return true
+            default: break
+            }
+        }
+
         // Tab: switch panels
         if keyCode == 48 && flags.isEmpty {
             switchPanel()

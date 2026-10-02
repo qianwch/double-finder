@@ -688,5 +688,8 @@
   "No download was published for this Mac's processor architecture.": "Aucun téléchargement n'a été publié pour l'architecture de processeur de ce Mac.",
   "The downloaded file did not match the checksum GitHub published for it.": "Le fichier téléchargé ne correspond pas à la somme de contrôle publiée par GitHub.",
   "The update disk image did not contain Double Finder.app.": "L'image disque de mise à jour ne contient pas Double Finder.app.",
-  "The downloaded update is not Double Finder.": "La mise à jour téléchargée n'est pas Double Finder."
+  "The downloaded update is not Double Finder.": "La mise à jour téléchargée n'est pas Double Finder.",
+  "Zoom In": "Agrandir",
+  "Zoom Out": "Réduire",
+  "Reset Zoom": "Réinitialiser le zoom"
 }

@@ -8,13 +8,17 @@ import DoubleFinderPluginKit
 /// (the built-in PDF viewer, a bundle's WLX-style viewer) is mounted as is; a
 /// page plugin (Markdown preview, the EPUB / Kindle reader) is rendered on a
 /// background task into a `ListerWebView`, cancelled the moment the cursor
-/// moves on. Everything else goes to QLPreviewView (same engine as the
+/// moves on. Plain text uses ListerTextView; everything else goes to
+/// QLPreviewView (same engine as the
 /// Space-bar Quick Look).
 final class QuickViewPane: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let preview = QLPreviewView(frame: .zero, style: .normal)!
     private let emptyLabel = NSTextField(labelWithString: "")
     private var pluginView: NSView?
+    private let zoomControls = NSStackView()
+    private var zoomButtons: [NSButton] = []
+    private var webZoom: CGFloat = 1
 
     // Page plugins (PageViewerPlugin → ListerWebView), same protocol as the Lister:
     // a CancelFlag the plugin polls + a generation stamp so a late result for a
@@ -41,6 +45,19 @@ final class QuickViewPane: NSView {
         emptyLabel.alignment = .center
         emptyLabel.isHidden = true
 
+        for (label, help, action) in [("−", "Zoom Out", #selector(zoomOut(_:))), ("↺", "Reset Zoom", #selector(resetZoom(_:))), ("+", "Zoom In", #selector(zoomIn(_:)))] {
+            let button = NSButton(title: label, target: self, action: action)
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.setAccessibilityLabel(tr(help))
+            button.toolTip = tr(help)
+            zoomControls.addArrangedSubview(button)
+            zoomButtons.append(button)
+        }
+        zoomControls.spacing = 2
+        zoomControls.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(zoomControls)
+        setZoomEnabled(false)
         preview.shouldCloseWithWindow = false
 
         [titleLabel, preview, emptyLabel].forEach {
@@ -56,7 +73,10 @@ final class QuickViewPane: NSView {
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            titleLabel.trailingAnchor.constraint(equalTo: zoomControls.leadingAnchor, constant: -8),
+            zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            zoomControls.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            titleLabel.heightAnchor.constraint(greaterThanOrEqualTo: zoomControls.heightAnchor),
 
             preview.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
             preview.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -115,6 +135,9 @@ final class QuickViewPane: NSView {
     /// nil URL shows the "No preview" placeholder (including pending downloads).
     func show(url: URL?, title: String) {
         titleLabel.stringValue = title
+        webZoom = 1
+        webView?.setZoom(1)
+        setZoomEnabled(false)
         cancelPageRender()
         webGeneration += 1
         currentPage = nil
@@ -134,6 +157,14 @@ final class QuickViewPane: NSView {
         if isFile, let page = PluginManager.shared.pageViewer(for: url, sample: sample) {
             showQuickLook(nil)
             startPageRender(page, url: url, title: title)
+            return
+        }
+        let routing = ViewerModeChooser.choose(fileExtension: url.pathExtension, sample: sample)
+        if isFile, routing.mode == .text, let source = ListerSource(url: url) {
+            let text = ListerTextView(frame: .zero)
+            text.load(source: source, encoding: routing.encoding ?? .utf8, fileExtension: url.pathExtension)
+            showQuickLook(nil)
+            mount(text)
             return
         }
         showQuickLook(url)
@@ -185,6 +216,7 @@ final class QuickViewPane: NSView {
         addSubview(view)
         pin(view)
         pluginView = view
+        setZoomEnabled(view is ListerTextView || ["zoomIn:", "zoomOut:", "resetZoom:"].allSatisfy { view.responds(to: NSSelectorFromString($0)) })
     }
 
     /// Same rule as the QL view: fill the pane below the title, never push the split divider.
@@ -204,6 +236,27 @@ final class QuickViewPane: NSView {
     private func unmountPlugin() {
         pluginView?.removeFromSuperview()
         pluginView = nil
+    }
+
+    private func setZoomEnabled(_ enabled: Bool) {
+        zoomButtons.forEach { $0.isEnabled = enabled }
+    }
+
+    @objc private func zoomIn(_ sender: Any?) { adjustZoom(1) }
+    @objc private func zoomOut(_ sender: Any?) { adjustZoom(-1) }
+    @objc private func resetZoom(_ sender: Any?) { adjustZoom(0) }
+
+    func adjustZoom(_ step: Int) {
+        guard zoomButtons.first?.isEnabled == true else { return }
+        if let text = pluginView as? ListerTextView {
+            text.setFontSize(step == 0 ? 12 : min(32, max(8, text.fontSize + CGFloat(step))), reapply: true)
+        } else if let view = pluginView {
+            let selector = NSSelectorFromString(step > 0 ? "zoomIn:" : step < 0 ? "zoomOut:" : "resetZoom:")
+            if view.responds(to: selector) { _ = view.perform(selector, with: nil) }
+        } else if webView?.isHidden == false {
+            webZoom = step == 0 ? 1 : min(3, max(0.5, webZoom + CGFloat(step) * 0.1))
+            webView?.setZoom(webZoom)
+        }
     }
 
     // MARK: Page plugins
@@ -280,6 +333,7 @@ final class QuickViewPane: NSView {
         case .success(let html):
             webView?.loadHTML(html)
             webView?.isHidden = false
+            setZoomEnabled(true)
         case .failure(let error):
             pageRenderFailed(error, title: title, url: url)
         }
@@ -290,6 +344,7 @@ final class QuickViewPane: NSView {
     private func pageRenderFailed(_ error: Error, title: String, url: URL) {
         cancelPageRender()
         currentPage = nil
+        setZoomEnabled(false)
         webView?.isHidden = true
         titleLabel.stringValue = "\(title) — \(tr(error.localizedDescription))"   // built-ins throw English source strings
         showQuickLook(url)
