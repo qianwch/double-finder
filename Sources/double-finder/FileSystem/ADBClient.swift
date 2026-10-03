@@ -4,10 +4,54 @@ import Darwin
 struct ADBClient: Sendable {
     let session: ADBSession
 
-    func shell(_ script: String, isCancelled: @escaping @Sendable () -> Bool = { false }) async throws -> Data {
-        try Self.validateSerial(session.device.serial)
+    func shell(_ script: String, timeout: TimeInterval = 30,
+               isCancelled: @escaping @Sendable () -> Bool = { false }) async throws -> Data {
+        let lifetime = session.lifetime
+        guard !lifetime.isRemoved else { throw CancellationError() }
+        return try await Self.remoteShell(session: session, script: script, timeout: timeout,
+                                          isCancelled: { lifetime.isRemoved || isCancelled() })
+    }
+
+    /// exec-out avoids legacy shell CRLF conversion. A private trailer checks
+    /// the remote status even on adbd versions which always exit with zero.
+    static func remoteShell(session: ADBSession, script: String, timeout: TimeInterval = 30,
+                            isCancelled: @escaping @Sendable () -> Bool = { false }) async throws -> Data {
+        try validateSerial(session.device.serial)
         guard !script.contains("\0") else { throw ADBError.invalidArgument }
-        return try await checked(arguments: ["-s", session.device.serial, "shell", script], isCancelled: isCancelled)
+        let marker = "DF_ADB_" + UUID().uuidString
+        let tools = ["printf", "stat", "readlink", "realpath", "cp", "mv", "rm", "mkdir", "chmod"]
+        // Prefer every native command; use only an already installed BusyBox.
+        // Functions are generated from fixed names, never user-controlled data.
+        let fallback = tools.map { tool in
+            "command -v \(tool) >/dev/null 2>&1 || \(tool)() { if [ -n \"$df_busybox\" ]; then \"$df_busybox\" \(tool) \"$@\"; else echo 'Missing Android command: \(tool)' >&2; return 127; fi; }"
+        }.joined(separator: "\n")
+        let command = """
+        df_busybox=''
+        for df_candidate in /system/bin/busybox /system/xbin/busybox; do
+          if [ -x "$df_candidate" ]; then df_busybox=$df_candidate; break; fi
+        done
+        if [ -z "$df_busybox" ]; then df_busybox=$(command -v busybox 2>/dev/null); fi
+        \(fallback)
+        (
+        \(script)
+        ) 2>&1
+        df_status=$?
+        printf '\\000\(marker):%s\\000' "$df_status"
+        """
+        let data = try await checked(executable: session.executablePath,
+                                     arguments: ["-s", session.device.serial, "exec-out", command],
+                                     timeout: timeout, isCancelled: isCancelled)
+        let prefix = Data(("\0" + marker + ":").utf8)
+        guard data.last == 0, let range = data.range(of: prefix, options: .backwards),
+              let status = Int(String(decoding: data[range.upperBound..<data.index(before: data.endIndex)], as: UTF8.self)) else {
+            throw ADBError.commandFailed("Missing ADB remote status (Android printf or exec-out unavailable).")
+        }
+        let body = Data(data[..<range.lowerBound])
+        guard status == 0 else {
+            let message = String(decoding: body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ADBError.commandFailed(message.isEmpty ? "ADB remote command failed (\(status))." : message)
+        }
+        return body
     }
 
     func checked(arguments: [String], timeout: TimeInterval = 30,

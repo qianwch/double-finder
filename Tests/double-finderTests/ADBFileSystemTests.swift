@@ -49,7 +49,7 @@ final class ADBFileSystemTests: XCTestCase {
         import os,sys,json,subprocess
         with open(\(String(reflecting: log.path)), 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')
         assert sys.argv[1:3]==['-s','test-device']
-        if sys.argv[3]=='shell':
+        if sys.argv[3]=='exec-out':
             env=os.environ.copy(); env['PATH']=\(String(reflecting: root.path))+':'+env['PATH']
             sys.exit(subprocess.call(['/bin/sh','-c',sys.argv[4]],env=env))
         """

@@ -99,7 +99,7 @@ extension ADBClient {
         // Destination is the complete desired name, never a container directory.
         // Reject existing directories to avoid cp/mv silently nesting the source.
         let script = "[ ! -L \(target) ] || { echo 'Destination symbolic link is not supported' >&2; exit 1; }; [ ! -d \(target) ] || { echo 'Destination directory exists' >&2; exit 1; }; cp -R -P \(source) \(target)"
-        _ = try await checked(arguments: ["-s", session.device.serial, "shell", script], timeout: Self.transferTimeout, isCancelled: isCancelled)
+        _ = try await shell(script, timeout: Self.transferTimeout, isCancelled: isCancelled)
         if move { try await commitRemoval(from, isCancelled: isCancelled) }
     }
 
@@ -115,8 +115,7 @@ extension ADBClient {
         // deletion. A detached command bounds partial-failure risk to 30 seconds.
         let session = session
         _ = try await Task.detached {
-            try await Self.checked(executable: session.executablePath,
-                                   arguments: ["-s", session.device.serial, "shell", "rm -r \(source)"], timeout: 30)
+            try await Self.remoteShell(session: session, script: "rm -r \(source)", timeout: 30)
         }.value
     }
     /// Renaming changes the name atomically; it is distinct from queued moves.

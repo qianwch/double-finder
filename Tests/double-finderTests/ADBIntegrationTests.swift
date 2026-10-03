@@ -8,16 +8,18 @@ final class ADBIntegrationTests: XCTestCase {
         let adb = root.appendingPathComponent("adb")
         let script = """
         #!/usr/bin/env python3
-        import sys,os,json,shutil,time,zipfile
+        import sys,os,json,shutil,time,zipfile,re
         args=sys.argv[1:]
         assert args[:2]==['-s','fixture']
         with open(\(String(reflecting: root.appendingPathComponent("log").path)),'a') as f: f.write(json.dumps(args)+'\\n')
-        if args[2]=='shell':
+        if args[2]=='exec-out':
             command=args[3]
             if 'slow' in command: time.sleep(5)
             if 'for f in' in command:
                 def row(name,kind): sys.stdout.buffer.write(('\\0'.join([name,kind,'7','1700000000','a1ff' if kind=='l' else '81a4','/remote' if kind=='l' else ''])+'\\0').encode())
                 row('book.txt','f'); row('book.zip','f'); row('loop','l')
+            marker=re.search(r'DF_ADB_[A-F0-9-]+',command).group()
+            sys.stdout.buffer.write(('\\0'+marker+':0\\0').encode())
         elif args[2]=='pull':
             if 'failure' in args[3]: sys.exit(1)
             if args[3].endswith('.zip'):

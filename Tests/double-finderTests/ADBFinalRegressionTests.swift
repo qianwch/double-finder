@@ -9,14 +9,16 @@ final class ADBFinalRegressionTests: XCTestCase {
         let executable = root.appendingPathComponent("adb")
         try """
         #!/usr/bin/env python3
-        import sys,time,zipfile,os
+        import sys,time,zipfile,os,subprocess
         assert sys.argv[1:3] == ['-s','fixture']
-        if sys.argv[3] == 'shell':
-            command=sys.argv[4]
+        if sys.argv[3] == 'exec-out':
+            command=sys.argv[4].split('\\n(\\n',1)[1].split('\\n) 2>&1',1)[0]
             if command.startswith('hold '):
                 open(command[5:], 'w').close()
                 time.sleep(10)
-            elif command == 'printf alive': sys.stdout.write('alive')
+            else:
+                wrapped=sys.argv[4].replace(command, ':') if 'for f in' in command else sys.argv[4]
+                sys.exit(subprocess.call(['/bin/sh','-c',wrapped]))
         elif sys.argv[3] == 'pull':
             with zipfile.ZipFile(sys.argv[5], 'w') as archive: archive.writestr('inside.txt','payload')
         else: sys.exit(2)

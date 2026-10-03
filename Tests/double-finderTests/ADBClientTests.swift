@@ -75,13 +75,86 @@ final class ADBClientTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         try await ADBClient.pair(executablePath: executable.path, endpoint: "phone.local:1234", code: "654321")
     }
+    func testLegacyTransportPreservesBytesAndRejectsRemoteFailure() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try """
+        #!/usr/bin/env python3
+        import sys,subprocess
+        result=subprocess.run(['/bin/sh','-c',sys.argv[4]],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        data=result.stdout
+        if sys.argv[3]=='shell': data=data.replace(b'\\n',b'\\r\\n')
+        sys.stdout.buffer.write(data)
+        # Old adbd reports success even when the remote command failed.
+        """.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let client = ADBClient(session: ADBSession(device: ADBDevice(serial: "legacy", model: "", state: "device"), executablePath: url.path))
+        let output = try await client.shell("printf 'a\\nb\\r\\n\\000'")
+        XCTAssertEqual(output, Data([97,10,98,13,10,0]))
+        do { _ = try await client.shell("printf partial; exit 7"); XCTFail("Remote failure accepted") }
+        catch { XCTAssertTrue(error is ADBError) }
+        let source = url.appendingPathExtension("source")
+        try Data("preserve source".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        do { try await client.transfer(from: source.path, to: url.path + "/missing-parent/target", move: true); XCTFail("Failed copy committed deletion") }
+        catch { XCTAssertTrue(error is ADBError) }
+        XCTAssertEqual(try Data(contentsOf: source), Data("preserve source".utf8))
+    }
+    func testLegacyBusyBoxFallbackAndMissingTools() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let busybox = root.appendingPathComponent("busybox")
+        try """
+        #!/bin/sh
+        tool=$1; shift
+        if [ "$tool" = stat ]; then exec /usr/bin/python3 -c 'import os,sys; s=os.lstat(sys.argv[2]); print({"%s":s.st_size,"%Y":int(s.st_mtime),"%f":format(s.st_mode,"x")}[sys.argv[1]])' "$2" "$3"; fi
+        exec /usr/bin/"$tool" "$@"
+        """.write(to: busybox, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: busybox.path)
+        let name = "line\nCR\r尾\n"
+        try Data("payload".utf8).write(to: root.appendingPathComponent(name))
+        for available in [true, false] {
+            let adb = root.appendingPathComponent(available ? "adb" : "missing-adb")
+            let bootstrap = "command() { if [ \"$2\" = busybox ] && " + (available ? "true" : "false") + "; then echo " + (try ADBClient.quote(busybox.path)) + "; else return 1; fi; };\n"
+            try """
+            #!/usr/bin/env python3
+            import sys,subprocess
+            assert sys.argv[3]=='exec-out'
+            subprocess.call(['/bin/sh','-c',\(String(reflecting: bootstrap))+sys.argv[4]])
+            """.write(to: adb, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: adb.path)
+            let client = ADBClient(session: ADBSession(device: ADBDevice(serial: "legacy", model: "", state: "device"), executablePath: adb.path))
+            if available {
+                let items = try await client.list(root.path)
+                XCTAssertEqual(items.first { $0.name == name }?.size, 7)
+                let bytes = try await client.shell("printf 'a\\nb\\000'")
+                XCTAssertEqual(bytes, Data([97,10,98,0]))
+                do { _ = try await client.shell("printf 'partial\\000'; stat -c '%s' /definitely-missing-df-file"); XCTFail("Partial failure accepted") }
+                catch { XCTAssertTrue(error is ADBError) }
+            } else {
+                do { _ = try await client.list(root.path); XCTFail("Missing tools accepted") }
+                catch { XCTAssertTrue(error.localizedDescription.contains("printf")) }
+            }
+        }
+    }
+
+    func testRealDeviceReadOnlyListingWhenRequested() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let executable = env["ADB_REAL_EXECUTABLE"], let serial = env["ADB_REAL_SERIAL"] else { throw XCTSkip("Read-only device test is opt-in") }
+        let client = ADBClient(session: ADBSession(device: ADBDevice(serial: serial, model: "", state: "device"), executablePath: executable))
+        _ = try await client.list("/sdcard")
+        do { _ = try await client.list("/sdcard/.double-finder-missing-" + UUID().uuidString); XCTFail("Missing directory accepted") }
+        catch { XCTAssertTrue(error is ADBError) }
+    }
+
     func testShellPinsDeviceAndPreservesArguments() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try "#!/bin/sh\nprintf '%s\\0' \"$@\"\n".write(to: url, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n[ \"$1\" = -s ] && [ \"$2\" = usb-device-2 ] && [ \"$3\" = exec-out ] || exit 4\n/bin/sh -c \"$4\"\n".write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
         defer { try? FileManager.default.removeItem(at: url) }
         let client = ADBClient(session: ADBSession(device: ADBDevice(serial: "usb-device-2", model: "", state: "device"), executablePath: url.path))
         let output = try await client.shell("printf '中文'", isCancelled: { false })
-        XCTAssertEqual(String(decoding: output, as: UTF8.self), "-s\0usb-device-2\0shell\0printf '中文'\0")
+        XCTAssertEqual(String(decoding: output, as: UTF8.self), "中文")
     }
 }

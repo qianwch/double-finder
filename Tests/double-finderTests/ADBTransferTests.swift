@@ -20,12 +20,12 @@ final class ADBTransferTests: XCTestCase {
             import os,sys,subprocess,shutil,time
             assert sys.argv[1:3]==['-s','fixture']
             args=sys.argv[3:]
-            command=' '.join(args)
+            command=args[1].split('\\n(\\n',1)[1].split('\\n) 2>&1',1)[0] if args[0]=='exec-out' else ' '.join(args)
             copying=args[0] in ['push','pull'] or 'cp ' in command
             if copying and 'fail-child' in command: sys.exit(1)
             if copying and 'slow-child' in command: time.sleep(5)
-            if args[0]=='shell':
-                if args[1].startswith('rm -r ') and 'commit-source' in args[1]:
+            if args[0]=='exec-out':
+                if command.startswith('rm -r ') and 'commit-source' in command:
                     open(\(String(reflecting: root.appendingPathComponent("commit-started").path)), 'w').close()
                     deadline=time.monotonic()+5
                     while not os.path.exists(\(String(reflecting: root.appendingPathComponent("commit-release").path))):
