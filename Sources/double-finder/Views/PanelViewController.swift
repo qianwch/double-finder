@@ -637,6 +637,8 @@ class PanelViewController: NSViewController {
             lastFedItemsVersion = panelState.itemsVersion
         }
         // selectedItems/cursorIndex are cheap and needed every call.
+        fileTableView.allowsLocalFileURLs = !panelState.isRemote && panelState.remoteArchive == nil
+            && PanelState.archiveRoot(in: panelState.currentPath) == nil
         fileTableView.selectedItems = panelState.selectedItems
         fileTableView.cursorIndex = panelState.cursorIndex
         // statusText is now O(1); always set it.

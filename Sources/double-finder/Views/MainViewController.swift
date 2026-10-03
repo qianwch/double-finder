@@ -63,6 +63,8 @@ class MainViewController: NSViewController {
         PluginManager.shared.host.mainVC = self
         NotificationCenter.default.addObserver(self, selector: #selector(pluginsChangedForToolbar),
                                                name: PluginManager.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(adbDisconnectFailed(_:)),
+                                               name: RemoteSessionStore.adbDisconnectFailed, object: nil)
         setupUI()
         setupFunctionKeyActions()
         appState.load()
@@ -75,6 +77,11 @@ class MainViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleEditWriteBack),
             name: NSApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    @objc private func adbDisconnectFailed(_ notification: Notification) {
+        guard let error = notification.userInfo?["error"] as? Error, let window = view.window else { return }
+        presentLocalizedError(error, in: window)
     }
 
     @MainActor @objc private func languageDidChange() {
@@ -843,6 +850,8 @@ class MainViewController: NSViewController {
             NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
         } else if item.isDirectory {
             panel.navigate(to: item.path)
+        } else if FileItem.isArchiveFileName(item.name), let session = panel.remote?.adbSession {
+            downloadAndEnterADBArchive(item, session: session, panel: panelVC)
         } else if FileItem.isArchiveFileName(item.name), let device = panel.android {
             // No shell on the phone, so there's no remote-listing path like
             // RemoteArchiveFS — fetch the container, then browse it locally.
@@ -880,6 +889,39 @@ class MainViewController: NSViewController {
             await MainActor.run {
                 if let url = url { NSWorkspace.shared.open(url) } else { NSSound.beep() }
             }
+        }
+    }
+
+    private func downloadAndEnterADBArchive(_ item: FileItem, session: ADBSession,
+                                             panel: PanelViewController) {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DoubleFinder-Archives").appendingPathComponent(UUID().uuidString)
+        do { try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true) }
+        catch {
+            if let window = view.window { presentLocalizedError(error, in: window) }
+            return
+        }
+        let local = tmp.appendingPathComponent((item.path as NSString).lastPathComponent)
+        let remoteDir = panel.panelState.currentPath
+        let op = FileOperation(type: .copy, sources: [item.path], destination: tmp.path)
+        op.customTitle = tr("Downloading")
+        op.totalBytes = item.size
+        op.bytesTransferred = { FileOperation.sizeOnDisk(local.path) }
+        op.perItemOperation = { [weak op] path in
+            guard let op else { throw CancellationError() }
+            try await ADBClient(session: session).download(path: path, to: local.path,
+                                                         isCancelled: { op.cancelRequested })
+        }
+        runOperation(op) { [weak panel, weak op] in
+            guard let panel, let op, !op.cancelRequested, op.failures.isEmpty,
+                  panel.panelState.remote?.adbSession == session,
+                  panel.panelState.currentPath == remoteDir,
+                  FileManager.default.fileExists(atPath: local.path) else {
+                try? FileManager.default.removeItem(at: tmp)
+                return
+            }
+            panel.panelState.enterDownloadedArchive(localArchive: local.path, from: .adb(session), remoteDir: remoteDir,
+                                                    ownedTemporaryRoot: tmp.path)
         }
     }
 
@@ -1118,6 +1160,11 @@ class MainViewController: NSViewController {
             upload = { temp, remote in
                 try await SFTPFS(connection: conn).upload(
                     localPath: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
+            }
+        } else if case .adb(let session)? = remote {
+            label = session.label
+            upload = { temp, remote in
+                try await ADBEditWriteBack.upload(session: session, localPath: temp, remotePath: remote)
             }
         } else if case .android(let device, _)? = remote {
             label = AndroidDeviceRegistry.shared.info(device.sessionID)?.label ?? device.displayName
@@ -1374,6 +1421,14 @@ class MainViewController: NSViewController {
 
     /// Pick the provider for a copy from `src` panel to `dst` panel.
     private func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) throws -> TransferProvider {
+        let materialize = src.remoteArchive != nil || PanelState.archiveRoot(in: src.currentPath) != nil
+            || src.searchResultsIncludeArchiveEntries
+        if materialize, let session = dst.remote?.adbSession {
+            return ADBMaterializedUploadProvider(srcFS: src.fs, session: session)
+        }
+        if src.remoteArchive != nil, dst.remote == nil {
+            return LocalCopyProvider(srcFS: src.fs, archiveRoot: true)
+        }
         if let provider = try TransferPlanner.remoteProvider(from: src.remote, to: dst.remote, move: false) {
             return provider
         }
@@ -1523,8 +1578,6 @@ class MainViewController: NSViewController {
 
         let isSFTP = panel.sftp != nil
         let isS3 = panel.s3 != nil
-        let isAndroid = panel.android != nil
-        let isPlugin = panel.plugin != nil
         let n = items.count
         let countText = n == 1 ? tr("1 item") : tr("%d items", n)
 
@@ -1542,7 +1595,7 @@ class MainViewController: NSViewController {
         }
 
         // Remote delete is irreversible regardless of which key was pressed.
-        guard confirm || isSFTP || isS3 || isAndroid || isPlugin else { run(); return }
+        guard confirm || panel.isRemote else { run(); return }
 
         // List what's about to go (up to 10 names, the rest folded), so the user
         // confirms actual content, not just a count.
@@ -1559,8 +1612,8 @@ class MainViewController: NSViewController {
             alert.informativeText = listing + "\n\n"
                 + tr("This permanently removes them from the bucket and cannot be undone.")
             alert.addButton(withTitle: tr("Delete"))
-        } else if isPlugin {
-            alert.messageText = tr("Delete %@ from %@?", countText, panel.plugin?.session.label ?? "")
+        } else if let remote = panel.remote {
+            alert.messageText = tr("Delete %@ from %@?", countText, remote.label)
             alert.informativeText = listing + "\n\n"
                 + tr("This permanently removes them and cannot be undone.")
             alert.addButton(withTitle: tr("Delete"))
@@ -1665,7 +1718,7 @@ class MainViewController: NSViewController {
         let done = keepAlive(sheet)
         sheet.onGoTo = { [weak self] path in self?.goToFile(path) }
         sheet.onFeed = { [weak self] paths, meta in
-            guard let self = self else { return }
+            guard self != nil else { return }
             if endpoint.hitsAreVirtual {
                 // Remote / in-archive results carry their own size/mtime — the
                 // panel can't stat those paths, so it must be handed the metadata.
@@ -2748,6 +2801,7 @@ class MainViewController: NSViewController {
     /// Copies the selected files/folders to the general pasteboard as file URLs,
     /// so they can be pasted into Finder (or any app). Local files only.
     func copyFilesToClipboard() {
+        guard isLocalPanel(activePanelVC.panelState) else { NSSound.beep(); return }
         let items = activePanelVC.selectedOrCurrent.filter { $0.name != ".." }
         let urls: [NSURL] = items.compactMap {
             FileManager.default.fileExists(atPath: $0.path) ? NSURL(fileURLWithPath: $0.path) : nil
@@ -2759,18 +2813,20 @@ class MainViewController: NSViewController {
     }
 
     /// Pastes files/folders previously copied (in Double Finder or Finder) into
-    /// the active panel's directory. Local destinations only.
+    /// the active panel's directory, uploading through the captured remote session.
     func pasteFilesFromClipboard() {
         let panel = appState.activePanelState
-        // Local destinations only: importExternalFiles works through LocalFS, so
-        // any remote backend (SFTP / S3 / Android) would write to a virtual path.
-        guard !panel.isRemote, PanelState.archiveRoot(in: panel.currentPath) == nil else {
+        guard panel.remoteArchive == nil, PanelState.archiveRoot(in: panel.currentPath) == nil else {
             NSSound.beep(); return
         }
         guard let urls = NSPasteboard.general.readObjects(
                 forClasses: [NSURL.self],
                 options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty else {
             NSSound.beep(); return
+        }
+        if let session = panel.remote {
+            dropOntoRemote(urls, session: session, destPanel: panel, destDir: panel.currentPath, move: false)
+            return
         }
         importExternalFiles(urls, into: panel.currentPath, move: false) { [weak self] in
             self?.activePanelVC.panelState.refresh()
@@ -3048,7 +3104,7 @@ class MainViewController: NSViewController {
             guard let b = bucket else { return nil }     // bucket list root not syncable
             let prefix = key.isEmpty ? "" : (key.hasSuffix("/") ? key : key + "/")
             return .s3(conn.makeClient(secret: secret), bucket: b, prefix: prefix)
-        case .android?, .plugin?:
+        case .android?, .plugin?, .adb?:
             // No server-side listing: the generic VirtualFS walk + copy.
             return .generic(p.fs, base: p.currentPath)
         case nil:
@@ -3160,6 +3216,9 @@ class MainViewController: NSViewController {
         let sheet = ServerConnectionSheet()
         serverSheet = sheet
         sheet.onConnect = { [weak self] conn, secret in self?.connect(conn, s3Secret: secret) }
+        var adbTarget: PanelState?
+        sheet.onADBConnectionStarted = { [weak self] in adbTarget = self?.activePanelVC.panelState }
+        sheet.onConnectADB = { session, path in adbTarget?.connect(.adb(session), initialPath: path) }
         sheet.onClose = { [weak self] in self?.serverSheet = nil }
         sheet.show(on: view.window)
     }
@@ -3186,6 +3245,10 @@ class MainViewController: NSViewController {
             connectSMB(url)
         case .android(let device):
             connectAndroid(device)
+        case .adb(let connection):
+            // Saved wireless entries are composed and validated by the connection window.
+            actionConnectServer_menu()
+            serverSheet?.selectADBConnection(connection)
         }
     }
 
@@ -3585,6 +3648,7 @@ extension MainViewController {
     /// are skipped. Driving Finder needs Automation permission the first time
     /// (macOS prompts; if denied we surface a hint).
     @objc func actionGetInfo() {
+        guard isLocalPanel(activePanelVC.panelState) else { NSSound.beep(); return }
         let paths = activePanelVC.selectedOrCurrent
             .filter { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }
             .map { $0.path }
@@ -3958,7 +4022,7 @@ extension MainViewController: PanelViewControllerDelegate {
             add(tr("Open"), #selector(ctxOpen))
             // Open With submenu (Finder-style): apps that can open this item.
             // Populated lazily so the context menu pops instantly.
-            if let first = targets.first(where: { $0.name != ".." }),
+            if isLocalPanel(vc.panelState), let first = targets.first(where: { $0.name != ".." }),
                FileManager.default.fileExists(atPath: first.path) {
                 let owItem = NSMenuItem(title: tr("Open With"), action: nil, keyEquivalent: "")
                 let sub = NSMenu()
@@ -3971,7 +4035,7 @@ extension MainViewController: PanelViewControllerDelegate {
             add(tr("Quick Look"), #selector(actionQuickLook_menu))
             add(tr("Edit"), #selector(actionOpenInEditor_menu))
             // Get Info (Finder's own info window, ⌘I) — local files only.
-            if targets.contains(where: { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }) {
+            if isLocalPanel(vc.panelState), targets.contains(where: { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }) {
                 add(tr("Get Info"), #selector(actionGetInfo), key: "i", mask: [.command])
             }
             menu.addItem(.separator())
@@ -3995,11 +4059,11 @@ extension MainViewController: PanelViewControllerDelegate {
             // populates it lazily (on hover) with the services applicable to those
             // files. We must NOT add our own item — that duplicates the menu, and
             // assigning NSApp.servicesMenu forces a slow synchronous enumeration.
-            let serviceURLs = targets
+            let serviceURLs = (isLocalPanel(vc.panelState) ? targets : [])
                 .filter { $0.name != ".." && FileManager.default.fileExists(atPath: $0.path) }
                 .map { URL(fileURLWithPath: $0.path) }
+            vc.fileTableView?.serviceURLs = serviceURLs
             if let listView = vc.fileTableView, !serviceURLs.isEmpty {
-                listView.serviceURLs = serviceURLs
                 vc.view.window?.makeFirstResponder(listView.firstResponderTarget)
             }
         } else {

@@ -14,6 +14,11 @@ import AppKit
 final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NSTableViewDelegate,
                                    NSWindowDelegate, NSTextFieldDelegate, NSSearchFieldDelegate {
     var onConnect: ((ServerConnection, String?) -> Void)?
+    var onConnectADB: ((ADBSession, String) -> Void)?
+    var onADBConnectionStarted: (() -> Void)?
+    private let adbForm = ADBConnectionView()
+    private var adbDevices: [ADBDevice] = []
+    private var adbScanning = false
     var onClose: (() -> Void)?
 
     // MARK: - State
@@ -44,6 +49,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         case saved(ServerConnection, storeKey: String)
         case draft(ServerKind)
         case device(AndroidDevice)
+        case adbDevice(ADBDevice)
         case discovered(NetworkBrowser.Service)
     }
     private var subject: Subject = .none
@@ -105,6 +111,18 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         super.init(window: win)
         win.delegate = self
         buildUI()
+        adbForm.onDevices = { [weak self] devices, scanning in
+            self?.adbDevices = devices; self?.adbScanning = scanning; self?.reloadRail()
+        }
+        adbForm.onEdit = { [weak self] in self?.commitEdit() }
+        adbForm.onConnectionStarted = { [weak self] in self?.onADBConnectionStarted?() }
+        adbForm.onConnected = { [weak self] session, path in
+            guard let self else { return }
+            self.commitEdit()
+            if let (conn, _) = self.formConnection() { ServerConnectionStore.markConnected(conn) }
+            self.onConnectADB?(session, path)
+            self.window?.close()
+        }
         saved = ServerConnectionStore.load()
         browser.onChange = { [weak self] services in
             guard let self = self else { return }
@@ -128,13 +146,20 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         reloadRail()
         browser.start()
         rescanAndroid()
+        adbForm.refresh()
         S3SecretStore.reconcileIndexIfNeeded { [weak self] in self?.updateCredentialRow() }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func selectADBConnection(_ connection: ADBConnection) {
+        showSubject(.saved(.adb(connection), storeKey: ServerConnection.adb(connection).storeKey))
+    }
+
     func windowWillClose(_ n: Notification) {
         browser.stop()
+        androidScanGeneration += 1
+        adbForm.close()
         onClose?()
     }
 
@@ -188,7 +213,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         addButton.controlSize = .small
         let addMenu = NSMenu()
         addMenu.addItem(withTitle: "", action: nil, keyEquivalent: "")   // pull-down title slot
-        for (title, tag) in [("SFTP", 0), ("S3", 1), ("SMB", 2)] {
+        for (title, tag) in [("SFTP", 0), ("S3", 1), ("SMB", 2), (tr("Android (ADB)"), 3)] {
             let item = NSMenuItem(title: title, action: #selector(newOfKind(_:)), keyEquivalent: "")
             item.target = self
             item.tag = tag
@@ -315,7 +340,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         // is showing. With a plain NSView the four stacked forms were all pinned
         // to the top and nothing to the bottom — the container measured zero
         // high and the credential line landed on top of the first field.
-        let formStack = NSStackView(views: [sftpForm, s3Form, smbForm, deviceForm, emptyLabel])
+        let formStack = NSStackView(views: [sftpForm, s3Form, smbForm, deviceForm, adbForm, emptyLabel])
         formStack.orientation = .vertical
         formStack.alignment = .leading
         formStack.spacing = 0
@@ -323,7 +348,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         // The three grids must actually SPAN the pane: an NSGridView only takes
         // its intrinsic width, and a text field's intrinsic width is a few
         // points, so without this every field collapses to a ~14pt stub.
-        for form in [sftpForm!, s3Form!, smbForm!] {
+        for form in [sftpForm!, s3Form!, smbForm!, adbForm] {
             form.widthAnchor.constraint(equalTo: formStack.widthAnchor).isActive = true
         }
 
@@ -446,7 +471,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         }
         rows = ServerRail.rows(saved: saved, devices: devices, discovered: discovered,
                                scanningDevices: androidScanning,
-                               filter: searchField.stringValue)
+                               filter: searchField.stringValue, adbDevices: adbDevices, scanningADB: adbScanning)
         railTable.reloadData()
         if let previous = previous, let index = rows.firstIndex(of: previous) {
             railTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
@@ -468,6 +493,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     // MARK: - Subject
 
     private func showSubject(_ subject: Subject) {
+        adbForm.cancelConnection()
         self.subject = subject
         populating = true
         defer { populating = false }
@@ -484,6 +510,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             clearForm(k)
         case .device:
             kind = .android
+        case .adbDevice(let d):
+            kind = .adb; adbForm.showDevice(d)
         case .discovered(let service):
             kind = service.kind == .smb ? .smb : .sftp
             clearForm(kind!)
@@ -501,8 +529,10 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         s3Form.isHidden = kind != .s3
         smbForm.isHidden = kind != .smb
         deviceForm.isHidden = kind != .android
+        adbForm.isHidden = kind != .adb
         emptyLabel.isHidden = kind != nil
         connectButton.isEnabled = kind != nil
+        if case .adbDevice(let d) = subject { connectButton.isEnabled = d.isAuthorized }
         autoSaveHint.isHidden = !isEditable(subject)
 
         updateHeader()
@@ -512,7 +542,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     private func isEditable(_ subject: Subject) -> Bool {
         switch subject {
         case .saved, .draft, .discovered: return true
-        case .none, .device:              return false
+        case .none, .device, .adbDevice:              return false
         }
     }
 
@@ -540,10 +570,13 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             let sample = ServerConnection(dict: ["kind": kind.rawValue, "host": "x",
                                                  "endpoint": "x", "name": "x"])
             apply(symbol: sample?.symbolName ?? "server.rack", name: tr("New Connection"),
-                  badge: sample?.kindLabel ?? "", sub: tr("Not saved yet"))
+                  badge: kind == .adb ? "Android (ADB)" : (sample?.kindLabel ?? ""), sub: tr("Not saved yet"))
+        case .adbDevice(let d):
+            headerIcon.isHidden = false
+            apply(symbol: "iphone", name: d.displayName, badge: "Android (ADB)", sub: d.serial + " · " + d.state)
         case .device(let device):
             headerIcon.isHidden = false
-            apply(symbol: "iphone", name: device.displayName, badge: "Android", sub: tr("Connected by USB"))
+            apply(symbol: "iphone", name: device.displayName, badge: "Android (MTP)", sub: tr("Connected by USB"))
         case .discovered(let service):
             headerIcon.isHidden = false
             let isSMB = service.kind == .smb
@@ -597,6 +630,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         case .saved(let c, _):    return c.kind
         case .draft(let k):       return k
         case .device:             return .android
+        case .adbDevice:          return .adb
         case .discovered(let s):  return s.kind == .smb ? .smb : .sftp
         case .none:               return nil
         }
@@ -634,6 +668,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         case .smb(let c):
             smbName.stringValue = c.name
             smbHost.stringValue = c.host
+        case .adb(let c): adbForm.populate(c)
         case .android:
             break
         }
@@ -653,6 +688,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             s3PathStyle.state = .on
         case .smb:
             smbName.stringValue = ""; smbHost.stringValue = ""
+        case .adb: adbForm.populate(nil)
         case .android:
             break
         }
@@ -694,6 +730,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             var name = smbName.stringValue.trimmingCharacters(in: .whitespaces)
             if name.isEmpty { name = host }
             return (.smb(SMBConnection(name: name, host: host)), nil)
+        case .adb:
+            return adbForm.connection().map { (.adb($0), nil) }
         case .android:
             if case .device(let device) = subject { return (.android(device), nil) }
             return nil
@@ -719,7 +757,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         case .draft, .discovered:
             ServerConnectionStore.add(conn)
             subject = .saved(conn, storeKey: conn.storeKey)
-        case .none, .device:
+        case .none, .device, .adbDevice:
             return
         }
         saved = ServerConnectionStore.load()
@@ -802,9 +840,10 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         railTable.deselectAll(nil)
         searchField.stringValue = ""
         reloadRail()
-        let kind: ServerKind = [0: .sftp, 1: .s3, 2: .smb][sender.tag] ?? .sftp
+        let kind: ServerKind = [0: .sftp, 1: .s3, 2: .smb, 3: .adb][sender.tag] ?? .sftp
         showSubject(.draft(kind))
-        window?.makeFirstResponder(kind == .s3 ? s3Endpoint : (kind == .smb ? smbHost : sftpHost))
+        if kind == .adb { adbForm.focusHost() }
+        else { window?.makeFirstResponder(kind == .s3 ? s3Endpoint : (kind == .smb ? smbHost : sftpHost)) }
     }
 
     @objc private func deleteClicked() {
@@ -816,6 +855,7 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
     }
 
     @objc private func connectClicked() {
+        if currentKind() == .adb { adbForm.connect(); return }
         guard let form = formConnection(focusIfIncomplete: true) else { return }
         let conn = form.0
         var secret = form.1
@@ -901,6 +941,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
             return Self.noteCell(text)
         case .saved(let conn):
             return Self.entryCell(symbol: conn.symbolName, title: conn.name, subtitle: conn.subtitle)
+        case .adbDevice(let d):
+            return Self.entryCell(symbol: "iphone", title: d.displayName, subtitle: d.serial + " · " + d.state)
         case .device(let device, let note):
             return Self.entryCell(symbol: "iphone", title: device.displayName, subtitle: note)
         case .discovered(let service):
@@ -989,6 +1031,8 @@ final class ServerConnectionSheet: NSWindowController, NSTableViewDataSource, NS
         switch row {
         case .saved(let conn):
             showSubject(.saved(conn, storeKey: conn.storeKey))
+        case .adbDevice(let d):
+            showSubject(.adbDevice(d))
         case .device(let device, _):
             showSubject(.device(device))
             updateDeviceStatus()

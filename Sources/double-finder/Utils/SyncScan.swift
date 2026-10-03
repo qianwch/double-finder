@@ -8,9 +8,9 @@ enum SyncEndpoint {
     case local(base: String)
     case sftp(SFTPConnection, base: String)
     case s3(S3Client, bucket: String, prefix: String)
-    /// Any other backend through its `VirtualFS` (Android/MTP, plugin drives):
+    /// Any other backend through its `VirtualFS` (Android/MTP/ADB, plugin drives):
     /// scanned by a directory-at-a-time walk, transferred with `copy(from:to:)`
-    /// (whose direction follows whether `from` exists locally, as those FSs do).
+    /// (ADB uploads use the explicit full-path upload helper).
     case generic(VirtualFS, base: String)
 
     var isS3: Bool { if case .s3 = self { return true }; return false }
@@ -80,11 +80,12 @@ enum SyncScan {
             try Task.checkCancellation()
             let items: [FileItem]
             do { items = try await fs.listDirectory(dir) } catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
                 if first { throw error }
                 continue
             }
             first = false
-            for item in items where item.name != ".." {
+            for item in items where item.name != ".." && !item.isSymlink {
                 let childRel = rel.isEmpty ? item.name : rel + "/" + item.name
                 if item.isDirectory {
                     stack.append((item.path, childRel))

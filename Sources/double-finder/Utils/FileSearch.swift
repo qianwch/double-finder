@@ -10,6 +10,7 @@ enum SearchEndpoint {
     case s3(S3Client, bucket: String, prefix: String, base: String)
     /// Android over MTP. `base` is a virtual `/[storage]/…` path.
     case android(AndroidDevice, label: String, base: String)
+    case adb(ADBSession, base: String)
     /// The panel is inside a local archive (ZipFS). `base` is the virtual panel
     /// path (`archivePath` or `archivePath/sub/dir`); the search is scoped to it.
     case archive(archivePath: String, password: String?, base: String)
@@ -25,6 +26,7 @@ enum SearchEndpoint {
         case .sftp(_, let b): return b
         case .s3(_, _, _, let b): return b
         case .android(_, _, let b): return b
+        case .adb(_, let b): return b
         case .archive(_, _, let b): return b
         case .remoteArchive(_, let b): return b
         case .plugin(_, let b): return b
@@ -70,6 +72,7 @@ enum SearchEndpoint {
         case .sftp(let conn, let base): return "\(conn.user)@\(conn.host):\(base)"
         case .s3(_, _, _, let base): return base
         case .android(_, let label, let base): return "\(label):\(base)"
+        case .adb(let session, let base): return "\(session.label):\(base)"
         case .archive(_, _, let base): return base
         case .remoteArchive(let ra, let base): return "\(ra.connection.user)@\(ra.connection.host):\(base)"
         case .plugin(let drive, let base): return "\(drive.session.label):\(base)"
@@ -283,6 +286,8 @@ enum FileSearch {
         case .android(let device, _, let base):
             try await runAndroid(device: device, base: base,
                                  query: query, matcher: matcher, progress: progress)
+        case .adb(let session, let base):
+            try await runADB(session: session, base: base, query: query, matcher: matcher, progress: progress)
         case .archive(let archivePath, let password, let base):
             let prefix = base.hasPrefix(archivePath + "/") ? String(base.dropFirst(archivePath.count + 1)) : ""
             try searchArchive(archivePath: archivePath, password: password, internalPrefix: prefix,
@@ -635,15 +640,17 @@ enum FileSearch {
                 // The first listing failing means the device is gone / the path is
                 // bad — that must surface. Deeper folders are best-effort: one
                 // unreadable folder must not abort the whole search.
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
                 if isFirst { throw error }
                 continue
             }
             isFirst = false
             for item in items {
                 if item.isDirectory {
-                    if subfolders { stack.append(item.path) }
+                    if subfolders && !item.isSymlink { stack.append(item.path) }
                     continue
                 }
+                guard !item.isSymlink else { continue }
                 progress.bumpScanned()
                 guard matcher.matches(item.name) else { continue }
                 candidates.append(SearchHit(path: item.path, size: item.size,
@@ -651,6 +658,38 @@ enum FileSearch {
             }
         }
         return candidates
+    }
+
+    // MARK: Android (ADB)
+
+    private nonisolated static func runADB(session: ADBSession, base: String,
+                                           query: FileSearchQuery, matcher: SearchNameMatcher,
+                                           progress: SearchProgress) async throws {
+        let client = ADBClient(session: session)
+        let candidates = try await walk(base: base, subfolders: query.subfolders,
+                                        matcher: matcher, progress: progress) {
+            try await client.list($0)
+        }
+        guard !query.content.isEmpty else {
+            for hit in candidates.prefix(maxResults) { progress.add(hit) }
+            return
+        }
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("DoubleFinder-Search-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        for hit in candidates where hit.size <= SearchContentMatcher.maxBytes {
+            try Task.checkCancellation()
+            if progress.reachedLimit { break }
+            let local = temp.appendingPathComponent((hit.path as NSString).lastPathComponent)
+            do {
+                try await client.download(path: hit.path, to: local.path)
+                if SearchContentMatcher.matches(try Data(contentsOf: local), needle: query.content) {
+                    progress.add(hit)
+                }
+            } catch is CancellationError { throw CancellationError() }
+            catch { try Task.checkCancellation() } // Unreadable content is best-effort.
+            try? FileManager.default.removeItem(at: local)
+        }
     }
 
     // MARK: Android (MTP)

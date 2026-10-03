@@ -12,13 +12,14 @@ enum ServerRailRow: Equatable {
     /// A plugged-in phone. `note` is the occupancy line captured at scan time
     /// ("in use by …"), empty when nothing holds it.
     case device(AndroidDevice, note: String)
+    case adbDevice(ADBDevice)
     case discovered(NetworkBrowser.Service)
     /// Empty-state / progress line. Never selectable.
     case note(String)
 
     var isSelectable: Bool {
         switch self {
-        case .saved, .device, .discovered: return true
+        case .saved, .device, .adbDevice, .discovered: return true
         case .header, .note:               return false
         }
     }
@@ -28,6 +29,7 @@ enum ServerRailRow: Equatable {
         switch self {
         case .saved(let c):          return c.name + " " + c.subtitle
         case .device(let d, _):      return d.displayName
+        case .adbDevice(let d): return d.displayName + " " + d.serial + " " + d.state
         case .discovered(let s):     return s.name + " " + (s.host ?? "")
         case .header, .note:         return ""
         }
@@ -46,7 +48,7 @@ enum ServerRail {
                      devices: [(device: AndroidDevice, note: String)],
                      discovered: [NetworkBrowser.Service],
                      scanningDevices: Bool,
-                     filter: String) -> [ServerRailRow] {
+                     filter: String, adbDevices: [ADBDevice] = [], scanningADB: Bool = false) -> [ServerRailRow] {
         let needle = filter.trimmingCharacters(in: .whitespaces)
         let filtering = !needle.isEmpty
         func matches(_ row: ServerRailRow) -> Bool {
@@ -75,8 +77,11 @@ enum ServerRail {
         // section would be noise, so this one shows up only when there is
         // something to say.
         let deviceRows: [ServerRailRow] = devices.map { .device($0.device, note: $0.note) }
-        section(tr("Connected devices"), deviceRows,
+        section(tr("Android (MTP)"), deviceRows,
                 emptyNote: scanningDevices ? tr("Scanning…") : nil)
+
+        section(tr("Android (ADB)"), adbDevices.map { .adbDevice($0) },
+                emptyNote: scanningADB ? tr("Scanning…") : nil)
 
         section(tr("Discovered"), discovered.map { .discovered($0) },
                 emptyNote: tr("Nothing shared on the local network."))

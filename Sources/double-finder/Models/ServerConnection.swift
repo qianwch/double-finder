@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerKind: String { case sftp, s3, smb, android }
+enum ServerKind: String { case sftp, s3, smb, android, adb }
 
 /// An SMB server (host only). Shares are listed after NetFS mounts them; no
 /// password is stored (NetFS native auth handles credentials).
@@ -27,6 +27,7 @@ enum ServerConnection: Equatable {
     /// A phone plugged in over USB (MTP). Unlike the others this is never
     /// persisted — there is nothing to save but the cable.
     case android(AndroidDevice)
+    case adb(ADBConnection)
 
     var kind: ServerKind {
         switch self {
@@ -34,6 +35,7 @@ enum ServerConnection: Equatable {
         case .s3:      return .s3
         case .smb:     return .smb
         case .android: return .android
+        case .adb: return .adb
         }
     }
 
@@ -43,7 +45,8 @@ enum ServerConnection: Equatable {
         case .sftp:    return "SFTP"
         case .s3:      return "S3"
         case .smb:     return "SMB"
-        case .android: return "Android"
+        case .android: return "Android (MTP)"
+        case .adb: return "Android (ADB)"
         }
     }
 
@@ -53,6 +56,7 @@ enum ServerConnection: Equatable {
         case .s3(let c):   return c.name.isEmpty ? c.endpoint : c.name
         case .smb(let c):  return c.name
         case .android(let d): return d.displayName
+        case .adb(let c): return c.name.isEmpty ? c.endpoint : c.name
         }
     }
 
@@ -73,7 +77,8 @@ enum ServerConnection: Equatable {
         case .smb(let c):
             return c.host
         case .android:
-            return "USB"
+            return "USB · MTP"
+        case .adb(let c): return c.endpoint
         }
     }
 
@@ -84,6 +89,7 @@ enum ServerConnection: Equatable {
         case .s3:      return "cloud"
         case .smb:     return "network"
         case .android: return "iphone"
+        case .adb: return "iphone"
         }
     }
 
@@ -100,6 +106,8 @@ enum ServerConnection: Equatable {
             var d = c.dict; d["kind"] = "s3"; return d
         case .smb(let c):
             var d = c.dict; d["kind"] = "smb"; return d
+        case .adb(let c):
+            return ["kind": "adb", "name": c.name, "host": c.host, "port": String(c.port), "initialPath": c.initialPath]
         case .android:
             // Never persisted (see ServerConnectionStore.add); the marker exists
             // only so `dict` stays total.
@@ -123,6 +131,10 @@ enum ServerConnection: Equatable {
         case "smb":
             guard let c = SMBConnection(dict: dict) else { return nil }
             self = .smb(c)
+        case "adb":
+            guard let host = dict["host"], let port = Int(dict["port"] ?? ""),
+                  (try? ADBConnectionDraft.endpoint(host: host, port: String(port))) != nil else { return nil }
+            self = .adb(ADBConnection(name: dict["name"] ?? "", host: host, port: port, initialPath: dict["initialPath"] ?? "/sdcard"))
         case "android":
             // A phone can't be restored from disk — it has to be plugged in and
             // rescanned. Drop any stray entry instead of resurrecting it.
@@ -146,7 +158,7 @@ enum ServerConnectionStore {
     /// Connections grouped by kind in SFTP → S3 → SMB order; empty groups omitted.
     /// Used by the address-book tree in the connection sheet.
     static func grouped(_ conns: [ServerConnection]) -> [(kind: ServerKind, items: [ServerConnection])] {
-        let order: [ServerKind] = [.sftp, .s3, .smb]
+        let order: [ServerKind] = [.sftp, .s3, .smb, .adb]
         return order.compactMap { k in
             let items = conns.filter { $0.kind == k }
             return items.isEmpty ? nil : (k, items)

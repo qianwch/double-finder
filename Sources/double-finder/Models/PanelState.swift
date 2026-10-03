@@ -267,6 +267,7 @@ class PanelState: ObservableObject {
         if let ra = remoteArchive { return ra }
         switch remote {
         case .android(let device, _)?: return AndroidFS(device: device, currentPath: currentPath)
+        case .adb(let s)?: return ADBFS(session: s, currentPath: currentPath)
         case .plugin(let drive)?: return PluginFS(drive: drive, currentPath: currentPath)
         case .sftp(let conn)?: return SFTPFS(connection: conn)
         case .s3(let conn, let secret)?: return S3FS(client: conn.makeClient(secret: secret), currentPath: currentPath)
@@ -291,6 +292,7 @@ class PanelState: ObservableObject {
             // there is fine (it recurses into each storage).
             return .android(device, label: label, base: currentPath)
         case .sftp(let conn)?: return .sftp(conn, base: currentPath)
+        case .adb(let session)?: return .adb(session, base: currentPath)
         case .plugin(let drive)?: return .plugin(drive, base: currentPath)
         case .s3(let conn, let secret)?:
             let (bucket, key) = parseS3Path(currentPath)
@@ -392,10 +394,13 @@ class PanelState: ObservableObject {
     /// plugin drive `FileSystemPlugin.connect` must have run — both are where
     /// prompts and failures surface, this only points the panel at the result.
     func connect(_ session: RemoteSession, initialPath: String) {
+        guard let effective = RemoteSessionStore.shared.register(session) else {
+            navigateLocal(to: localReturnPath)
+            return
+        }
         rememberLocalReturn()
-        RemoteSessionStore.shared.register(session)
         remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
-        remote = session
+        remote = effective
         currentPath = initialPath
         cursorMemory = [:]; history = [initialPath]; historyIndex = 0
         filter = ""; selectedItems.removeAll(); cursorIndex = 0
@@ -1058,7 +1063,7 @@ class PanelState: ObservableObject {
     /// When browsing a local copy of an archive downloaded off a remote session,
     /// remembers the session + remote directory so going up past the archive
     /// root returns there (and cleans up the temp download).
-    private var downloadedArchiveReturn: (session: RemoteSession, remoteDir: String, tempArchive: String)?
+    private var downloadedArchiveReturn: (session: RemoteSession, remoteDir: String, tempArchive: String, ownedTemporaryRoot: String?)?
 
     /// When browsing an SFTP archive *in place* (no full download), the remote FS
     /// instance + where to return when leaving it.
@@ -1069,8 +1074,9 @@ class PanelState: ObservableObject {
     /// (backends without in-place listing — MTP has no shell, plugins have no
     /// `RemoteArchiveFS`, SFTP for 7z/rar — fetch the whole container first).
     /// Going up past its root returns to `remoteDir` on that session.
-    func enterDownloadedArchive(localArchive: String, from session: RemoteSession, remoteDir: String) {
-        downloadedArchiveReturn = (session, remoteDir, localArchive)
+    func enterDownloadedArchive(localArchive: String, from session: RemoteSession, remoteDir: String,
+                                ownedTemporaryRoot: String? = nil) {
+        downloadedArchiveReturn = (session, remoteDir, localArchive, ownedTemporaryRoot)
         remote = nil
         navigate(to: localArchive)
     }
@@ -1104,7 +1110,9 @@ class PanelState: ObservableObject {
         // Leaving a downloaded remote archive at its root → back to where it came from.
         if let ret = downloadedArchiveReturn, currentPath == ret.tempArchive {
             downloadedArchiveReturn = nil
-            try? FileManager.default.removeItem(atPath: ret.tempArchive)
+            // Only a caller-owned per-download directory may be removed wholesale.
+            // Other backends place their file in a shared temporary directory.
+            try? FileManager.default.removeItem(atPath: ret.ownedTemporaryRoot ?? ret.tempArchive)
             connect(ret.session, initialPath: ret.remoteDir)
             return
         }

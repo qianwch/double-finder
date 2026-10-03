@@ -280,7 +280,7 @@ final class SyncDirsSheet: NSWindowController {
     /// both sides are the same SFTP host, otherwise bounces through a local
     /// temp file (download then upload). S3 sides stream byte progress via
     /// `report`; the rest report once on completion.
-    private func runFileTransfer(rel: String, from src: SyncEndpoint, to dst: SyncEndpoint,
+    static func runFileTransfer(rel: String, from src: SyncEndpoint, to dst: SyncEndpoint,
                                  report: @escaping @Sendable (Int64) -> Void) async throws {
         let fm = FileManager.default
         func localSize(_ path: String) -> Int64 { FileOperation.sizeOnDisk(path) }
@@ -330,9 +330,8 @@ final class SyncDirsSheet: NSWindowController {
 
         case (.local(let sb), .generic(let fs, let db)):
             let s = (sb as NSString).appendingPathComponent(rel)
-            let remoteDir = ((db as NSString).appendingPathComponent(rel) as NSString).deletingLastPathComponent
-            try await Self.ensureDirectory(fs, path: remoteDir, above: db)
-            try await fs.copy(from: s, to: remoteDir)
+            let remote = (db as NSString).appendingPathComponent(rel)
+            try await Self.uploadGeneric(fs, localPath: s, to: remote, above: db)
             report(localSize(s))
 
         case (.generic(let fs, let sb), .local(let db)):
@@ -385,13 +384,25 @@ final class SyncDirsSheet: NSWindowController {
                 try await client.putObject(bucket: bucket, key: prefix + rel,
                                            fromLocalPath: temp, progress: report)
             case .generic(let fs, let base):
-                let remoteDir = ((base as NSString).appendingPathComponent(rel) as NSString).deletingLastPathComponent
-                try await Self.ensureDirectory(fs, path: remoteDir, above: base)
-                try await fs.copy(from: temp, to: remoteDir)
+                let remote = (base as NSString).appendingPathComponent(rel)
+                try await Self.uploadGeneric(fs, localPath: temp, to: remote, above: base)
                 report(localSize(temp))
             case .local:
                 break   // unreachable
             }
+        }
+    }
+
+    /// ADB copy is download-only: never infer direction from overlapping paths.
+    static func uploadGeneric(_ fs: VirtualFS, localPath: String, to remotePath: String,
+                              above root: String) async throws {
+        let parent = (remotePath as NSString).deletingLastPathComponent
+        try await ensureDirectory(fs, path: parent, above: root)
+        try Task.checkCancellation()
+        if let adb = fs as? ADBFS {
+            try await adb.upload(from: localPath, to: remotePath)
+        } else {
+            try await fs.copy(from: localPath, to: parent)
         }
     }
 
@@ -423,8 +434,8 @@ final class SyncDirsSheet: NSWindowController {
             // Source-side file size drives the byte/sec speed readout.
             let bytes = (e.direction == .toRight ? e.leftSize : e.rightSize) ?? 0
             return FileOperation.Unit(label: rel, bytes: bytes) { [weak self] report in
-                guard let self = self else { return }
-                try await self.runFileTransfer(rel: rel, from: src, to: dst, report: report)
+                guard self != nil else { return }
+                try await Self.runFileTransfer(rel: rel, from: src, to: dst, report: report)
             }
         }
         syncButton.isEnabled = false

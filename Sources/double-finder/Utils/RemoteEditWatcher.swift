@@ -67,3 +67,10 @@ final class RemoteEditWatcher {
         store.removeAll { $0.tempPath == tempPath }
     }
 }
+
+/// ADB uploads target the original leaf, independent of the editor temp name.
+enum ADBEditWriteBack {
+    nonisolated static func upload(session: ADBSession, localPath: String, remotePath: String) async throws {
+        try await ADBClient(session: session).upload(localPath: localPath, to: remotePath)
+    }
+}

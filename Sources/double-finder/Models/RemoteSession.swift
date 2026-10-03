@@ -35,6 +35,7 @@ enum RemoteSession: Equatable {
     case android(AndroidDevice, label: String)
     /// A drive opened through a `FileSystemPlugin`.
     case plugin(PluginDriveSession)
+    case adb(ADBSession)
 
     /// Stable identity for dedupe and per-panel path memory. SFTP mirrors
     /// `sameHost` (host + user + port; the configured initial path / address-book
@@ -46,6 +47,7 @@ enum RemoteSession: Equatable {
         case .s3(let c, _): return "s3://\(c.accessKey)@\(c.endpoint)"
         case .android(let d, _): return d.sessionID
         case .plugin(let d): return d.driveID
+        case .adb(let s): return s.id
         }
     }
 
@@ -57,6 +59,7 @@ enum RemoteSession: Equatable {
         case .s3(let c, _): return "s3://\(c.name)"
         case .android(_, let label): return label
         case .plugin(let d): return d.session.label
+        case .adb(let s): return s.label
         }
     }
 
@@ -66,6 +69,7 @@ enum RemoteSession: Equatable {
     var s3Connection: S3Connection? { if case .s3(let c, _) = self { return c }; return nil }
     var androidDevice: AndroidDevice? { if case .android(let d, _) = self { return d }; return nil }
     var androidLabel: String? { if case .android(_, let l) = self { return l }; return nil }
+    var adbSession: ADBSession? { if case .adb(let s) = self { return s }; return nil }
     var pluginDrive: PluginDriveSession? { if case .plugin(let d) = self { return d }; return nil }
 
     /// Signed S3 client (the secret rides in the session), nil for other backends.
@@ -84,6 +88,7 @@ enum RemoteSession: Equatable {
         case (.s3(let a, _), .s3(let b, _)): return a.sameStore(as: b)
         case (.android(let a, _), .android(let b, _)): return a.sessionID == b.sessionID
         case (.plugin(let a), .plugin(let b)): return a === b
+        case (.adb(let a), .adb(let b)): return a.device.serial == b.device.serial
         default: return false
         }
     }
@@ -96,6 +101,7 @@ enum RemoteSession: Equatable {
         // SF Symbols has no Android glyph; a phone silhouette reads correctly.
         case .android: return "iphone"
         case .plugin(let d): return d.symbol
+        case .adb: return "iphone"
         }
     }
 }
@@ -108,6 +114,7 @@ enum RemoteSession: Equatable {
 final class RemoteSessionStore {
     static let shared = RemoteSessionStore()
     static let didChange = Notification.Name("RemoteSessionStoreDidChange")
+    static let adbDisconnectFailed = Notification.Name("RemoteSessionStoreADBDisconnectFailed")
 
     private(set) var sessions: [RemoteSession] = []
 
@@ -117,15 +124,30 @@ final class RemoteSessionStore {
         sessions.first { $0.id == id }
     }
 
-    /// Adds a session, or refreshes the stored one in place (fresh secret /
-    /// settings) when the same host/service is already connected.
-    func register(_ session: RemoteSession) {
-        if let i = sessions.firstIndex(where: { $0.id == session.id }) {
-            sessions[i] = session
+    /// Returns the effective session. ADB holders share one live lifetime and
+    /// fixed executable per device; a stale archive/tab value cannot revive it.
+    @discardableResult
+    func register(_ session: RemoteSession) -> RemoteSession? {
+        var effective = session
+        if case .adb(let incoming) = session {
+            if let existing = self.session(withID: session.id)?.adbSession,
+               !existing.lifetime.isRemoved {
+                var canonical = existing
+                if !incoming.lifetime.isRemoved, canonical.networkEndpoint == nil {
+                    canonical.networkEndpoint = incoming.networkEndpoint
+                }
+                effective = .adb(canonical)
+            } else if incoming.lifetime.isRemoved {
+                return nil
+            }
+        }
+        if let i = sessions.firstIndex(where: { $0.id == effective.id }) {
+            sessions[i] = effective
         } else {
-            sessions.append(session)
+            sessions.append(effective)
         }
         NotificationCenter.default.post(name: Self.didChange, object: self)
+        return effective
     }
 
     func remove(id: String) {
@@ -138,6 +160,18 @@ final class RemoteSessionStore {
         // A plugin drive owns whatever its session holds (network connection,
         // device handle …): tell it to let go.
         if case .plugin(let d) = session { d.session.disconnect() }
+        if case .adb(let s) = session {
+            s.invalidate()
+            // Explicit eject targets this wireless endpoint only; quit never disconnects.
+            if let endpoint = s.networkEndpoint ?? (try? ADBClient.validateEndpoint(s.device.serial)),
+               (try? ADBClient.validateEndpoint(endpoint)) != nil {
+                Task {
+                    do { try await ADBClient.disconnect(executablePath: s.executablePath, endpoint: endpoint) }
+                    catch { NotificationCenter.default.post(name: Self.adbDisconnectFailed, object: self,
+                                                           userInfo: ["error": error, "endpoint": endpoint]) }
+                }
+            }
+        }
         sessions.removeAll { $0.id == id }
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }
@@ -147,6 +181,7 @@ final class RemoteSessionStore {
         if sessions.contains(where: { if case .android = $0 { return true }; return false }) {
             AndroidDeviceRegistry.shared.closeAll()
         }
+        for s in sessions { if case .adb(let a) = s { a.invalidate() } }
         for s in sessions { if case .plugin(let d) = s { d.session.disconnect() } }
         sessions.removeAll()
         NotificationCenter.default.post(name: Self.didChange, object: self)

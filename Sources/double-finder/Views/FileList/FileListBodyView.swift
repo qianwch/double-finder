@@ -109,6 +109,10 @@ final class FileListBodyView: NSView {
     /// Local file URLs the context menu's Services submenu should act on. Set by
     /// the menu builder just before the menu shows; vended via NSServicesMenuRequestor.
     var serviceURLs: [URL] = []
+    /// Remote paths can collide with local / paths; never vend them as local URLs.
+    var allowsLocalFileURLs = true {
+        didSet { if !allowsLocalFileURLs { serviceURLs.removeAll() } }
+    }
 
     // MARK: - Private state
 
@@ -668,7 +672,7 @@ final class FileListBodyView: NSView {
         // is actually draggable (a real local file). For ".." / SFTP / archive rows
         // the drag is suppressed (like the old view), so a slow click on them still
         // reaches the rename path.
-        let draggable = item.name != ".." && FileManager.default.fileExists(atPath: item.path)
+        let draggable = allowsLocalFileURLs && item.name != ".." && FileManager.default.fileExists(atPath: item.path)
         let start = event.locationInWindow
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
             if next.type == .leftMouseUp {
@@ -901,6 +905,7 @@ extension FileListBodyView: NSDraggingSource {
     /// Mirrors NCTableView.startFileDrag exactly: drag the whole selection if
     /// the origin row is in it, otherwise just the clicked row.
     private func startFileDrag(originRow: Int, event: NSEvent) {
+        guard allowsLocalFileURLs else { return }
         let origin = items[originRow]
         let toDrag: [FileItem] = selectedItems.contains(origin.id)
             ? items.filter { selectedItems.contains($0.id) && $0.name != ".." }
@@ -961,7 +966,7 @@ extension FileListBodyView: NSServicesMenuRequestor {
 
     override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?,
                                  returnType: NSPasteboard.PasteboardType?) -> Any? {
-        if let sendType = sendType,
+        if allowsLocalFileURLs, let sendType = sendType,
            sendType == .fileURL || sendType == Self.filenamesType,
            returnType == nil,
            !serviceURLs.isEmpty {
@@ -971,7 +976,7 @@ extension FileListBodyView: NSServicesMenuRequestor {
     }
 
     func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
-        guard !serviceURLs.isEmpty else { return false }
+        guard allowsLocalFileURLs, !serviceURLs.isEmpty else { return false }
         pboard.clearContents()
         pboard.addTypes([Self.filenamesType], owner: nil)
         var ok = pboard.writeObjects(serviceURLs as [NSURL])

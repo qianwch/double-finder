@@ -251,8 +251,13 @@ final class FileListView: NSScrollView {
     /// Forward clickedRow from body.
     var clickedRow: Int { body.clickedRow }
 
-    /// Local file URLs the context menu's Services submenu acts on (forwarded to
-    /// the body, which is the first responder and vends them via NSServicesMenuRequestor).
+    /// Only local panel rows may be exported as system file URLs.
+    var allowsLocalFileURLs: Bool {
+        get { body.allowsLocalFileURLs }
+        set { body.allowsLocalFileURLs = newValue }
+    }
+
+    /// Local file URLs for the context menu Services submenu.
     var serviceURLs: [URL] {
         get { body.serviceURLs }
         set { body.serviceURLs = newValue }

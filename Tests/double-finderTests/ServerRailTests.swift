@@ -43,13 +43,13 @@ final class ServerRailTests: XCTestCase {
         XCTAssertEqual(rows[2], .header(tr("Discovered")))
         if case .note = rows[3] {} else { XCTFail("expected an empty-state note") }
         // No phone plugged in and no scan running: the section is absent, not empty.
-        XCTAssertFalse(rows.contains(.header(tr("Connected devices"))))
+        XCTAssertFalse(rows.contains(.header(tr("Android (MTP)"))))
     }
 
     func testDeviceSectionAppearsWhileScanning() {
         let rows = ServerRail.rows(saved: [], devices: [], discovered: [],
                                    scanningDevices: true, filter: "")
-        XCTAssertTrue(rows.contains(.header(tr("Connected devices"))))
+        XCTAssertTrue(rows.contains(.header(tr("Android (MTP)"))))
         XCTAssertTrue(rows.contains(.note(tr("Scanning…"))))
     }
 

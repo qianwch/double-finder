@@ -12,6 +12,7 @@ extension RemoteSession {
         case .s3(let c, let secret): return S3SameStoreProvider(client: c.makeClient(secret: secret), move: move)
         case .android(let d, _): return AndroidSameDeviceProvider(device: d, move: move)
         case .plugin(let drive): return PluginTransferProvider(drive: drive, mode: .within(move: move))
+        case .adb(let s): return ADBTransferProvider(session: s, mode: .within(move: move))
         }
     }
 
@@ -22,6 +23,7 @@ extension RemoteSession {
         case .s3(let c, let secret): return S3TransferProvider(client: c.makeClient(secret: secret), downloading: download)
         case .android(let d, _): return AndroidTransferProvider(device: d, direction: download ? .download : .upload)
         case .plugin(let drive): return PluginTransferProvider(drive: drive, mode: download ? .download : .upload)
+        case .adb(let s): return ADBTransferProvider(session: s, mode: download ? .download : .upload)
         }
     }
 

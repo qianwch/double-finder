@@ -12,6 +12,7 @@ final class GeneralSettingsView: SettingsPaneView {
     private var viewPopup: NSPopUpButton!
     private var foldersCheckbox: NSButton!
     private var trashCheckbox: NSButton!
+    private let adbPathLabel = NSTextField(wrappingLabelWithString: "")
     private var terminalNames: [String] = []
     private var editorNames: [String] = []
 
@@ -122,6 +123,14 @@ final class GeneralSettingsView: SettingsPaneView {
             SettingsRow.labeled(tr("Terminal app:"), termPop, labelWidth: labelWidth),
             SettingsRow.labeled(tr("Editor app:"), editorPop, labelWidth: labelWidth),
         ])
+        let adbChoose = NSButton(title: tr("Choose adb…"), target: self, action: #selector(chooseADB))
+        let adbAuto = NSButton(title: tr("Use Automatic Location"), target: self, action: #selector(resetADB))
+        let adbButtons = NSStackView(views: [adbChoose, adbAuto]); adbButtons.spacing = 8
+        updateADBPath()
+        addCard(title: tr("Android (ADB)"), rows: [
+            SettingsRow.control(adbPathLabel, labelWidth: labelWidth),
+            SettingsRow.control(adbButtons, labelWidth: labelWidth),
+        ])
         addCard(title: tr("File List"), rows: [
             SettingsRow.labeled(tr("Default view:"), viewPop, labelWidth: labelWidth),
             SettingsRow.control(foldersBox, labelWidth: labelWidth),
@@ -132,6 +141,23 @@ final class GeneralSettingsView: SettingsPaneView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    private func updateADBPath() {
+        let configured = UserDefaults.standard.string(forKey: "ADBExecutablePath") ?? ""
+        let located = ADBClient.resolveExecutable(configuredPath: configured)
+        adbPathLabel.stringValue = configured.isEmpty
+            ? tr("Automatic: %@", located ?? tr("ADB not found"))
+            : tr("Custom: %@", configured)
+    }
+    @objc private func chooseADB() {
+        let picker = NSOpenPanel()
+        picker.title = tr("Choose adb executable")
+        picker.canChooseFiles = true; picker.canChooseDirectories = false; picker.allowsMultipleSelection = false
+        guard picker.runModal() == .OK, let path = picker.url?.path,
+              FileManager.default.isExecutableFile(atPath: path) else { return }
+        UserDefaults.standard.set(path, forKey: "ADBExecutablePath"); updateADBPath()
+    }
+    @objc private func resetADB() { UserDefaults.standard.removeObject(forKey: "ADBExecutablePath"); updateADBPath() }
 
     @objc private func changeLanguage(_ s: NSPopUpButton) {
         Localizer.shared.setLanguage(Language.allCases[s.indexOfSelectedItem]); onChange()
@@ -157,6 +183,7 @@ final class GeneralSettingsView: SettingsPaneView {
 
 extension GeneralSettingsView: SettingsPaneReloadable {
     func reloadFromModel() {
+        updateADBPath()
         if let idx = Language.allCases.firstIndex(of: Localizer.shared.storedSelection) {
             languagePopup.selectItem(at: idx)
         }

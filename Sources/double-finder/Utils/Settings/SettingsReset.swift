@@ -16,7 +16,7 @@ enum SettingsReset {
     /// Category id (matching `SettingsCategory.id`) → the fixed keys it owns.
     static let keysByCategory: [String: [String]] = [
         "general": [
-            "ViewMode", "FoldersFirst", "ConfirmTrash", "TerminalApp", "EditorApp", "Language",
+            "ViewMode", "FoldersFirst", "ConfirmTrash", "TerminalApp", "EditorApp", "Language", "ADBExecutablePath",
         ],
         "appearance": [
             "Appearance", "ColorByType",
