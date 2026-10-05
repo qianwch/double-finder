@@ -1587,10 +1587,11 @@ class MainViewController: NSViewController {
             let op = DeleteProvider(sftp: panel.sftp,
                                     remoteFS: (panel.remote != nil && panel.sftp == nil) ? panel.fs : nil,
                                     permanent: permanent).makeOperation(items: items)
-            self.runOperation(op) { [weak self] in
-                self?.activePanelVC.panelState.selectedItems.removeAll()
-                self?.activePanelVC.panelState.loadDirectory()
-                self?.activePanelVC.updateDisplay()
+            self.runOperation(op) {
+                // Refresh the panel that started the deletion, preserving its
+                // expanded folders and scroll position rather than navigating.
+                panel.selectedItems.removeAll()
+                panel.refresh()
             }
         }
 
