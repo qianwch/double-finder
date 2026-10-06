@@ -154,7 +154,7 @@ struct ADBMaterializedUploadProvider: TransferProvider {
             do {
                 guard !op.cancelRequested, !session.lifetime.isRemoved else { throw CancellationError() }
                 try Task.checkCancellation()
-                try await srcFS.copy(from: path, to: temp)
+                try await srcFS.exportItem(at: path, toLocalDirectory: URL(fileURLWithPath: temp), progress: { _ in })
                 let name = items.count == 1 ? (renameTo ?? item.name) : item.name
                 guard !name.isEmpty, !name.contains("/"), ![".", ".."].contains(name) else { throw ADBError.invalidArgument }
                 try await ADBTransferProvider(session: session, mode: .upload).transferTree(

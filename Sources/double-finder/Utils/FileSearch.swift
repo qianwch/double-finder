@@ -479,7 +479,7 @@ enum FileSearch {
             if progress.reachedLimit { break }
             let local = (temp as NSString).appendingPathComponent((hit.path as NSString).lastPathComponent)
             defer { try? FileManager.default.removeItem(atPath: local) }
-            guard (try? await fs.copy(from: hit.path, to: temp)) != nil,
+            guard (try? await fs.exportItem(at: hit.path, toLocalDirectory: URL(fileURLWithPath: temp), progress: { _ in })) != nil,
                   let attrs = try? FileManager.default.attributesOfItem(atPath: local),
                   ((attrs[.size] as? Int64) ?? 0) <= Int64(SearchContentMatcher.maxBytes),
                   let data = try? Data(contentsOf: URL(fileURLWithPath: local)) else { continue }
@@ -758,7 +758,7 @@ enum FileSearch {
             if progress.reachedLimit { break }
             let local = (temp as NSString).appendingPathComponent(MTPPath(hit.path).name)
             try? FileManager.default.removeItem(atPath: local)
-            guard (try? await fs.copy(from: hit.path, to: temp)) != nil,
+            guard (try? await fs.exportItem(at: hit.path, toLocalDirectory: URL(fileURLWithPath: temp), progress: { _ in })) != nil,
                   let data = try? Data(contentsOf: URL(fileURLWithPath: local)) else { continue }
             if SearchContentMatcher.matches(data, needle: query.content) { progress.add(hit) }
             try? FileManager.default.removeItem(atPath: local)

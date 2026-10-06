@@ -237,6 +237,49 @@ class SFTPFS: VirtualFS {
         return items
     }
 
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try await FileContentTransfer.prepareDirectory(directory)
+        try await copy(from: path, to: local)
+    }
+
+    /// Unlike the legacy directory upload, this targets an exact path. Directory
+    /// trees are walked explicitly so scp cannot append the source's root name.
+    func importItem(from localURL: URL, toPath destinationPath: String,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try FileContentTransfer.localPath(localURL)
+        _ = try FileContentTransfer.destination(destinationPath)
+        let isDir = try await FileContentTransfer.isLocalDirectory(localURL)
+        try Task.checkCancellation()
+        let target = Self.shellQuote(destinationPath)
+        if isDir {
+            _ = try await runCheckedCommand("if [ -e \(target) ] && [ ! -d \(target) ]; then exit 1; fi; mkdir -p -- \(target)")
+            for child in try await FileContentTransfer.localChildren(localURL) {
+                let destination = (destinationPath as NSString).appendingPathComponent(child.lastPathComponent)
+                try await importItem(from: child, toPath: destination, progress: progress)
+            }
+        } else {
+            _ = try await runCheckedCommand("if [ -d \(target) ] || { [ -e \(target) ] && [ ! -f \(target) ]; }; then exit 1; fi")
+            try Task.checkCancellation()
+            try await uploadFile(localPath: local, toPath: destinationPath)
+        }
+    }
+
+    /// Checked remote commands for content import; errors never become success.
+    @discardableResult
+    func runCheckedCommand(_ command: String) async throws -> String {
+        try await Task.detached(priority: .userInitiated) { try self.sshChecked(command) }.value
+    }
+
+    func uploadFile(localPath: String, toPath remotePath: String) async throws {
+        let key = expandedKey, conn = connection
+        try await Task.detached(priority: .userInitiated) {
+            try Self.scp(["-p", "-i", key, "-P", "\(conn.port)",
+                          "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+                          localPath, "\(conn.user)@\(conn.host):\(remotePath)"], onProcess: nil)
+        }.value
+    }
+
     /// Download a remote file/dir to a local destination directory.
     func copy(from: String, to: String) async throws {
         try await copy(from: from, to: to, onProcess: nil)
@@ -280,8 +323,7 @@ class SFTPFS: VirtualFS {
     }
 
     func move(from: String, to: String) async throws {
-        try await copy(from: from, to: to)
-        try await delete(from)
+        try await serverTransfer(from: from, toDir: to, move: true)
     }
 
     func delete(_ path: String) async throws {

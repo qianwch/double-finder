@@ -118,6 +118,12 @@ final class RemoteArchiveFS: VirtualFS {
 
     // MARK: - Fetch a single entry on demand
 
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try await FileContentTransfer.prepareDirectory(directory)
+        try await copy(from: path, to: local)
+    }
+
     func copy(from: String, to: String) async throws {
         let entry = internalPath(from: from)
         try await Task.detached(priority: .userInitiated) { [self] in

@@ -63,6 +63,9 @@ enum RemoteSession: Equatable {
         }
     }
 
+    /// Namespace identity used for file references, not for connection ownership.
+    var fileEndpointID: FileEndpointID { .remote(id) }
+
     // MARK: Backend accessors (nil unless this session is that backend)
 
     var sftpConnection: SFTPConnection? { if case .sftp(let c) = self { return c }; return nil }
@@ -106,8 +109,17 @@ enum RemoteSession: Equatable {
     }
 }
 
-/// App-global ordered registry of open remote sessions. `PanelState.connectSFTP/
-/// connectS3` register here; the drive-bar ⏏ removes. Every mutation posts
+extension FileEndpointID {
+    /// Remote archive browsing retains its own connection even when the panel
+    /// has left the ordinary remote session. No filesystem I/O is needed.
+    init(remote: RemoteSession?, archiveConnection: SFTPConnection?) {
+        self = archiveConnection.map { RemoteSession.sftp($0).fileEndpointID }
+            ?? remote?.fileEndpointID ?? .local
+    }
+}
+
+/// App-global ordered registry of open remote sessions. SFTP registers on entry;
+/// S3 registers after a successful initial listing. The drive-bar ⏏ removes. Every mutation posts
 /// `didChange` so both panels' drive bars rebuild and a panel sitting in a
 /// removed session falls back to local (`PanelState.leaveRemovedSessions`).
 @MainActor

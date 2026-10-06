@@ -14,11 +14,31 @@ import CryptoKit
 /// bytes, or a second F4 would hand back the user's own unsaved local edits.
 enum MaterializedCache {
 
-    /// Cache folder name for one item — short hex digest of identity + size + mtime.
-    static func slug(path: String, size: Int64, modified: Date) -> String {
-        let key = "\(path)\u{0}\(size)\u{0}\(modified.timeIntervalSince1970)"
-        return SHA256.hash(data: Data(key.utf8)).prefix(8)
+    /// Cache identity includes the namespace: equal paths on two devices can
+    /// have equal metadata while containing completely different bytes.
+    static func slug(reference: FileReference, size: Int64, modified: Date) -> String {
+        directorySlug(mode: "cache", reference: reference,
+                      version: [String(size), String(modified.timeIntervalSince1970)])
+    }
+
+    /// F4 and uncached previews must never overwrite a versioned F3 cache entry.
+    static func temporarySlug(reference: FileReference) -> String {
+        directorySlug(mode: "temporary", reference: reference, version: [])
+    }
+
+    private static func directorySlug(mode: String, reference: FileReference, version: [String]) -> String {
+        let endpoint: [String]
+        switch reference.endpointID {
+        case .local: endpoint = ["local", ""]
+        case .remote(let id): endpoint = ["remote", id]
+        }
+        // A fixed array of strings has no fallible custom encoders. JSON escapes
+        // separators in paths/IDs and preserves field boundaries unambiguously.
+        let fields = ["v2", mode] + endpoint + [reference.path] + version
+        let encoded = try! JSONEncoder().encode(fields)
+        let digest = SHA256.hash(data: encoded).prefix(16)
             .map { String(format: "%02x", $0) }.joined()
+        return "\(mode)-v2-\(digest)"
     }
 
     /// True when `localPath` already holds the complete item. Size must match

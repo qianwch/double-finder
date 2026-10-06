@@ -175,6 +175,12 @@ struct PluginArchiveFS: VirtualFS {
 
     /// Copy-out: extracts the entry (file, or folder + subtree) flat into `to`
     /// under its own name — same contract as `ZipFS.copy`.
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try await FileContentTransfer.prepareDirectory(directory)
+        try await copy(from: path, to: local)
+    }
+
     func copy(from: String, to: String) async throws {
         let entry = internalPath(from)
         guard !entry.isEmpty else { throw FSUnsupportedError(message: "Cannot copy the archive root") }

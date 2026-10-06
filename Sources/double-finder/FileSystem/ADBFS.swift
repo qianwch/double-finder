@@ -6,12 +6,20 @@ struct ADBFS: VirtualFS {
     let currentPath: String
     var client: ADBClient { ADBClient(session: session) }
     func listDirectory(_ path: String) async throws -> [FileItem] { try await client.list(path) }
-    /// VirtualFS materialize contract: remote source, local destination directory.
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try await FileContentTransfer.prepareDirectory(directory)
+        try await client.download(path: path, to: (local as NSString).appendingPathComponent((path as NSString).lastPathComponent))
+    }
+    func importItem(from localURL: URL, toPath destinationPath: String,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try FileContentTransfer.localPath(localURL)
+        _ = try FileContentTransfer.destination(destinationPath)
+        try await client.upload(localPath: local, to: destinationPath)
+    }
+    /// Legacy content-read entry point; upload direction is always explicit.
     func copy(from: String, to: String) async throws {
-        try await Task.detached {
-            try FileManager.default.createDirectory(atPath: to, withIntermediateDirectories: true)
-        }.value
-        try await client.download(path: from, to: (to as NSString).appendingPathComponent((from as NSString).lastPathComponent))
+        try await exportItem(at: from, toLocalDirectory: URL(fileURLWithPath: to), progress: { _ in })
     }
     /// Upload receives a complete remote destination path.
     func upload(from localPath: String, to remotePath: String) async throws {

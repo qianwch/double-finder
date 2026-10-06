@@ -221,20 +221,20 @@ final class PluginKitTests: XCTestCase {
         XCTAssertEqual(PluginFS.parent(of: "/a"), "/")
     }
 
-    func testCopyDirectionFollowsWhetherSourceExistsLocally() async throws {
+    func testExplicitExportAndImportDirections() async throws {
         let (fs, session) = makeFS()
         let tmp = (NSTemporaryDirectory() as NSString).appendingPathComponent("df-pluginfs-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(atPath: tmp) }
 
         // Drive → local: a directory tree lands under <dest>/<leaf>.
-        try await fs.copy(from: "/dir", to: tmp)
+        try await fs.exportItem(at: "/dir", toLocalDirectory: URL(fileURLWithPath: tmp), progress: { _ in })
         let got = try String(contentsOfFile: (tmp as NSString).appendingPathComponent("dir/b.txt"), encoding: .utf8)
         XCTAssertEqual(got, "bb")
 
-        // Local → drive: the file exists on disk, so it is an upload.
+        // Local → drive: explicit import specifies the complete target path.
         let local = (tmp as NSString).appendingPathComponent("up.txt")
         try "up".write(toFile: local, atomically: true, encoding: .utf8)
-        try await fs.copy(from: local, to: "/dir")
+        try await fs.importItem(from: URL(fileURLWithPath: local), toPath: "/dir/up.txt", progress: { _ in })
         XCTAssertEqual(session.files["/dir/up.txt"], Data("up".utf8))
     }
 

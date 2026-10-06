@@ -46,9 +46,13 @@ final class ADBFileSystemTests: XCTestCase {
         let log = root.appendingPathComponent("args")
         let adbScript = """
         #!/usr/bin/env python3
-        import os,sys,json,subprocess
+        import os,sys,json,subprocess,shutil
         with open(\(String(reflecting: log.path)), 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')
         assert sys.argv[1:3]==['-s','test-device']
+        if sys.argv[3] in ['pull','push']:
+            source,target=sys.argv[4:6]
+            if os.path.isdir(source): shutil.copytree(source,target,dirs_exist_ok=True)
+            else: shutil.copy2(source,target)
         if sys.argv[3]=='exec-out':
             env=os.environ.copy(); env['PATH']=\(String(reflecting: root.path))+':'+env['PATH']
             sys.exit(subprocess.call(['/bin/sh','-c',sys.argv[4]],env=env))
@@ -63,11 +67,22 @@ final class ADBFileSystemTests: XCTestCase {
         let size = await ADBFS(session: session, currentPath: directory.path).directorySize(directory.path)
         XCTAssertEqual(size, 5)
         do { _ = try await client.list(root.appendingPathComponent("missing").path); XCTFail("Missing directory returned success") } catch {}
-        try await client.download(path: "/sdcard/collision", to: "/sdcard/local")
-        try await client.upload(localPath: "/sdcard/collision", to: "/sdcard/remote")
+        let fs = ADBFS(session: session, currentPath: directory.path)
+        let collision = directory.appendingPathComponent(name)
+        try await fs.exportItem(at: collision.path, toLocalDirectory: root.appendingPathComponent("out"), progress: { _ in })
+        let remoteTarget = root.appendingPathComponent("remote-renamed")
+        try await fs.importItem(from: collision, toPath: remoteTarget.path, progress: { _ in })
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("out").appendingPathComponent(name)), Data("hello".utf8))
+        XCTAssertEqual(try Data(contentsOf: remoteTarget), Data("hello".utf8))
+        let invalid = URL(string: "https://invalid.example/file")!
+        do { try await fs.exportItem(at: collision.path, toLocalDirectory: invalid, progress: { _ in }); XCTFail() }
+        catch is FSUnsupportedError {}
+        do { try await fs.importItem(from: invalid, toPath: "/sdcard/remote", progress: { _ in }); XCTFail() }
+        catch is FSUnsupportedError {}
         let records = try String(contentsOf: log).split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String] }
         XCTAssertEqual(records.filter { ["pull", "push"].contains($0[2]) }.map { $0[2] }, ["pull", "push"])
-        XCTAssertEqual(records.last?.last, "/sdcard/remote")
+        XCTAssertEqual(records.last?.last, remoteTarget.path)
+        XCTAssertEqual(records.filter { $0[2] == "pull" }.first?[3], collision.path)
         for target in [directory.path, directory.path + "/nested", directory.path + "/a/../nested"] {
             do { try await client.transfer(from: directory.path, to: target, move: false); XCTFail("Unsafe target accepted") } catch {}
         }

@@ -1,6 +1,5 @@
 import AppKit
 import DoubleFinderPluginKit
-import CryptoKit
 
 class MainViewController: NSViewController {
     var appState: AppState!
@@ -43,6 +42,7 @@ class MainViewController: NSViewController {
     private var quickViewLoadTask: Task<Void, Never>?
     private var quickViewLoadGeneration = UUID()
     private var quickViewMediaStream: AndroidMediaStream?
+    private let fileContentService = FileContentService()
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
     /// True while restoreTabs() is importing saved tabs at startup. Importing into
@@ -884,8 +884,9 @@ class MainViewController: NSViewController {
     /// Used for double-click inside an archive, where the item has only a virtual path.
     private func openExtractedThenOpen(_ item: FileItem, in panelVC: PanelViewController) {
         let fs = panelVC.panelState.fs
+        let endpointID = panelVC.panelState.fileEndpointID
         Task {
-            let url = await self.materializeOne(item, using: fs)
+            let url = await self.materializeOne(item, using: fs, endpointID: endpointID)
             await MainActor.run {
                 if let url = url { NSWorkspace.shared.open(url) } else { NSSound.beep() }
             }
@@ -1025,6 +1026,7 @@ class MainViewController: NSViewController {
         }()
         let local = isLocalPanel(panel)
         let fs = panel.fs
+        let endpointID = panel.fileEndpointID
         let viewerEntries: [ViewerEntry] = entries.map { item in
             // A local search listing may hold entries found inside archives:
             // those have no file on disk and must be extracted like any other
@@ -1033,7 +1035,7 @@ class MainViewController: NSViewController {
                                      && PanelState.isInsideArchive(item.path))
             return ViewerEntry(title: item.name, resolve: {
                 if !virtual { return URL(fileURLWithPath: item.path) }
-                return await self.materializeOne(item, using: fs, useCache: true)
+                return await self.materializeOne(item, using: fs, endpointID: endpointID, useCache: true)
             })
         }
         InternalViewerController.shared.show(entries: viewerEntries, start: start) { [weak self] i in
@@ -1056,62 +1058,40 @@ class MainViewController: NSViewController {
 
     /// Downloads (SFTP) or extracts (archive) the given items into a temp folder
     /// so they can be Quick-Looked / opened locally. Returns the local URLs.
-    /// Each item gets its OWN subfolder keyed by its full remote path, so two
+    /// Each item gets its OWN subfolder keyed by endpoint and full path, so two
     /// different files that share a basename don't collide (which would clobber a
     /// pending edit / drop a write-back session). The filename itself is kept
-    /// intact — write-back reconstructs the remote key from `lastPathComponent`.
-    private func materialize(_ items: [FileItem], using fs: VirtualFS) async -> [URL] {
+    /// intact; write-back separately captures the original complete backend path.
+    private func materialize(_ items: [FileItem], using fs: VirtualFS,
+                             endpointID: FileEndpointID) async -> [URL] {
         var out: [URL] = []
         for item in items {
-            if let url = await materializeOne(item, using: fs) { out.append(url) }
+            if let url = await materializeOne(item, using: fs, endpointID: endpointID) { out.append(url) }
         }
         return out
     }
 
     /// Download (SFTP) or extract (archive) a single item into its own temp subfolder
     /// and return the local URL, or nil on failure. The subfolder is keyed by the item's
-    /// full remote path so files sharing a basename don't collide.
+    /// endpoint and full path so files on different connections don't collide.
     ///
     /// `useCache` (F3 only) keys the folder by identity+size+mtime instead and reuses
     /// an already-materialized copy — stepping back to a file with ⌘↑/⌘↓ then costs
     /// nothing, which matters most on a solid 7z where one entry means a full pass
     /// over the archive. F4 (edit) deliberately passes false: it must start from the
     /// remote bytes, otherwise a second F4 would reopen the user's own unsaved edits.
-    private func materializeOne(_ item: FileItem, using fs: VirtualFS, useCache: Bool = false,
+    private func materializeOne(_ item: FileItem, using fs: VirtualFS,
+                                endpointID: FileEndpointID, useCache: Bool = false,
                                 onProgress: (@Sendable (Int64) -> Void)? = nil,
                                 onError: ((Error) -> Void)? = nil) async -> URL? {
-        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("DoubleFinder-View")
-        let slug = useCache
-            ? MaterializedCache.slug(path: item.path, size: item.size, modified: item.modified)
-            : Self.tempSlug(for: item.path)
-        let dir = (root as NSString).appendingPathComponent(slug)
-        // The leaf of the *path*, not `item.name`: a search-result / branch-view
-        // row is named by its relative path ("pack.zip/docs/guide.txt"), while
-        // the download / extract lands under the bare file name.
-        let dest = (dir as NSString).appendingPathComponent((item.path as NSString).lastPathComponent)
-        if useCache, MaterializedCache.isFresh(localPath: dest, expectedSize: item.size) {
-            return URL(fileURLWithPath: dest)
-        }
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(atPath: dest)
+        let request = FileContentRequest(reference: FileReference(endpointID: endpointID, path: item.path),
+                                         size: item.size, modified: item.modified)
         do {
-            try Task.checkCancellation()
-            if let android = fs as? AndroidFS, let onProgress {
-                try await AndroidDeviceRegistry.shared.download(android.device.sessionID, path: item.path,
-                                                                to: dest, progress: onProgress)
-            } else {
-                try await fs.copy(from: item.path, to: dir)   // remote download / archive extract
-            }
-            if FileManager.default.fileExists(atPath: dest) { return URL(fileURLWithPath: dest) }
+            return try await fileContentService.materialize(request, using: fs,
+                                                            mode: useCache ? .viewCache : .temporary,
+                                                            progress: onProgress ?? { _ in })
         } catch { onError?(error) }
         return nil
-    }
-
-    /// Stable short hex digest of a remote path — used to give each materialized
-    /// file a collision-free temp subfolder.
-    private static func tempSlug(for remotePath: String) -> String {
-        SHA256.hash(data: Data(remotePath.utf8)).prefix(8)
-            .map { String(format: "%02x", $0) }.joined()
     }
 
     func actionOpenInEditor() {
@@ -1129,8 +1109,9 @@ class MainViewController: NSViewController {
         // the write-back path recognises it just as it does inside the archive.
         let fs = archiveEntryRow ? PanelState.fileSystem(for: item.path) : panel.fs
         let remote = panel.remote
+        let endpointID = panel.fileEndpointID
         Task {
-            let urls = await self.materialize([item], using: fs)
+            let urls = await self.materialize([item], using: fs, endpointID: endpointID)
             await MainActor.run {
                 guard let u = urls.first else { NSSound.beep(); return }
                 self.registerEditWriteBack(localURL: u, remotePath: item.path, fs: fs, remote: remote)
@@ -1139,10 +1120,11 @@ class MainViewController: NSViewController {
         }
     }
 
-    /// If the edited file came from S3/SFTP, track it so a later change can be
+    /// If the edited file came from a remote endpoint, track it so a later change can be
     /// uploaded back. Captures the connection now (independent of later nav).
     private func registerEditWriteBack(localURL: URL, remotePath: String,
                                        fs: VirtualFS, remote: RemoteSession?) {
+        guard !(fs is RemoteArchiveFS), !(fs is PluginArchiveFS) else { return }
         let tempPath = localURL.path
         guard let a = try? FileManager.default.attributesOfItem(atPath: tempPath),
               let mod = a[.modificationDate] as? Date,
@@ -1150,40 +1132,17 @@ class MainViewController: NSViewController {
 
         let upload: (String, String) async throws -> Void
         let label: String
-        if case .s3(let s3, _)? = remote {
-            label = parseS3Path(remotePath).bucket ?? s3.endpointHost
-            upload = { temp, remote in
-                try await fs.copy(from: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
+        if let remote {
+            switch remote {
+            case .s3(let s3, _): label = parseS3Path(remotePath).bucket ?? s3.endpointHost
+            case .sftp(let conn): label = conn.host
+            case .adb(let session): label = session.label
+            case .android(let device, _):
+                label = AndroidDeviceRegistry.shared.info(device.sessionID)?.label ?? device.displayName
+            case .plugin(let drive): label = drive.session.label
             }
-        } else if case .sftp(let conn)? = remote {
-            label = conn.host
-            upload = { temp, remote in
-                try await SFTPFS(connection: conn).upload(
-                    localPath: temp, to: RemoteEditWriteBack.remoteParentDir(of: remote))
-            }
-        } else if case .adb(let session)? = remote {
-            label = session.label
-            upload = { temp, remote in
-                try await ADBEditWriteBack.upload(session: session, localPath: temp, remotePath: remote)
-            }
-        } else if case .android(let device, _)? = remote {
-            label = AndroidDeviceRegistry.shared.info(device.sessionID)?.label ?? device.displayName
-            upload = { temp, remote in
-                // Upload replaces the same-named object first (MTP would happily
-                // keep a duplicate), so the phone ends up with exactly the edit.
-                try await AndroidDeviceRegistry.shared.upload(
-                    device.sessionID, localPath: temp,
-                    toDir: RemoteEditWriteBack.remoteParentDir(of: remote),
-                    as: (remote as NSString).lastPathComponent, progress: { _ in })
-            }
-        } else if case .plugin(let drive)? = remote {
-            label = drive.session.label
-            let session = drive.session
-            upload = { temp, remote in
-                try await PluginFS.uploadTree(session, localPath: temp,
-                                              toDirectory: RemoteEditWriteBack.remoteParentDir(of: remote),
-                                              as: (remote as NSString).lastPathComponent,
-                                              progress: { _ in })
+            upload = { temp, path in
+                try await fs.importItem(from: URL(fileURLWithPath: temp), toPath: path, progress: { _ in })
             }
         } else if let zip = fs as? ZipFS {
             // Edit-inside-archive write-back: rewrite the container replacing
@@ -1745,6 +1704,7 @@ class MainViewController: NSViewController {
     private func viewVirtualSearchHits(_ hits: [SearchHit], using panel: PanelState) {
         guard !hits.isEmpty else { return }
         let panelFS = panel.fs
+        let endpointID = panel.fileEndpointID
         let local = isLocalPanel(panel)
         let entries = hits.map { hit -> ViewerEntry in
             let name = (hit.path as NSString).lastPathComponent
@@ -1754,7 +1714,7 @@ class MainViewController: NSViewController {
                                 permissions: "")
             let fs = local ? PanelState.fileSystem(for: hit.path) : panelFS
             return ViewerEntry(title: name, resolve: {
-                await self.materializeOne(item, using: fs, useCache: true)
+                await self.materializeOne(item, using: fs, endpointID: endpointID, useCache: true)
             })
         }
         InternalViewerController.shared.show(entries: entries, start: 0, onIndexChange: nil)
@@ -2417,11 +2377,12 @@ class MainViewController: NSViewController {
         }
         pane.showStatus(tr("Downloading"), title: item.name)
         let fs = panel.fs
+        let endpointID = panel.fileEndpointID
         quickViewLoadTask = Task { [weak self, weak pane] in
             guard let self else { return }
             var failure = tr("Preview failed")
             var downloaded: Int64 = 0
-            let url = await self.materializeOne(item, using: fs, onProgress: { [weak self, weak pane] delta in
+            let url = await self.materializeOne(item, using: fs, endpointID: endpointID, onProgress: { [weak self, weak pane] delta in
                 Task { @MainActor in
                     guard let self, self.quickViewLoadGeneration == generation,
                           self.quickViewLoadTask != nil else { return }

@@ -5,10 +5,8 @@ import DoubleFinderPluginKit
 /// the other remote adapters — the session object lives in the
 /// `PluginDriveSession` registered with `RemoteSessionStore`.
 ///
-/// Direction of `copy(from:to:)` is inferred from `from` exactly like S3FS /
-/// AndroidFS: a path that exists on disk is a local source (upload), anything
-/// else is a drive path (download). Directories are walked here, so a plugin
-/// only ever moves single files.
+/// Content export and import have explicit direction; paths on this drive may
+/// also exist locally. Tree operations are adapted here, not in the plugin API.
 struct PluginFS: VirtualFS {
     let drive: PluginDriveSession
     let currentPath: String
@@ -41,22 +39,30 @@ struct PluginFS: VirtualFS {
                  isSymlink: e.isSymlink, permissions: e.permissions)
     }
 
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try FileContentTransfer.localPath(directory)
+        let isDir = try await Self.isDirectory(session, path: path)
+        try await Self.downloadTree(session, path: path, isDirectory: isDir,
+                                    toLocalDirectory: local, progress: progress)
+    }
+
+    func importItem(from localURL: URL, toPath destinationPath: String,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try FileContentTransfer.localPath(localURL)
+        let target = try FileContentTransfer.destination(destinationPath)
+        _ = try await FileContentTransfer.isLocalDirectory(localURL)
+        try await Self.uploadTree(session, localPath: local, toDirectory: target.parent,
+                                  as: target.name, progress: progress)
+    }
+
+    /// Compatibility: copying from a drive only exports to a local directory.
     func copy(from: String, to: String) async throws {
-        if FileManager.default.fileExists(atPath: from) {
-            try await Self.uploadTree(session, localPath: from, toDirectory: to, progress: { _ in })
-        } else {
-            let isDir = try await Self.isDirectory(session, path: from)
-            try await Self.downloadTree(session, path: from, isDirectory: isDir,
-                                        toLocalDirectory: to, progress: { _ in })
-        }
+        try await exportItem(at: from, toLocalDirectory: URL(fileURLWithPath: to), progress: { _ in })
     }
 
     func move(from: String, to: String) async throws {
-        if FileManager.default.fileExists(atPath: from) {
-            try await copy(from: from, to: to)
-            try FileManager.default.removeItem(atPath: from)
-            return
-        }
+        try FileContentTransfer.validateWithinTransfer(from: from, toDirectory: to)
         try await Self.transferWithin(session, path: from, isDirectory: Self.isDirectory(session, path: from),
                                       toDirectory: to, move: true, progress: { _ in })
     }
@@ -101,6 +107,8 @@ struct PluginFS: VirtualFS {
                              progress: @escaping @Sendable (Int64) -> Void,
                              isCancelled: (() -> Bool)? = nil) async throws {
         let fm = FileManager.default
+        try FileContentTransfer.validateLeaf(name ?? leaf(path))
+        try Task.checkCancellation()
         try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let target = (dir as NSString).appendingPathComponent(name ?? leaf(path))
         if isDirectory {
@@ -123,19 +131,22 @@ struct PluginFS: VirtualFS {
                            as name: String? = nil,
                            progress: @escaping @Sendable (Int64) -> Void,
                            isCancelled: (() -> Bool)? = nil) async throws {
-        let fm = FileManager.default
         let target = join(dir, name ?? (localPath as NSString).lastPathComponent)
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: localPath, isDirectory: &isDir) else {
-            throw FSUnsupportedError(message: "No such file: \(localPath)")
+        try Task.checkCancellation()
+        if isCancelled?() == true { throw CancellationError() }
+        let localURL = URL(fileURLWithPath: localPath)
+        let isDir = try await FileContentTransfer.isLocalDirectory(localURL)
+        let existing = try await s.list(dir).first { $0.name == leaf(target) }
+        if let existing, existing.isDirectory != isDir {
+            throw FSUnsupportedError(message: "The destination has a different file type")
         }
-        if isDir.boolValue {
-            try await s.createDirectory(target)
-            let children = (try? fm.contentsOfDirectory(atPath: localPath)) ?? []
-            for child in children.sorted() {
+        if isDir {
+            if existing == nil { try await s.createDirectory(target) }
+            for child in try await FileContentTransfer.localChildren(localURL) {
+                try Task.checkCancellation()
                 if isCancelled?() == true { throw CancellationError() }
-                try await uploadTree(s, localPath: (localPath as NSString).appendingPathComponent(child),
-                                     toDirectory: target, progress: progress, isCancelled: isCancelled)
+                try await uploadTree(s, localPath: child.path, toDirectory: target,
+                                     progress: progress, isCancelled: isCancelled)
             }
             return
         }
@@ -151,6 +162,9 @@ struct PluginFS: VirtualFS {
                                progress: @escaping @Sendable (Int64) -> Void,
                                isCancelled: (() -> Bool)? = nil) async throws {
         let newName = name ?? leaf(path)
+        try FileContentTransfer.validateWithinTransfer(from: path, toDirectory: dir, as: newName)
+        try Task.checkCancellation()
+        if isCancelled?() == true { throw CancellationError() }
         do {
             if move { try await s.move(path, toDirectory: dir) } else { try await s.copy(path, toDirectory: dir) }
             if newName != leaf(path) { try await s.rename(join(dir, leaf(path)), to: newName) }
@@ -165,6 +179,8 @@ struct PluginFS: VirtualFS {
                                progress: progress, isCancelled: isCancelled)
         try await uploadTree(s, localPath: (tmp as NSString).appendingPathComponent(leaf(path)),
                              toDirectory: dir, as: newName, progress: progress, isCancelled: isCancelled)
+        try Task.checkCancellation()
+        if isCancelled?() == true { throw CancellationError() }
         if move { try await s.delete(path) }
     }
 

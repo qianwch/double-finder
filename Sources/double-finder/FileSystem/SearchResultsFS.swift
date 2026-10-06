@@ -17,6 +17,12 @@ struct SearchResultsFS: VirtualFS {
     }
 
     func listDirectory(_ path: String) async throws -> [FileItem] { try await fs(for: path).listDirectory(path) }
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        _ = try FileContentTransfer.localPath(directory)
+        try await fs(for: path).exportItem(at: path, toLocalDirectory: directory, progress: progress)
+    }
+
     func copy(from: String, to: String) async throws { try await fs(for: from).copy(from: from, to: to) }
     func move(from: String, to: String) async throws { try await fs(for: from).move(from: from, to: to) }
     func delete(_ path: String) async throws { try await fs(for: path).delete(path) }

@@ -2,6 +2,12 @@ import Foundation
 
 protocol VirtualFS {
     func listDirectory(_ path: String) async throws -> [FileItem]
+    /// Read from this filesystem into a local directory, keeping the source leaf.
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws
+    /// Write a local item to a complete path in this filesystem (including its leaf).
+    func importItem(from localURL: URL, toPath destinationPath: String,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws
     func copy(from: String, to: String) async throws
     func move(from: String, to: String) async throws
     func delete(_ path: String) async throws
@@ -15,6 +21,12 @@ protocol VirtualFS {
 }
 
 extension VirtualFS {
+    func importItem(from localURL: URL, toPath destinationPath: String,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        _ = try FileContentTransfer.localPath(localURL)
+        throw FSUnsupportedError(message: "Uploading files is not supported here")
+    }
+
     // Non-local filesystems don't support recursive sizing by default.
     func directorySize(_ path: String) async -> Int64 { 0 }
     func createFile(_ path: String) async throws {

@@ -136,35 +136,70 @@ final class S3FS: VirtualFS {
         }
     }
 
-    func copy(from: String, to: String) async throws {
-        if FileManager.default.fileExists(atPath: from) {
-            // Upload: `from` is a local file, `to` is an S3 dir path (/bucket/prefix/).
-            let (db, dkDir) = parseS3Path(to.hasSuffix("/") ? to : to + "/")
-            guard let db = db else { throw FSUnsupportedError(message: "Unsupported copy") }
-            let name = (from as NSString).lastPathComponent
-            try await client.putObject(bucket: db, key: dkDir + name, fromLocalPath: from)
-        } else {
-            // Download: `from` is an S3 path, `to` is a local dir.
-            let (sb, sk) = parseS3Path(from)
-            guard let sb = sb, !sk.isEmpty else { throw FSUnsupportedError(message: "Unsupported copy") }
-            if sk.hasSuffix("/") {
-                // Folder: S3 has no folder object to GET (a getObject on the
-                // prefix key fails). Recursively download every object under it,
-                // recreating the directory tree below `to/<foldername>/`.
-                let folderName = (String(sk.dropLast()) as NSString).lastPathComponent
-                let keys = try await client.listAllKeys(bucket: sb, prefix: sk)
-                for key in keys where !key.hasSuffix("/") {   // skip placeholder objects
-                    let rel = String(key.dropFirst(sk.count))
-                    let localPath = (to as NSString).appendingPathComponent(folderName + "/" + rel)
-                    let dir = (localPath as NSString).deletingLastPathComponent
-                    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-                    try await client.getObject(bucket: sb, key: key, toLocalPath: localPath)
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        _ = try FileContentTransfer.localPath(directory)
+        let (bucket, key) = parseS3Path(path)
+        guard let bucket, !key.isEmpty else { throw FSUnsupportedError(message: "Unsupported download") }
+        let local = try await FileContentTransfer.prepareDirectory(directory)
+        if key.hasSuffix("/") {
+            let name = (String(key.dropLast()) as NSString).lastPathComponent
+            try FileContentTransfer.validateLeaf(name)
+            let root = URL(fileURLWithPath: local).appendingPathComponent(name)
+            _ = try await FileContentTransfer.prepareDirectory(root)
+            for entry in try await client.listAllKeys(bucket: bucket, prefix: key) {
+                try Task.checkCancellation()
+                let relative = String(entry.dropFirst(key.count))
+                guard !relative.isEmpty else { continue }
+                guard !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else {
+                    throw FSUnsupportedError(message: "Invalid remote file path")
                 }
-            } else {
-                let name = (sk as NSString).lastPathComponent
-                let dest = (to as NSString).appendingPathComponent(name)
-                try await client.getObject(bucket: sb, key: sk, toLocalPath: dest)
+                let target = root.appendingPathComponent(relative)
+                if entry.hasSuffix("/") {
+                    _ = try await FileContentTransfer.prepareDirectory(target)
+                } else {
+                    _ = try await FileContentTransfer.prepareDirectory(target.deletingLastPathComponent())
+                    try await client.getObject(bucket: bucket, key: entry, toLocalPath: target.path, progress: progress)
+                }
             }
+        } else {
+            let name = (key as NSString).lastPathComponent
+            try FileContentTransfer.validateLeaf(name)
+            let target = (local as NSString).appendingPathComponent(name)
+            try await client.getObject(bucket: bucket, key: key, toLocalPath: target, progress: progress)
         }
+    }
+
+    func importItem(from localURL: URL, toPath destinationPath: String,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try FileContentTransfer.localPath(localURL)
+        let (bucket, key) = parseS3Path(destinationPath)
+        guard let bucket, !key.isEmpty else { throw FSUnsupportedError(message: "A complete destination path is required") }
+        let isDir = try await FileContentTransfer.isLocalDirectory(localURL)
+        try Task.checkCancellation()
+        if isDir {
+            let prefix = key.hasSuffix("/") ? key : key + "/"
+            let fileKey = String(prefix.dropLast())
+            guard !(try await client.listAllKeys(bucket: bucket, prefix: fileKey)).contains(fileKey) else {
+                throw FSUnsupportedError(message: "Cannot upload a directory over a file")
+            }
+            // Preserve empty directories, just like the create-folder operation.
+            try await client.putEmptyObject(bucket: bucket, key: prefix)
+            for child in try await FileContentTransfer.localChildren(localURL) {
+                try await importItem(from: child, toPath: "/" + bucket + "/" + prefix + child.lastPathComponent, progress: progress)
+            }
+        } else {
+            guard !key.hasSuffix("/") else { throw FSUnsupportedError(message: "Cannot upload a file over a directory") }
+            // A prefix with children or a folder marker is a directory in this UI.
+            guard try await client.listAllKeys(bucket: bucket, prefix: key + "/").isEmpty else {
+                throw FSUnsupportedError(message: "Cannot upload a file over a directory")
+            }
+            try await client.putObject(bucket: bucket, key: key, fromLocalPath: local, progress: progress)
+        }
+    }
+
+    /// Compatibility content-read API. Uploads must use importItem explicitly.
+    func copy(from: String, to: String) async throws {
+        try await exportItem(at: from, toLocalDirectory: URL(fileURLWithPath: to), progress: { _ in })
     }
 }

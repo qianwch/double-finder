@@ -316,7 +316,7 @@ final class SyncDirsSheet: NSWindowController {
             let t = (db as NSString).appendingPathComponent(rel)
             let localDir = (t as NSString).deletingLastPathComponent
             try fm.createDirectory(atPath: localDir, withIntermediateDirectories: true)
-            try await SFTPFS(connection: conn).copy(from: remote, to: localDir)
+            try await SFTPFS(connection: conn).exportItem(at: remote, toLocalDirectory: URL(fileURLWithPath: localDir), progress: { _ in })
             report(localSize(t))
 
         case (.local(let sb), .s3(let client, let bucket, let prefix)):
@@ -339,7 +339,7 @@ final class SyncDirsSheet: NSWindowController {
             let t = (db as NSString).appendingPathComponent(rel)
             let localDir = (t as NSString).deletingLastPathComponent
             try fm.createDirectory(atPath: localDir, withIntermediateDirectories: true)
-            try await fs.copy(from: remote, to: localDir)
+            try await fs.exportItem(at: remote, toLocalDirectory: URL(fileURLWithPath: localDir), progress: { _ in })
             report(localSize(t))
 
         case (.sftp(let sc, let sb), .sftp(let dc, let db)) where sc.sameHost(as: dc):
@@ -362,12 +362,12 @@ final class SyncDirsSheet: NSWindowController {
             switch src {
             case .sftp(let conn, let base):
                 try await SFTPFS(connection: conn)
-                    .copy(from: (base as NSString).appendingPathComponent(rel), to: tempDir)
+                    .exportItem(at: (base as NSString).appendingPathComponent(rel), toLocalDirectory: URL(fileURLWithPath: tempDir), progress: { _ in })
             case .s3(let client, let bucket, let prefix):
                 try await client.getObject(bucket: bucket, key: prefix + rel,
                                            toLocalPath: temp, progress: { _ in })
             case .generic(let fs, let base):
-                try await fs.copy(from: (base as NSString).appendingPathComponent(rel), to: tempDir)
+                try await fs.exportItem(at: (base as NSString).appendingPathComponent(rel), toLocalDirectory: URL(fileURLWithPath: tempDir), progress: { _ in })
             case .local:
                 break   // unreachable: local sources are handled above
             }
@@ -393,17 +393,13 @@ final class SyncDirsSheet: NSWindowController {
         }
     }
 
-    /// ADB copy is download-only: never infer direction from overlapping paths.
+    /// Upload to the exact destination after establishing its parent directories.
     static func uploadGeneric(_ fs: VirtualFS, localPath: String, to remotePath: String,
                               above root: String) async throws {
         let parent = (remotePath as NSString).deletingLastPathComponent
         try await ensureDirectory(fs, path: parent, above: root)
         try Task.checkCancellation()
-        if let adb = fs as? ADBFS {
-            try await adb.upload(from: localPath, to: remotePath)
-        } else {
-            try await fs.copy(from: localPath, to: parent)
-        }
+        try await fs.importItem(from: URL(fileURLWithPath: localPath), toPath: remotePath, progress: { _ in })
     }
 
     /// Creates `path` and its missing parents below `root` on a generic FS

@@ -94,7 +94,13 @@ class PanelState: ObservableObject {
     /// mirroring, disconnect and failure recovery all derive from it, so adding
     /// a backend means adding a `RemoteSession` case, not another optional here.
     /// Set via `connect(_:initialPath:)`; direct assignment is for tests.
-    var remote: RemoteSession?
+    var remote: RemoteSession? {
+        didSet {
+            if pendingS3Registration?.id != remote?.id { pendingS3Registration = nil }
+        }
+    }
+    /// S3 becomes a drive only after its first directory request succeeds.
+    private var pendingS3Registration: RemoteSession?
 
     /// Backend-specific views of `remote` (nil unless that backend is active).
     var sftp: SFTPConnection? { remote?.sftpConnection }
@@ -261,6 +267,12 @@ class PanelState: ObservableObject {
         return items
     }
 
+    /// Capture alongside `fs` before starting a task or a lazy viewer resolver.
+    /// A downloaded archive is local and its temporary path identifies the container.
+    var fileEndpointID: FileEndpointID {
+        FileEndpointID(remote: remote, archiveConnection: remoteArchive?.connection)
+    }
+
     /// The filesystem backing the current path: the remote session's FS when
     /// connected, else ZipFS / a packer plugin for archive paths, else LocalFS.
     var fs: VirtualFS {
@@ -343,7 +355,8 @@ class PanelState: ObservableObject {
     /// Called when the global session store changed: if the session this panel
     /// is in was disconnected (ejected from either panel), fall back to local.
     func leaveRemovedSessions(existingIDs: Set<String>) {
-        guard let id = activeRemoteSessionID, !existingIDs.contains(id) else { return }
+        guard let id = activeRemoteSessionID, pendingS3Registration?.id != id,
+              !existingIDs.contains(id) else { return }
         remoteLastPaths[id] = nil
         navigateLocal(to: NSHomeDirectory())
     }
@@ -366,11 +379,12 @@ class PanelState: ObservableObject {
     /// happened mid-session (a single folder failed), stay connected and step back to the
     /// previous directory, whose cached listing is still valid (we never overwrote it).
     private func recoverFromRemoteLoadFailure() {
-        if historyIndex <= 0 {
-            // Initial connect failed: drop the dead session's drive-bar entry too.
+        if pendingS3Registration != nil || historyIndex <= 0 {
+            // Unverified S3 never entered the store; preserve any same-ID session
+            // already validated by another panel. Other initial failures eject.
             // Clear the session fields BEFORE touching the store so the didChange
             // observer sees this panel as already-local and doesn't re-enter.
-            let deadID = activeRemoteSessionID
+            let deadID = pendingS3Registration == nil ? activeRemoteSessionID : nil
             remote = nil
             remoteArchive = nil; remoteArchiveReturn = nil
             if let id = deadID {
@@ -387,20 +401,29 @@ class PanelState: ObservableObject {
         watcher.watch(currentPath)
     }
 
-    /// Enters a remote session (registering it as a drive) and lists
+    /// Enters a remote session and lists (S3 registers only after success)
     /// `initialPath`. Replaces whatever session / in-place archive the panel
     /// was in — a panel is in at most one backend at a time. For Android the
     /// libmtp session must already be open (`AndroidDeviceRegistry.open`); for a
     /// plugin drive `FileSystemPlugin.connect` must have run — both are where
     /// prompts and failures surface, this only points the panel at the result.
     func connect(_ session: RemoteSession, initialPath: String) {
-        guard let effective = RemoteSessionStore.shared.register(session) else {
-            navigateLocal(to: localReturnPath)
-            return
+        let effective: RemoteSession
+        if case .s3 = session {
+            effective = session
+        } else {
+            guard let registered = RemoteSessionStore.shared.register(session) else {
+                navigateLocal(to: localReturnPath)
+                return
+            }
+            effective = registered
         }
         rememberLocalReturn()
         remoteArchive = nil; remoteArchiveReturn = nil; searchResults = nil
         remote = effective
+        if case .s3 = effective { pendingS3Registration = effective }
+        else { pendingS3Registration = nil }
+        branchView = false
         currentPath = initialPath
         cursorMemory = [:]; history = [initialPath]; historyIndex = 0
         filter = ""; selectedItems.removeAll(); cursorIndex = 0
@@ -562,7 +585,7 @@ class PanelState: ObservableObject {
               }, uniquingKeysWith: { a, _ in a })
             : [:]
         isLoading = true
-        let branch = branchView && sftp == nil
+        let branch = branchView && !isRemote
         let searchPaths = searchResults
         let searchBaseDir = searchBase
         let searchMeta = searchRemoteMeta
@@ -608,6 +631,10 @@ class PanelState: ObservableObject {
                 let childPaths = Array(reloadedChildren.keys)
                 let sortedGroups = await sortGroupsForDisplay([loaded] + childPaths.map { reloadedChildren[$0]! })
                 guard generation == self.loadGeneration else { return }
+                if let session = self.pendingS3Registration {
+                    self.pendingS3Registration = nil
+                    RemoteSessionStore.shared.register(session)
+                }
                 self.memoryKeys[path] = pathKey
                 self.allLoadedItems = sortedGroups[0]   // full list cache (sorted, no "..", no text filter)
                 for (index, path) in childPaths.enumerated() where self.expandedPaths.contains(path) {

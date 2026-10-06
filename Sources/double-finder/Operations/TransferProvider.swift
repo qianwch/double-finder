@@ -32,7 +32,7 @@ extension TransferProvider {
 /// Builds a local copy `FileOperation`, choosing between three sub-cases
 /// extracted verbatim from `MainViewController.actionCopy`'s local branch:
 ///
-/// 1. **Archive source** (`archiveRoot == true`): extract via `srcFS.copy` while
+/// 1. **Archive source** (`archiveRoot == true`): extract via `srcFS.exportItem` while
 ///    preserving path structure below the common ancestor.
 /// 2. **Expanded items** (any `item.depth > 0`): preserve structure below the
 ///    common ancestor using `LocalFS.copyPreservingPath`.
@@ -71,7 +71,7 @@ struct LocalCopyProvider: TransferProvider {
                 let relParent = (rel as NSString).deletingLastPathComponent
                 let targetDir = relParent.isEmpty ? dest : (dest as NSString).appendingPathComponent(relParent)
                 try await LocalFS().createDirectory(targetDir)
-                try await capturedSrcFS.copy(from: path, to: targetDir)
+                try await capturedSrcFS.exportItem(at: path, toLocalDirectory: URL(fileURLWithPath: targetDir), progress: { _ in })
                 // Rename-on-copy: ZipFS extracts under the entry's own name;
                 // move the extracted result to the requested one.
                 if let newName = newName {

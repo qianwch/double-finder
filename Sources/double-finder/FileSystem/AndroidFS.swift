@@ -31,42 +31,70 @@ final class AndroidFS: VirtualFS {
         return files.reduce(Int64(0)) { $0 + $1.size }
     }
 
-    /// Direction is inferred from `from`, mirroring `S3FS.copy`: a path that
-    /// exists on disk is a local source (upload), anything else is a device path
-    /// (download). Device paths are virtual (`/内部存储/…`) and never collide
-    /// with real local ones.
-    ///
-    /// `to` is always a *directory* — this is what `materialize` (F3/F4/QuickLook)
-    /// and the archive/temp paths rely on.
-    func copy(from: String, to: String) async throws {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: from) {
-            try await AndroidDeviceRegistry.shared.ensureDirectory(sessionID, path: to)
-            try await registry.upload(sessionID, localPath: from, toDir: to,
-                                      as: (from as NSString).lastPathComponent,
-                                      progress: { _ in })
+    func exportItem(at path: String, toLocalDirectory directory: URL,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        _ = try FileContentTransfer.localPath(directory)
+        let source = MTPPath(path)
+        guard let parent = source.parent,
+              let item = try await registry.list(sessionID, path: parent.raw).first(where: { $0.name == source.name }) else {
+            throw FSUnsupportedError(message: "No such file on the device")
+        }
+        let local = try await FileContentTransfer.prepareDirectory(directory)
+        try FileContentTransfer.validateLeaf(source.name)
+        let target = URL(fileURLWithPath: local).appendingPathComponent(source.name)
+        if item.isDirectory {
+            _ = try await FileContentTransfer.prepareDirectory(target)
+            for child in try await registry.list(sessionID, path: source.raw) {
+                try Task.checkCancellation()
+                try await exportItem(at: child.path, toLocalDirectory: target, progress: progress)
+            }
         } else {
-            try fm.createDirectory(atPath: to, withIntermediateDirectories: true)
-            let dest = (to as NSString).appendingPathComponent(MTPPath(from).name)
-            try await registry.download(sessionID, path: from, to: dest, progress: { _ in })
+            try Task.checkCancellation()
+            try await registry.download(sessionID, path: path, to: target.path, progress: progress)
         }
     }
 
-    func move(from: String, to: String) async throws {
-        // Both endpoints on the device → let MTP do it without moving bytes.
-        if !FileManager.default.fileExists(atPath: from) {
-            do {
-                try await registry.transferOnDevice(sessionID, path: from, toDir: to, move: true)
-                return
-            } catch is MTPOnDeviceUnsupported {
-                // Fall through to the copy+delete relay below.
-            }
+    func importItem(from localURL: URL, toPath destinationPath: String,
+                    progress: @escaping @Sendable (Int64) -> Void) async throws {
+        let local = try FileContentTransfer.localPath(localURL)
+        let target = try FileContentTransfer.destination(destinationPath)
+        let isDir = try await FileContentTransfer.isLocalDirectory(localURL)
+        let existing = try await registry.list(sessionID, path: target.parent).first { $0.name == target.name }
+        if let existing, existing.isDirectory != isDir {
+            throw FSUnsupportedError(message: "The destination has a different file type")
         }
-        try await copy(from: from, to: to)
-        if !FileManager.default.fileExists(atPath: from) {
-            try await delete(from)
+        try Task.checkCancellation()
+        if isDir {
+            if existing == nil { try await registry.createDirectory(sessionID, path: destinationPath) }
+            for child in try await FileContentTransfer.localChildren(localURL) {
+                let destination = MTPPath(destinationPath).appending(child.lastPathComponent).raw
+                try await importItem(from: child, toPath: destination, progress: progress)
+            }
         } else {
-            try FileManager.default.removeItem(atPath: from)
+            try await registry.upload(sessionID, localPath: local, toDir: target.parent,
+                                      as: target.name, progress: progress)
+        }
+    }
+
+    /// Compatibility content-read API; never infers upload from local existence.
+    func copy(from: String, to: String) async throws {
+        try await exportItem(at: from, toLocalDirectory: URL(fileURLWithPath: to), progress: { _ in })
+    }
+
+    func move(from: String, to: String) async throws {
+        try FileContentTransfer.validateWithinTransfer(from: from, toDirectory: to)
+        try Task.checkCancellation()
+        do {
+            try await registry.transferOnDevice(sessionID, path: from, toDir: to, move: true)
+        } catch is MTPOnDeviceUnsupported {
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("DoubleFinder-MTPRelay/" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            try await exportItem(at: from, toLocalDirectory: temporary, progress: { _ in })
+            let name = MTPPath(from).name
+            try await importItem(from: temporary.appendingPathComponent(name),
+                                 toPath: MTPPath(to).appending(name).raw, progress: { _ in })
+            try Task.checkCancellation()
+            try await delete(from)
         }
     }
 

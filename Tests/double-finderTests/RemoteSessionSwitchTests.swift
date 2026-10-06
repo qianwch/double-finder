@@ -28,13 +28,13 @@ final class RemoteSessionSwitchTests: XCTestCase {
 
     // MARK: - Multi-session drive switching
 
-    func testConnectRegistersSessionInGlobalStore() {
+    func testConnectRegistersSFTPButDefersUnverifiedS3() {
         RemoteSessionStore.shared.removeAll()
         let p = PanelState(path: "/Users/me")
         p.connectSFTP(sftpConn, initialPath: "/home/ubuntu")
         p.connectS3(s3Connection, secret: "sk", initialPath: "/b")
-        XCTAssertEqual(RemoteSessionStore.shared.sessions.count, 2,
-                       "both remotes stay registered as drives after switching")
+        XCTAssertEqual(RemoteSessionStore.shared.sessions.count, 1,
+                       "SFTP stays registered; S3 must first complete its listing")
     }
 
     func testEnterSessionRestoresLastBrowsedPath() {
