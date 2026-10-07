@@ -162,7 +162,7 @@ final class FileIconProvider {
 /// Renders `source` into a fixed `side × side` bitmap.
 /// Marked nonisolated so it can be called both from @MainActor code and from
 /// background `Operation.main()` without a concurrency error.
-func fileIconResized(_ source: NSImage, to side: CGFloat) -> NSImage {
+func fileIconResized(_ source: NSImage, to side: CGFloat, preserveAspectRatio: Bool = false) -> NSImage {
     let size = NSSize(width: side, height: side)
     // Flatten to a CGImage first (definite top-left orientation). System icons —
     // folders in particular — are returned as flip-sensitive images that bake in
@@ -172,12 +172,19 @@ func fileIconResized(_ source: NSImage, to side: CGFloat) -> NSImage {
     // site) the same way for every icon type.
     var rect = NSRect(origin: .zero, size: size)
     let img = NSImage(size: size)
+    var destination = rect
+    if preserveAspectRatio, source.size.width > 0, source.size.height > 0 {
+        let scale = min(side / source.size.width, side / source.size.height)
+        let fitted = NSSize(width: source.size.width * scale, height: source.size.height * scale)
+        destination = NSRect(x: (side - fitted.width) / 2, y: (side - fitted.height) / 2,
+                             width: fitted.width, height: fitted.height)
+    }
     img.lockFocus()
     NSGraphicsContext.current?.imageInterpolation = .high
     if let cg = source.cgImage(forProposedRect: &rect, context: NSGraphicsContext.current, hints: nil) {
-        NSImage(cgImage: cg, size: size).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        NSImage(cgImage: cg, size: size).draw(in: destination, from: .zero, operation: .sourceOver, fraction: 1.0)
     } else {
-        source.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        source.draw(in: destination, from: .zero, operation: .sourceOver, fraction: 1.0)
     }
     img.unlockFocus()
     return img
@@ -266,7 +273,7 @@ private final class IconOperation: Operation, @unchecked Sendable {
     // MARK: Delivery
 
     private func deliver(_ image: NSImage) {
-        let resized = fileIconResized(image, to: side)
+        let resized = fileIconResized(image, to: side, preserveAspectRatio: wantThumbnail)
         let capturedPath = path
         let capturedOnComplete = onComplete
         DispatchQueue.main.async {

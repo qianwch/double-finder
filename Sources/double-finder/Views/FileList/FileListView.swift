@@ -133,6 +133,11 @@ final class FileListView: NSScrollView {
         body.viewMode == .brief ? body.geometry.rowsPerColumn : nil
     }
 
+    /// Vertical cursor step in the row-major thumbnail grid.
+    var thumbnailRowStep: Int? {
+        body.viewMode == .thumbnails ? body.geometry.columnsPerRow : nil
+    }
+
     // MARK: - Public interface (FileTableView parity)
 
     // --- Model forwarding ---
@@ -220,7 +225,9 @@ final class FileListView: NSScrollView {
         // constrainBoundsRect clamps the top to 0 — ignoring the inset — which left
         // the ".." row (row 0) mostly hidden under the header. Use constrainBoundsRect
         // only for the BOTTOM limit, and allow the inset-aware top ourselves.
-        let desired = CGFloat(target) * geo.rowHeight - contentInsets.top
+        let rowY = body.viewMode == .thumbnails
+            ? geo.rowRect(target, width: body.bounds.width).minY : CGFloat(target) * geo.rowHeight
+        let desired = rowY - contentInsets.top
         let bottomClamped = clipView.constrainBoundsRect(
             NSRect(origin: NSPoint(x: 0, y: desired), size: clipView.bounds.size)).origin.y
         let y = max(-contentInsets.top, min(desired, bottomClamped))
@@ -233,7 +240,7 @@ final class FileListView: NSScrollView {
         let visibleOriginY = documentVisibleRect.minY
         let geo = body.geometry
         guard geo.rowHeight > 0 else { return 0 }
-        let row = Int(visibleOriginY / geo.rowHeight)
+        let row = Int(visibleOriginY / geo.rowHeight) * (thumbnailRowStep ?? 1)
         return max(0, min(row, max(0, body.items.count - 1)))
     }
 
@@ -276,6 +283,7 @@ final class FileListView: NSScrollView {
         body.reloadLayout()
         positionHeader()     // header height follows the list font size
         applyViewMode()      // …and so does the content inset below it
+        if body.viewMode == .thumbnails { ensureRowVisible(cursorIndex) }
         body.needsDisplay = true
         headerView.needsDisplay = true
     }

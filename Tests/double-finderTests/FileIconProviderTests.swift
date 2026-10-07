@@ -39,6 +39,27 @@ final class FileIconProviderTests: XCTestCase {
         )
     }
 
+    func testThumbnailResizePreservesAspectRatio() async throws {
+        try await MainActor.run {
+            for size in [NSSize(width: 120, height: 60), NSSize(width: 60, height: 120)] {
+                let source = NSImage(size: size)
+                source.lockFocus()
+                NSColor.red.setFill()
+                NSRect(origin: .zero, size: size).fill()
+                source.unlockFocus()
+                let result = fileIconResized(source, to: 48, preserveAspectRatio: true)
+                let bitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(result.tiffRepresentation)))
+                let center = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2))
+                XCTAssertGreaterThan(center.alphaComponent, 0.9)
+                let margin = size.width > size.height
+                    ? bitmap.colorAt(x: bitmap.pixelsWide / 2, y: 1)
+                    : bitmap.colorAt(x: 1, y: bitmap.pixelsHigh / 2)
+                XCTAssertLessThan(try XCTUnwrap(margin).alphaComponent, 0.1,
+                                  "Non-square thumbnails must have transparent margins, not stretch")
+            }
+        }
+    }
+
     // MARK: - Test 1: icon(for:) returns a non-nil placeholder immediately
 
     func testIconForUncachedFileReturnsImmediately() async throws {

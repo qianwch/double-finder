@@ -69,3 +69,61 @@ final class GridGeometryTests: XCTestCase {
         XCTAssertEqual(r.minY, (18 - 12) / 2)
     }
 }
+
+/// Thumbnail tiles flow left-to-right and adapt to both panel width and zoom.
+final class ThumbnailGridGeometryTests: XCTestCase {
+    private func geometry(width: CGFloat = 600, icon: CGFloat = 24) -> FileRowGeometry {
+        var g = FileRowGeometry(mode: .thumbnails, iconSize: icon, textHeight: 16)
+        g.viewportWidth = width
+        return g
+    }
+
+    func testColumnsAdaptToWidthAndZoom() {
+        let normal = geometry()
+        XCTAssertGreaterThan(normal.columnsPerRow, 1)
+        XCTAssertGreaterThan(geometry(width: 1000).columnsPerRow, normal.columnsPerRow)
+        XCTAssertLessThan(geometry(icon: 48).columnsPerRow, normal.columnsPerRow)
+        XCTAssertEqual(geometry(width: 1).columnsPerRow, 1)
+        XCTAssertEqual(geometry(width: 0).columnsPerRow, 1)
+        XCTAssertGreaterThan(geometry(icon: 48).rowHeight, normal.rowHeight)
+        XCTAssertGreaterThan(geometry(icon: 48).thumbnailSide, normal.thumbnailSide)
+    }
+
+    func testRowMajorRectsAndHitTesting() {
+        let g = geometry()
+        let columns = g.columnsPerRow
+        XCTAssertEqual(g.rowRect(1, width: 600).minY, 0)
+        XCTAssertGreaterThan(g.rowRect(1, width: 600).minX, 0)
+        XCTAssertEqual(g.rowRect(columns, width: 600).minX, 0)
+        XCTAssertEqual(g.rowRect(columns, width: 600).minY, g.rowHeight)
+        for row in 0..<(columns + 2) {
+            let rect = g.rowRect(row, width: 600)
+            XCTAssertEqual(g.rowAt(point: NSPoint(x: rect.midX, y: rect.midY), count: columns + 2), row)
+            XCTAssertLessThanOrEqual(rect.maxX, 600.001)
+            let icon = g.thumbnailRect(row: row)
+            let name = g.thumbnailNameRect(row: row)
+            XCTAssertGreaterThanOrEqual(name.minY, icon.maxY)
+            XCTAssertTrue(rect.contains(icon))
+            XCTAssertTrue(rect.contains(name))
+        }
+        XCTAssertNil(g.rowAt(point: NSPoint(x: -1, y: 0), count: 30))
+        XCTAssertNil(g.rowAt(point: NSPoint(x: 600, y: 0), count: 30))
+        let empty = g.rowRect(columns + 2, width: 600)
+        XCTAssertNil(g.rowAt(point: NSPoint(x: empty.midX, y: empty.midY), count: columns + 2))
+    }
+
+    func testVisibleRowsAndContentHeight() {
+        let g = geometry()
+        let columns = g.columnsPerRow
+        let rect = NSRect(x: 0, y: g.rowHeight, width: 600, height: g.rowHeight)
+        XCTAssertEqual(g.visibleRows(in: rect, count: 100), columns...(2 * columns - 1))
+        XCTAssertEqual(g.visibleRows(in: rect, count: columns + 1), columns...columns)
+        XCTAssertNil(g.visibleRows(in: rect, count: 0))
+        XCTAssertNil(g.visibleRows(in: .zero, count: 100))
+        XCTAssertNil(g.visibleRows(in: NSRect(x: 0, y: 10000, width: 600, height: 30), count: 2))
+        let clip = NSSize(width: 600, height: 100)
+        XCTAssertEqual(g.contentSize(count: columns + 1, clipSize: clip),
+                       NSSize(width: 600, height: 2 * g.rowHeight))
+        XCTAssertEqual(g.contentSize(count: 0, clipSize: clip), clip)
+    }
+}

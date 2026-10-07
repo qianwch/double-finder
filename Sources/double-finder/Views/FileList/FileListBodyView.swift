@@ -93,9 +93,7 @@ final class FileListBodyView: NSView {
     var viewMode: FileViewMode = .full {
         didSet {
             if viewMode != oldValue {
-                iconSizePoints = CGFloat(AppSettings.iconSize)
-                geometry = makeGeometry()
-                resizeFrame()
+                reloadLayout()
                 needsDisplay = true
             }
         }
@@ -199,6 +197,9 @@ final class FileListBodyView: NSView {
     /// Called on data reload (`reloadLayout`) and on panel resize (`FileListView.layout`).
     func resizeFrame() {
         let clip = enclosingScrollView?.contentSize ?? bounds.size
+        let oldWidth = geometry.viewportWidth
+        geometry.viewportWidth = clip.width
+        if viewMode == .thumbnails && oldWidth != clip.width { needsDisplay = true }
         geometry.viewportHeight = clip.height   // drives the brief grid's rows-per-column
         let newSize = geometry.contentSize(count: items.count, clipSize: clip)
         if frame.size != newSize { setFrameSize(newSize) }
@@ -234,8 +235,8 @@ final class FileListBodyView: NSView {
         para.lineBreakMode = .byTruncatingTail
 
         let side = iconSizePoints
-        // Thumbnail side for .thumbnails mode (match FileTableView's 44pt side).
-        let thumbSide: CGFloat = 44
+        // Thumbnail resolution follows the same zoom as the tile geometry.
+        let thumbSide = geo.thumbnailSide
 
         switch currentViewMode {
         case .full:
@@ -408,13 +409,13 @@ final class FileListBodyView: NSView {
         }
     }
 
-    // MARK: - Thumbnails mode drawing (large rows with async QL thumbnails)
+    // MARK: - Thumbnails mode drawing (row-major tiles with async QL thumbnails)
 
     private func drawThumbnails(range: ClosedRange<Int>, geo: FileRowGeometry,
                                 para: NSMutableParagraphStyle, thumbSide: CGFloat,
                                 colorByType: Bool, viewWidth: CGFloat) {
-        let leadingMargin: CGFloat = 4
-        let iconTextGap: CGFloat = 8
+        para.alignment = .center
+        para.lineBreakMode = .byWordWrapping
 
         for row in range {
             let item = items[row]
@@ -422,18 +423,15 @@ final class FileListBodyView: NSView {
             let selected = selectedItems.contains(item.id)
             let cursor = row == cursorIndex
 
-            // Row highlight.
+            // Tile highlight.
             if let bg = rowBackground(selected: selected, cursor: cursor,
-                                       active: isActivePanel, odd: row % 2 == 1) {
+                                       active: isActivePanel, odd: false) {
                 bg.setFill()
                 rowRect.fill()
             }
             drawCursorOutline(rowRect, cursor: cursor, active: isActivePanel)
 
-            // Thumbnail (or placeholder) — centered vertically in the row.
-            let thumbX = leadingMargin
-            let thumbY = rowRect.minY + (geo.rowHeight - thumbSide) / 2
-            let thumbRect = NSRect(x: thumbX, y: thumbY, width: thumbSide, height: thumbSide)
+            let thumbRect = geo.thumbnailRect(row: row)
 
             if item.name != ".." {
                 // wantThumbnail: true triggers QL thumbnail resolution asynchronously.
@@ -443,16 +441,14 @@ final class FileListBodyView: NSView {
                              respectFlipped: true, hints: nil)
             }
 
-            // Name text — drawn to the right of the thumbnail.
-            let textLeft = thumbX + thumbSide + iconTextGap
-            let textRight = viewWidth - 4
-            let textWidth = max(0, textRight - textLeft)
-            // Centre the text vertically in the tall row.
-            let textY = rowRect.minY + (geo.rowHeight - nameLineHeight) / 2
-            let textRect = NSRect(x: textLeft, y: textY, width: textWidth, height: geo.rowHeight)
-
+            // Two centered lines below the image; truncate the last visible line.
+            if row == renamingRow { continue } // the editor replaces both label lines
+            let textRect = geo.thumbnailNameRect(row: row)
             let nameAttr = makeNameAttr(item: item, para: para, colorByType: colorByType)
-            (item.name as NSString).draw(in: textRect, withAttributes: nameAttr)
+            (item.name as NSString).draw(with: textRect,
+                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                attributes: nameAttr)
+
         }
     }
 
@@ -760,9 +756,14 @@ final class FileListBodyView: NSView {
         let geo = geometry
         let rowRect = geo.rowRect(row, width: viewWidth)
 
-        // Determine how far the icon starts (matches draw logic for each mode).
-        let iconLeft: CGFloat
-        if viewMode != .thumbnails {
+        let fieldFrame: NSRect
+        if viewMode == .thumbnails {
+            let nameRect = geo.thumbnailNameRect(row: row)
+            fieldFrame = NSRect(x: nameRect.minX, y: nameRect.minY,
+                                width: nameRect.width, height: nameRect.height + 6)
+        } else {
+            // Determine how far the icon starts (matches draw logic for each mode).
+            let iconLeft: CGFloat
             if item.isDirectory && item.name != ".." {
                 let triRect = geo.disclosureRect(row: row, depth: item.depth)
                 iconLeft = triRect.maxX + 2
@@ -773,42 +774,39 @@ final class FileListBodyView: NSView {
                 // in the brief grid.
                 iconLeft = rowRect.minX + leadingMargin + CGFloat(item.depth) * indentPerLevel
             }
-        } else {
-            // Thumbnails: icon lives on the left with a 4-pt margin.
-            iconLeft = 4
-        }
 
-        let iconSide = (viewMode == .thumbnails) ? CGFloat(44) : iconSizePoints
-        // Text starts right after the icon (parity with all three draw* methods).
-        let textLeft = (item.name == "..") ? iconLeft : (iconLeft + iconSide + 4)
+            let iconSide = iconSizePoints
+            // Text starts right after the icon (parity with full / brief drawing).
+            let textLeft = (item.name == "..") ? iconLeft : (iconLeft + iconSide + 4)
 
-        // Right boundary depends on the view mode.
-        let textRight: CGFloat
-        if viewMode == .full {
-            // Use the name column's right boundary (FileColumnLayout).
-            let optionalIDs = AppSettings.visibleColumns
-            // Same widths as drawFull — else the field misses the real name
-            // column edge whenever the user has resized columns.
-            let layout = FileColumnLayout(totalWidth: viewWidth,
-                                         visibleOptionalIDs: optionalIDs,
-                                         widths: AppSettings.columnWidths)
-            if let nameRange = layout.xRange(of: "name") {
-                textRight = nameRange.upperBound - 4
+            // Right boundary depends on the view mode.
+            let textRight: CGFloat
+            if viewMode == .full {
+                // Use the name column's right boundary (FileColumnLayout).
+                let optionalIDs = AppSettings.visibleColumns
+                // Same widths as drawFull — else the field misses the real name
+                // column edge whenever the user has resized columns.
+                let layout = FileColumnLayout(totalWidth: viewWidth,
+                                             visibleOptionalIDs: optionalIDs,
+                                             widths: AppSettings.columnWidths)
+                if let nameRange = layout.xRange(of: "name") {
+                    textRight = nameRange.upperBound - 4
+                } else {
+                    textRight = viewWidth - 4
+                }
+            } else if viewMode == .brief {
+                textRight = rowRect.maxX - 4        // clip to the grid cell
             } else {
                 textRight = viewWidth - 4
             }
-        } else if viewMode == .brief {
-            textRight = rowRect.maxX - 4        // clip to the grid cell
-        } else {
-            textRight = viewWidth - 4
+
+            let fieldWidth = max(40, textRight - textLeft)
+            // Align with where the name baseline is drawn (parity with draw()).
+            let fieldHeight: CGFloat = max(20, nameLineHeight + 6)
+            let fieldY = rowRect.minY + (geo.rowHeight - fieldHeight) / 2
+
+            fieldFrame = NSRect(x: textLeft, y: fieldY, width: fieldWidth, height: fieldHeight)
         }
-
-        let fieldWidth = max(40, textRight - textLeft)
-        // Align with where the name baseline is drawn (parity with draw()).
-        let fieldHeight: CGFloat = max(20, nameLineHeight + 6)
-        let fieldY = rowRect.minY + (geo.rowHeight - fieldHeight) / 2
-
-        let fieldFrame = NSRect(x: textLeft, y: fieldY, width: fieldWidth, height: fieldHeight)
 
         // --- Build the NSTextField ---
         let tf = NSTextField(frame: fieldFrame)
@@ -816,7 +814,16 @@ final class FileListBodyView: NSView {
         tf.font = item.isDirectory ? nameFontBold : nameFont
         tf.isBordered = true
         tf.bezelStyle = .squareBezel
-        tf.useSingleLineScrolling()
+        if viewMode == .thumbnails {
+            tf.usesSingleLineMode = false
+            tf.cell?.isScrollable = false
+            tf.cell?.wraps = true
+            tf.lineBreakMode = .byWordWrapping
+            tf.maximumNumberOfLines = 2
+            tf.alignment = .center
+        } else {
+            tf.useSingleLineScrolling()
+        }
         tf.drawsBackground = true
         tf.backgroundColor = .textBackgroundColor
         tf.textColor = .labelColor
@@ -827,6 +834,7 @@ final class FileListBodyView: NSView {
         renamingRow = row
         renamingOriginalName = item.name
         renameField = tf
+        invalidateRow(row)
         window?.makeFirstResponder(tf)
 
         // Select the base name (without extension) for files — Finder/TC style.
@@ -876,6 +884,7 @@ final class FileListBodyView: NSView {
 
         tf.delegate = nil
         tf.removeFromSuperview()
+        invalidateRow(row)
 
         // Restore keyboard focus to this view (mirrors FileCellView.endRename).
         window?.makeFirstResponder(self)
@@ -920,7 +929,9 @@ extension FileListBodyView: NSDraggingSource {
             icon.size = NSSize(width: 28, height: 28)
             // Position the drag image at the item's row rect origin.
             if let rowIdx = rowIndexByID[fileItem.id] {
-                var frame = geometry.rowRect(rowIdx, width: bounds.width)
+                var frame = viewMode == .thumbnails
+                    ? geometry.thumbnailRect(row: rowIdx)
+                    : geometry.rowRect(rowIdx, width: bounds.width)
                 frame.size = NSSize(width: 28, height: 28)
                 di.setDraggingFrame(frame, contents: icon)
             }

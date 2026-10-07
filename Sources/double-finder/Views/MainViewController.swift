@@ -548,11 +548,20 @@ class MainViewController: NSViewController {
         // Arrow keys: cursor movement (Shift extends the selection).
         // Skip when Command is held so Cmd+Up can act as "go to parent" below.
         if keyCode == 126 && !flags.contains(.command) { // Up
-            activePanelVC.moveCursor(by: -1, extending: flags.contains(.shift))
+            activePanelVC.moveCursor(by: -(activePanelVC.fileTableView.thumbnailRowStep ?? 1),
+                                     extending: flags.contains(.shift))
             return true
         }
         if keyCode == 125 && !flags.contains(.command) { // Down
-            activePanelVC.moveCursor(by: 1, extending: flags.contains(.shift))
+            activePanelVC.moveCursor(by: activePanelVC.fileTableView.thumbnailRowStep ?? 1,
+                                     extending: flags.contains(.shift))
+            return true
+        }
+
+        // Thumbnail tiles: left/right move between neighbors, including Shift selection.
+        if (keyCode == 123 || keyCode == 124), !flags.contains(.command),
+           activePanelVC.fileTableView.thumbnailRowStep != nil {
+            activePanelVC.moveCursor(by: keyCode == 123 ? -1 : 1, extending: flags.contains(.shift))
             return true
         }
 

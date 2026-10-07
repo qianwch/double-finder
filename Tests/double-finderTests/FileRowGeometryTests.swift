@@ -17,7 +17,7 @@ final class FileRowGeometryTests: XCTestCase {
 
     func testRowHeightThumbnails() {
         let g = FileRowGeometry(mode: .thumbnails, iconSize: 24)
-        XCTAssertEqual(g.rowHeight, 56, "thumbnails: fixed 56")
+        XCTAssertGreaterThan(g.rowHeight, g.thumbnailSide, "tile reserves space below the image for its name")
     }
 
     func testRowHeightFullCustomIconSize() {
