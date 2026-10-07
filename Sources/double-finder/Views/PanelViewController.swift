@@ -657,9 +657,17 @@ class PanelViewController: NSViewController {
         panelState.pendingScrollToCursor = false
 
         if pathChanged {
-            // Entering a directory: restore its remembered scroll (back/up keeps position).
+            // Explicit file navigation wins over remembered scroll; ordinary
+            // back/up navigation still keeps the directory's previous position.
             let topRow = scrollMemory[newPath] ?? 0
-            DispatchQueue.main.async { [weak self] in self?.fileTableView.scrollRowToTop(topRow) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.panelState.currentMemoryKey == newPath else { return }
+                if scrollToCursor {
+                    self.fileTableView.ensureRowVisible(self.panelState.cursorIndex)
+                } else {
+                    self.fileTableView.scrollRowToTop(topRow)
+                }
+            }
             lastDisplayedPath = newPath
             if tabs.count > 1 { refreshTabBar() }   // keep tab titles in sync
         } else if scrollToCursor {

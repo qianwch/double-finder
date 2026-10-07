@@ -57,12 +57,12 @@ class PanelState: ObservableObject {
 
     /// Set when the cursor moves by user intent (keyboard/click) so the view
     /// scrolls to keep it visible. Cleared each updateDisplay. Navigation and
-    /// refresh leave it false so they can restore/keep scroll instead.
+    /// refresh leave it false unless an explicit one-shot cursor was requested.
     var pendingScrollToCursor = false
 
     /// One-shot: when set, the next completed load puts the cursor on the item
-    /// with this name (and scrolls to it). Used by F7 so the cursor lands on
-    /// the just-created directory. Consumed (cleared) by the next loadDirectory.
+    /// with this name (and scrolls to it). Used by search-result navigation and
+    /// F7. Consumed (cleared) by the next loadDirectory.
     var pendingCursorName: String?
 
     /// Normalized memory key — resolves symlinks (e.g. /tmp → /private/tmp) so a

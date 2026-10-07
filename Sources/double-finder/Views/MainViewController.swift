@@ -1756,7 +1756,7 @@ class MainViewController: NSViewController {
         let dir = (path as NSString).deletingLastPathComponent
         let name = (path as NSString).lastPathComponent
         let ps = appState.activePanelState
-        ps.cursorMemory[PanelState.memoryKey(dir)] = name
+        ps.pendingCursorName = name
         ps.navigate(to: dir)
     }
 
