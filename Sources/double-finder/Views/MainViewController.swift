@@ -859,6 +859,10 @@ class MainViewController: NSViewController {
             NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
         } else if item.isDirectory {
             panel.navigate(to: item.path)
+        } else if panel.s3 != nil {
+            // S3 objects, including archives, stay in the current listing.
+            // Use F3 to view or F5 to download before browsing an archive locally.
+            return
         } else if FileItem.isArchiveFileName(item.name), let session = panel.remote?.adbSession {
             downloadAndEnterADBArchive(item, session: session, panel: panelVC)
         } else if FileItem.isArchiveFileName(item.name), let device = panel.android {
