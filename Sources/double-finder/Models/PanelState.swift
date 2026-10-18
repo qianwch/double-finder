@@ -1193,12 +1193,7 @@ class PanelState: ObservableObject {
             sortColumn = column
             sortAscending = true
         }
-        let selectedNames = Set(items.filter { selectedItems.contains($0.id) }.map { $0.path })
-        let cursorName = currentItem?.path
-        let sizes = Dictionary(items.compactMap { i in i.calculatedSize.map { (i.name, $0) } },
-                               uniquingKeysWith: { a, _ in a })
-        allLoadedItems = sortItems(allLoadedItems)
-        rebuildItems(selectedNames: selectedNames, cursorName: cursorName, sizes: sizes)
+        resort()
     }
 
     /// Re-applies the current sort order without changing the column/direction
@@ -1209,6 +1204,9 @@ class PanelState: ObservableObject {
         let sizes = Dictionary(items.compactMap { i in i.calculatedSize.map { (i.name, $0) } },
                                uniquingKeysWith: { a, _ in a })
         allLoadedItems = sortItems(allLoadedItems)
+        // Sort each sibling group before flattening the expanded tree. Cached
+        // children must follow header/settings changes just like root entries.
+        expandedChildren = expandedChildren.mapValues { sortItems($0) }
         rebuildItems(selectedNames: selectedNames, cursorName: cursorName, sizes: sizes)
     }
 
