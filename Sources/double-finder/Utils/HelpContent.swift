@@ -77,6 +77,7 @@ enum HelpContent {
         ]),
         ShortcutGroup(titleKey: "Viewer", shortcuts: [
             Shortcut(nameKey: "Open Viewer", keys: "F3"),
+            Shortcut(nameKey: "Copy", keys: "⌘C"),
             Shortcut(nameKey: "Previous / Next File", keys: "⌘← ⌘↑ / ⌘→ ⌘↓"),
             Shortcut(nameKey: "Text / Hexadecimal / Preview Mode", keys: "1 / 2 / 3"),
             Shortcut(nameKey: "Find in Viewer", keys: "⌘F"),

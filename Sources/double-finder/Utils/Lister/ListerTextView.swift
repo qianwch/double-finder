@@ -267,6 +267,14 @@ final class ListerTextView: NSView {
     func pageDown() { textView.scrollPageDown(nil) }
     func focus() { window?.makeFirstResponder(textView) }
 
+    /// Preserve standard text copying when the user has selected content;
+    /// an insertion point alone lets the controller copy the file instead.
+    func copySelection() -> Bool {
+        guard textView.selectedRanges.contains(where: { $0.rangeValue.length > 0 }) else { return false }
+        textView.copy(nil)
+        return true
+    }
+
     /// End key: load to EOF or the 256MB cap in one go, then jump to the bottom.
     /// (Scroll-driven loading appends one 4MB chunk per bounds change — reaching
     /// the cap that way would take ~60 keypresses.)

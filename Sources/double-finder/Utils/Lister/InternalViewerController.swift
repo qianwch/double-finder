@@ -428,7 +428,8 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
     // MARK: Key monitor
 
     /// Window-scoped key monitor: only acts on our window, BEFORE the responder
-    /// chain. ⌘-arrows step file-to-file; 1/2/3 switch modes; ⌘F finds; Esc
+    /// chain. ⌘C copies selected text, otherwise the current file; ⌘-arrows step file-to-file;
+    /// 1/2/3 switch modes; ⌘F finds; Esc
     /// closes the find bar then the window. Bare arrows/PgUp/PgDn/Home/space
     /// fall through to the content view (scrolling; QL pauses videos on space).
     private func installMonitor() {
@@ -445,6 +446,10 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
             }
             if cmd {
                 switch event.keyCode {
+                case 8 where event.modifierFlags.intersection([.command, .shift, .control, .option]) == [.command]:
+                    if self.currentURL != nil, self.currentMode == .text,
+                       self.textContent?.copySelection() == true { return nil }
+                    self.copyCurrentFile(); return nil          // ⌘C (all viewer modes)
                 case 123, 126: self.navigate(.prev); return nil // ⌘← / ⌘↑
                 case 124, 125: self.navigate(.next); return nil // ⌘→ / ⌘↓
                 default:
@@ -482,6 +487,18 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         return fe.delegate === searchBar?.field
     }
 
+    /// Use the resolved file, including a downloaded/extracted preview copy,
+    /// so Finder and the file panels receive a real file URL in every mode.
+    private func copyCurrentFile() {
+        guard let url = currentURL, url.isFileURL,
+              FileManager.default.fileExists(atPath: url.path) else {
+            NSSound.beep(); return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+    }
+
     private func navigate(_ dir: ViewerNavDirection) {
         let ni = nextIndex(current: currentIndex, count: entries.count, direction: dir)
         guard ni != currentIndex else { return }
@@ -504,6 +521,7 @@ final class InternalViewerController: NSObject, NSWindowDelegate {
         pageGeneration += 1                          // void the previous file's in-flight render / phase 2
                                                      // (design §5.3): it must not land during entry.resolve()
         resolveTask?.cancel()                        // stop the previous file's download/extract
+        currentURL = nil                            // never copy the previous file while this one resolves
         // Name the INCOMING file right away: during a slow resolve the titlebar
         // would otherwise still advertise the previous one.
         window?.title = "\(entry.title) — (\(index + 1)/\(total))"
