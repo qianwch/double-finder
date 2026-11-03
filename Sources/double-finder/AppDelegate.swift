@@ -505,6 +505,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainVC()?.perform(#selector(MainViewController.actionGoToFolder_menu))
     }
     @objc private func menuQuickLook() {
+        // Menu key equivalents run before ResultsTableView.keyDown. Keep F3
+        // scoped to the search selection while the Find Files sheet is key.
+        if let search = NSApp.keyWindow?.windowController as? FindFilesSheet {
+            search.quickLookSelected()
+            return
+        }
         mainVC()?.perform(#selector(MainViewController.actionQuickLook_menu))
     }
     @objc private func menuToggleHidden() {
@@ -545,7 +551,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainVC()?.perform(#selector(MainViewController.applyFunctionKeyBarVisibility_menu))
     }
     @objc private func menuNewFile() { mainVC()?.actionNewFile() }
-    @objc private func menuOpenInEditor() { mainVC()?.perform(#selector(MainViewController.actionOpenInEditor_menu)) }
+    @objc private func menuOpenInEditor() {
+        if let search = NSApp.keyWindow?.windowController as? FindFilesSheet {
+            search.editSelected()
+            return
+        }
+        mainVC()?.perform(#selector(MainViewController.actionOpenInEditor_menu))
+    }
     @objc private func menuGetInfo() { mainVC()?.perform(#selector(MainViewController.actionGetInfo)) }
     @objc private func menuMoveToTrash() { mainVC()?.perform(#selector(MainViewController.actionMoveToTrash_menu)) }
     @objc private func menuNextTab() { mainVC()?.activePanelVC.nextTab() }

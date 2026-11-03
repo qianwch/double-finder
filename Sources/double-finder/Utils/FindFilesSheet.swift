@@ -474,7 +474,7 @@ final class FindFilesSheet: NSWindowController {
     /// closes it). Hits with no file on disk (remote, inside an archive) are
     /// downloaded / extracted on demand by MainViewController; a mixed
     /// selection goes that way as a whole so the viewer gets one entry list.
-    private func quickLookSelected() {
+    func quickLookSelected() {
         let hits = selectedHits
         guard !hits.isEmpty else { return }
         if hits.contains(where: { isVirtual($0.path) }) { onViewVirtual?(hits); return }
@@ -487,7 +487,7 @@ final class FindFilesSheet: NSWindowController {
     /// single-file semantics as the panels' F4; the sheet stays open). Remote
     /// and in-archive results have no local file to hand the editor — Feed to
     /// Panel, then F4 there, which sets up the extract + write-back session.
-    private func editSelected() {
+    func editSelected() {
         guard !allVirtual else { NSSound.beep(); return }
         var dir: ObjCBool = false
         let path = selectedHits
