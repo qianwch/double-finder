@@ -41,6 +41,48 @@ enum FileContentTransfer {
         }
     }
 
+    /// Staging must not merge names that the source filesystem keeps distinct.
+    /// Validate before bulk export so solid archives can still extract a tree once.
+    static func checkMaterializedExport(at path: String, from fs: VirtualFS, to directory: URL,
+                                        isDirectory: Bool? = nil) async throws {
+        _ = try await prepareDirectory(directory)
+        let leaf = (path as NSString).lastPathComponent
+        try validateLeaf(leaf)
+        let target = directory.appendingPathComponent(leaf)
+        let collision = await Task.detached { FileManager.default.fileExists(atPath: target.path) }.value
+        guard !collision else { throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: target.path]) }
+        let folder: Bool
+        if let isDirectory { folder = isDirectory }
+        else {
+            let parent = (path as NSString).deletingLastPathComponent
+            let siblings = try await fs.listDirectory(parent)
+            guard let item = siblings.first(where: { $0.name == leaf }) else {
+                throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: path])
+            }
+            folder = item.isDirectory
+        }
+        guard folder else { return }
+        let sensitive = try await Task.detached {
+            try directory.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]).volumeSupportsCaseSensitiveNames ?? false
+        }.value
+        try await checkMaterializedTree(at: path, from: fs, caseSensitive: sensitive)
+    }
+
+    private static func checkMaterializedTree(at path: String, from fs: VirtualFS, caseSensitive: Bool) async throws {
+        try Task.checkCancellation()
+        let children = try await fs.listDirectory(path).filter { $0.name != ".." }
+        var names = Set<String>()
+        for child in children {
+            try validateLeaf(child.name)
+            let normalized = child.name.precomposedStringWithCanonicalMapping
+            let key = caseSensitive ? normalized : normalized.lowercased()
+            guard names.insert(key).inserted else {
+                throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: child.path])
+            }
+            if child.isDirectory { try await checkMaterializedTree(at: child.path, from: fs, caseSensitive: caseSensitive) }
+        }
+    }
+
     /// Same-endpoint relay must never overwrite itself then delete its source.
     static func validateWithinTransfer(from source: String, toDirectory directory: String,
                                        as name: String? = nil) throws {

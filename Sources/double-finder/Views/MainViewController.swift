@@ -1392,11 +1392,14 @@ class MainViewController: NSViewController {
     }
 
     /// Pick the provider for a copy from `src` panel to `dst` panel.
-    private func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) throws -> TransferProvider {
+    func transferProvider(forCopyFrom src: PanelState, to dst: PanelState) throws -> TransferProvider {
         let materialize = src.remoteArchive != nil || PanelState.archiveRoot(in: src.currentPath) != nil
             || src.searchResultsIncludeArchiveEntries
         if materialize, let session = dst.remote?.adbSession {
             return ADBMaterializedUploadProvider(srcFS: src.fs, session: session)
+        }
+        if materialize, dst.remote != nil {
+            return MaterializedUploadProvider(srcFS: src.fs, destFS: dst.fs)
         }
         if src.remoteArchive != nil, dst.remote == nil {
             return LocalCopyProvider(srcFS: src.fs, archiveRoot: true)
@@ -1799,7 +1802,13 @@ class MainViewController: NSViewController {
         guard !items.isEmpty else { return }
         // TC convention: pack into the target (other) panel's folder, but name the
         // archive after the source: the single selected item, else the source folder.
-        let destDir = inactivePanelVC.panelState.currentPath
+        let source = activePanelVC.panelState
+        let destination = inactivePanelVC.panelState
+        let destDir = destination.currentPath
+        let virtualSource = source.isRemote || PanelState.archiveRoot(in: source.currentPath) != nil
+            || source.searchResultsIncludeArchiveEntries
+        let provider = PackProvider(sourceFS: virtualSource ? source.fs : nil,
+                                    destinationFS: destination.isRemote ? destination.fs : nil)
         let defaultBase = PackDefaultName.suggest(
             itemNames: items.map { (name: $0.name, isDirectory: $0.isDirectory) },
             sourceDir: activePanelVC.panelState.currentPath)
@@ -1814,7 +1823,7 @@ class MainViewController: NSViewController {
             let baseDir = items.contains(where: { $0.depth > 0 })
                 ? LocalFS.commonAncestor(of: sources) : nil
             self.packCheckingOverwrite(archivePath: archivePath, sources: sources,
-                                       opts: opts, baseDir: baseDir, window: window)
+                                       opts: opts, baseDir: baseDir, provider: provider, window: window)
         }
         sheet.beginSheet(on: window) { done() }
     }
@@ -1822,62 +1831,72 @@ class MainViewController: NSViewController {
     /// Before packing, guard against clobbering an existing archive: offer
     /// Overwrite / Rename… / Cancel (TC-style).
     private func packCheckingOverwrite(archivePath: String, sources: [String],
-                                       opts: PackSheet.Options, baseDir: String?, window: NSWindow) {
+                                       opts: PackSheet.Options, baseDir: String?, provider: PackProvider, window: NSWindow) {
         // For split archives, the first real output is “<archivePath>.001”.
         let firstOutput = opts.volumeSize != nil ? archivePath + ".001" : archivePath
-        guard FileManager.default.fileExists(atPath: firstOutput) else {
-            runPack(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir, window: window)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = tr("Archive Already Exists")
-        alert.informativeText = tr("“%@” already exists in the destination folder. Overwrite it, or save under a different name?", (firstOutput as NSString).lastPathComponent)
-        alert.addButton(withTitle: tr("Overwrite"))
-        alert.addButton(withTitle: tr("Rename…"))
-        alert.addButton(withTitle: tr("Cancel"))
-        alert.beginSheetModal(for: window) { [weak self] resp in
-            guard let self = self else { return }
-            switch resp {
-            case .alertFirstButtonReturn:                       // Overwrite
-                try? FileManager.default.removeItem(atPath: firstOutput)
-                self.runPack(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir, window: window)
-            case .alertSecondButtonReturn:                      // Rename…
-                self.promptRenameArchive(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir, window: window)
-            default: break                                      // Cancel
+        Task { @MainActor [self] in
+            do {
+                guard try await provider.outputExists(at: firstOutput) else {
+                    runPack(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir,
+                            provider: provider, window: window)
+                    return
+                }
+                let alert = NSAlert()
+                alert.messageText = tr("Archive Already Exists")
+                alert.informativeText = tr("“%@” already exists in the destination folder. Overwrite it, or save under a different name?", (firstOutput as NSString).lastPathComponent)
+                alert.addButton(withTitle: tr("Overwrite"))
+                alert.addButton(withTitle: tr("Rename…"))
+                alert.addButton(withTitle: tr("Cancel"))
+                alert.beginSheetModal(for: window) { [weak self] resp in
+                    guard let self else { return }
+                    switch resp {
+                    case .alertFirstButtonReturn:
+                        self.runPack(archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir,
+                                     provider: provider, window: window)
+                    case .alertSecondButtonReturn:
+                        self.promptRenameArchive(archivePath: archivePath, sources: sources, opts: opts,
+                                                 baseDir: baseDir, provider: provider, window: window)
+                    default: break
+                    }
+                }
+            } catch {
+                presentLocalizedError(error, in: window)
             }
         }
     }
 
     /// Asks for a new base name, then re-checks (the new name may also exist).
     private func promptRenameArchive(archivePath: String, sources: [String],
-                                     opts: PackSheet.Options, baseDir: String?, window: NSWindow) {
-        let dir = (archivePath as NSString).deletingLastPathComponent
-        let ext = "." + opts.format.fileExtension
-        let alert = NSAlert()
-        alert.messageText = tr("Save Archive As")
-        alert.informativeText = tr("Enter a new name for the archive (%@):", ext)
-        alert.addButton(withTitle: tr("OK"))
-        alert.addButton(withTitle: tr("Cancel"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.bezelStyle = .roundedBezel
-        field.useSingleLineScrolling()
-        // Suggest "name 2" as a non-colliding default.
-        var suggestion = opts.baseName + " 2"
-        var n = 2
-        while FileManager.default.fileExists(atPath: dir + "/" + suggestion + ext) {
-            n += 1; suggestion = opts.baseName + " \(n)"
-        }
-        field.stringValue = suggestion
-        alert.accessoryView = field
-        beginSheet(alert, focusing: field, on: window) { [weak self] resp in
-            guard let self = self, resp == .alertFirstButtonReturn else { return }
-            var base = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if base.hasSuffix(ext) { base = String(base.dropLast(ext.count)) }
-            guard !base.isEmpty else { return }
-            var newOpts = opts
-            newOpts.baseName = base
-            let newPath = dir + "/" + base + ext
-            self.packCheckingOverwrite(archivePath: newPath, sources: sources, opts: newOpts, baseDir: baseDir, window: window)
+                                     opts: PackSheet.Options, baseDir: String?, provider: PackProvider, window: NSWindow) {
+        Task { @MainActor [self] in
+            do {
+                let dir = (archivePath as NSString).deletingLastPathComponent
+                let ext = "." + opts.format.fileExtension
+                let alert = NSAlert()
+                alert.messageText = tr("Save Archive As")
+                alert.informativeText = tr("Enter a new name for the archive (%@):", ext)
+                alert.addButton(withTitle: tr("OK"))
+                alert.addButton(withTitle: tr("Cancel"))
+                let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+                field.bezelStyle = .roundedBezel
+                field.useSingleLineScrolling()
+                let suggestion = try await provider.suggestedName(after: opts.baseName, extension: ext,
+                                                                  directory: dir, split: opts.volumeSize != nil)
+                field.stringValue = suggestion
+                alert.accessoryView = field
+                beginSheet(alert, focusing: field, on: window) { [weak self] resp in
+                    guard let self = self, resp == .alertFirstButtonReturn else { return }
+                    var base = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if base.hasSuffix(ext) { base = String(base.dropLast(ext.count)) }
+                    guard !base.isEmpty else { return }
+                    var newOpts = opts
+                    newOpts.baseName = base
+                    let newPath = dir + "/" + base + ext
+                    self.packCheckingOverwrite(archivePath: newPath, sources: sources, opts: newOpts, baseDir: baseDir, provider: provider, window: window)
+                }
+            } catch {
+                presentLocalizedError(error, in: window)
+            }
         }
     }
 
@@ -1885,45 +1904,15 @@ class MainViewController: NSViewController {
     /// Cancel), instead of a bare fire-and-forget task with no UI at all — a big
     /// 7z used to compress for minutes with zero feedback.
     private func runPack(archivePath: String, sources: [String],
-                         opts: PackSheet.Options, baseDir: String?, window: NSWindow) {
-        Task {
-            // Size the sources off the main actor: totalBytes drives the bar and
-            // the 7z percent→bytes mapping.
-            let total = await Task.detached(priority: .userInitiated) {
+                         opts: PackSheet.Options, baseDir: String?, provider: PackProvider, window: NSWindow) {
+        Task { [self] in
+            // Virtual sources are sized after export, never by probing their
+            // remote paths in the local filesystem.
+            let total = provider.sourceFS == nil ? await Task.detached(priority: .userInitiated) {
                 sources.reduce(Int64(0)) { $0 + FileOperation.sizeOnDisk($1) }
-            }.value
-            let op = FileOperation(type: .copy, sources: [archivePath], destination: nil)
-            op.customTitle = tr("Packing")
-            op.totalBytes = total
-            op.bytesTransferred = { [weak op] in op?.transferredBytes ?? 0 }
-            op.suppressFailureReport = true   // pack reports its own error below
-            let split = opts.volumeSize != nil
-            op.perItemOperation = { [weak op] _ in
-                guard let op = op else { return }
-                do {
-                    switch opts.format {
-                    case .builtIn(let format):
-                        try await LocalFS().createArchive(
-                            sources: sources, to: archivePath,
-                            format: format, level: opts.level, password: opts.password,
-                            baseDir: baseDir, volumeSize: opts.volumeSize,
-                            totalSourceBytes: total,
-                            progress: { op.reportBytes($0) },
-                            shouldCancel: { op.cancelRequested })
-                    case .plugin(let reg):
-                        try await PluginArchiveFS.createArchive(
-                            sources: sources, to: archivePath, packer: reg.extensionObject,
-                            baseDir: baseDir,
-                            progress: { op.reportBytes($0) },
-                            shouldCancel: { op.cancelRequested })
-                    }
-                } catch {
-                    // Cancelled or failed: don't leave a half-written archive around.
-                    LocalFS.removePackOutputs(archivePath: archivePath, split: split)
-                    if error is CancellationError || op.cancelRequested { return }
-                    throw error
-                }
-            }
+            }.value : 0
+            let op = provider.makeOperation(
+                archivePath: archivePath, sources: sources, opts: opts, baseDir: baseDir, total: total)
             runOperation(op, on: window) { [weak self] in
                 guard let self = self else { return }
                 self.inactivePanelVC.panelState.refresh()

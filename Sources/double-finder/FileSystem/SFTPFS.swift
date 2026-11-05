@@ -57,14 +57,14 @@ class SFTPFS: VirtualFS {
     /// message). Used by operations that must report failure (server-side cp/mv)
     /// rather than fire-and-forget.
     @discardableResult
-    private func sshChecked(_ command: String) throws -> String {
+    private func sshChecked(_ command: String, cancellation: SSHProcessBox? = nil) throws -> String {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         proc.arguments = sshArgs(command)
         let out = Pipe(), err = Pipe()
         proc.standardOutput = out
         proc.standardError = err
-        try proc.run()
+        if let cancellation { try cancellation.launch(proc) } else { try proc.run() }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         let errData = err.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
@@ -240,7 +240,12 @@ class SFTPFS: VirtualFS {
     func exportItem(at path: String, toLocalDirectory directory: URL,
                     progress: @escaping @Sendable (Int64) -> Void) async throws {
         let local = try await FileContentTransfer.prepareDirectory(directory)
-        try await copy(from: path, to: local)
+        let key = expandedKey, conn = connection
+        try await SSHProcessBox.run { box in
+            try Self.scp(["-r", "-p", "-i", key, "-P", "\(conn.port)",
+                          "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+                          "\(conn.user)@\(conn.host):\(path)", local], onProcess: nil, cancellation: box)
+        }
     }
 
     /// Unlike the legacy directory upload, this targets an exact path. Directory
@@ -265,19 +270,40 @@ class SFTPFS: VirtualFS {
         }
     }
 
+    /// Stream one archive entry without keeping its bytes in memory.
+    func exportCommand(_ command: String, toLocalFile path: String) async throws {
+        try await SSHProcessBox.run { box in
+            guard FileManager.default.createFile(atPath: path, contents: nil),
+                  let output = FileHandle(forWritingAtPath: path) else {
+                throw FSUnsupportedError(message: "Can't write \(path)")
+            }
+            defer { try? output.close() }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = self.sshArgs(command)
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
+            try box.launch(process)
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw FSUnsupportedError(message: "Remote extract failed (status \(process.terminationStatus))")
+            }
+        }
+    }
+
     /// Checked remote commands for content import; errors never become success.
     @discardableResult
     func runCheckedCommand(_ command: String) async throws -> String {
-        try await Task.detached(priority: .userInitiated) { try self.sshChecked(command) }.value
+        try await SSHProcessBox.run { box in try self.sshChecked(command, cancellation: box) }
     }
 
     func uploadFile(localPath: String, toPath remotePath: String) async throws {
         let key = expandedKey, conn = connection
-        try await Task.detached(priority: .userInitiated) {
+        try await SSHProcessBox.run { box in
             try Self.scp(["-p", "-i", key, "-P", "\(conn.port)",
                           "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
-                          localPath, "\(conn.user)@\(conn.host):\(remotePath)"], onProcess: nil)
-        }.value
+                          localPath, "\(conn.user)@\(conn.host):\(remotePath)"], onProcess: nil, cancellation: box)
+        }
     }
 
     /// Download a remote file/dir to a local destination directory.
@@ -308,13 +334,13 @@ class SFTPFS: VirtualFS {
         }.value
     }
 
-    private static func scp(_ args: [String], onProcess: ((Process) -> Void)?) throws {
+    private static func scp(_ args: [String], onProcess: ((Process) -> Void)?, cancellation: SSHProcessBox? = nil) throws {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
         proc.arguments = args
         proc.standardOutput = Pipe(); proc.standardError = Pipe()
         onProcess?(proc)
-        try proc.run()
+        if let cancellation { try cancellation.launch(proc) } else { try proc.run() }
         proc.waitUntilExit()
         if proc.terminationStatus != 0 {
             throw NSError(domain: "SFTPFS", code: Int(proc.terminationStatus),
@@ -343,10 +369,35 @@ class SFTPFS: VirtualFS {
 
 /// Holds the running ssh process behind a lock so a cancellation handler — which
 /// fires on whatever thread cancelled — can terminate it without racing launch.
-private final class SSHProcessBox: @unchecked Sendable {
+final class SSHProcessBox: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
     private var cancelled = false
+
+    /// Launch and cancellation are serialized so cancellation cannot miss the
+    /// interval between registration and Process.run().
+    func launch(_ process: Process) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { throw CancellationError() }
+        try process.run()
+        self.process = process
+    }
+
+    static func run<T>(_ work: @escaping @Sendable (SSHProcessBox) throws -> T) async throws -> T {
+        let box = SSHProcessBox()
+        return try await withTaskCancellationHandler {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) { try work(box) }.value
+                try Task.checkCancellation()
+                return result
+            } catch {
+                try Task.checkCancellation()
+                throw error
+            }
+        } onCancel: {
+            box.terminate()
+        }
+    }
 
     /// Registers the process; false means cancellation already won, don't launch.
     func adopt(_ process: Process) -> Bool {

@@ -56,25 +56,6 @@ final class RemoteArchiveFS: VirtualFS {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    /// Runs `command` on the host and streams its stdout straight into a local file.
-    private func sshToFile(_ command: String, localPath: String) throws {
-        FileManager.default.createFile(atPath: localPath, contents: nil)
-        guard let fh = FileHandle(forWritingAtPath: localPath) else {
-            throw FSUnsupportedError(message: "Can't write \(localPath)")
-        }
-        defer { try? fh.close() }
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        proc.arguments = sshArgs(command)
-        proc.standardOutput = fh
-        proc.standardError = Pipe()
-        try proc.run()
-        proc.waitUntilExit()
-        if proc.terminationStatus != 0 {
-            throw FSUnsupportedError(message: "Remote extract failed (status \(proc.terminationStatus))")
-        }
-    }
-
     // MARK: - Listing
 
     /// The list of all entry paths in the archive (cached after the first ssh).
@@ -121,24 +102,41 @@ final class RemoteArchiveFS: VirtualFS {
     func exportItem(at path: String, toLocalDirectory directory: URL,
                     progress: @escaping @Sendable (Int64) -> Void) async throws {
         let local = try await FileContentTransfer.prepareDirectory(directory)
-        try await copy(from: path, to: local)
+        let entry = internalPath(from: path).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let leaf = (path as NSString).lastPathComponent
+        try FileContentTransfer.validateLeaf(leaf)
+        let isDirectory = try await Task.detached(priority: .userInitiated) {
+            try self.entries().contains { $0.hasPrefix(entry + "/") }
+        }.value
+        try Task.checkCancellation()
+        if isDirectory {
+            let target = directory.appendingPathComponent(leaf)
+            try await LocalFS().createDirectory(target.path)
+            for child in try await listDirectory(path) where child.name != ".." {
+                try Task.checkCancellation()
+                try FileContentTransfer.validateLeaf(child.name)
+                try await exportItem(at: child.path, toLocalDirectory: target, progress: progress)
+            }
+        } else {
+            try await copy(from: path, to: local)
+        }
     }
 
     func copy(from: String, to: String) async throws {
         let entry = internalPath(from: from)
-        try await Task.detached(priority: .userInitiated) { [self] in
-            _ = try? entries()                                  // ensure the raw-name map is built
-            let rawEntry = rawByNormalized[entry] ?? entry      // match the archive's stored name
-            let dest = (to as NSString).appendingPathComponent((entry as NSString).lastPathComponent)
+        let command = try await Task.detached(priority: .userInitiated) { [self] in
+            _ = try entries()                                   // ensure the raw-name map is built
+            let rawEntry = rawByNormalized[entry] ?? entry
             let a = Self.q(archivePath), e = Self.q(rawEntry)
-            let cmd: String
             switch kind {
-            case .tar: cmd = "tar xf \(a) -O \(e)"   // GNU/bsd tar auto-detects gz/bz2/xz
-            case .zip: cmd = "unzip -p \(a) \(e)"
+            case .tar: return "tar xf \(a) -O \(e)"
+            case .zip: return "unzip -p \(a) \(e)"
             default: throw FSUnsupportedError(message: "Remote extract not supported for this format")
             }
-            try sshToFile(cmd, localPath: dest)
         }.value
+        try Task.checkCancellation()
+        let destination = (to as NSString).appendingPathComponent((entry as NSString).lastPathComponent)
+        try await SFTPFS(connection: connection).exportCommand(command, toLocalFile: destination)
     }
 
     // Read-only remote archive: the rest is unsupported.

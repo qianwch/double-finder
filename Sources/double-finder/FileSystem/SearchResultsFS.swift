@@ -16,7 +16,11 @@ struct SearchResultsFS: VirtualFS {
         PanelState.isInsideArchive(path) ? PanelState.fileSystem(for: path) : LocalFS()
     }
 
-    func listDirectory(_ path: String) async throws -> [FileItem] { try await fs(for: path).listDirectory(path) }
+    func listDirectory(_ path: String) async throws -> [FileItem] {
+        // Listing an archive root asks for its entries; exporting that same
+        // path still copies the archive file itself through LocalFS.
+        try await PanelState.fileSystem(for: path).listDirectory(path)
+    }
     func exportItem(at path: String, toLocalDirectory directory: URL,
                     progress: @escaping @Sendable (Int64) -> Void) async throws {
         _ = try FileContentTransfer.localPath(directory)
