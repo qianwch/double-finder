@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import UniformTypeIdentifiers
 @testable import double_finder
 
 /// Async integration tests for FileIconProvider.
@@ -168,6 +169,36 @@ final class FileIconProviderTests: XCTestCase {
     }
 
     // MARK: - Test 5: cancelOffscreen drops pending requests
+
+    /// Remote/archived files have no local path, but must still use their
+    /// registered file-type icon rather than caching the generic paper icon.
+    func testNonlocalFilesUseFileTypeIcons() async throws {
+        for ext in ["xlsx", "PPTX", "docx", "pdf"] {
+            for thumbnail in [false, true] {
+                let item = FileItem(
+                    id: UUID(), name: "report.\(ext)",
+                    path: "/double-finder-nonlocal-\(UUID().uuidString)/report.\(ext)",
+                    isDirectory: false, isArchive: false, size: 0, modified: Date(),
+                    isHidden: false, isSymlink: false, permissions: "")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: item.path))
+                let provider = await MainActor.run { FileIconProvider() }
+                let ready = XCTestExpectation(description: "Resolved nonlocal \(ext), thumbnail=\(thumbnail)")
+                await MainActor.run {
+                    provider.onReady = { _ in ready.fulfill() }
+                    _ = provider.icon(for: item, side: 32, wantThumbnail: thumbnail)
+                }
+                await fulfillment(of: [ready], timeout: 5)
+                try await MainActor.run {
+                    let type = try XCTUnwrap(UTType(filenameExtension: ext.lowercased()))
+                    let expected = fileIconResized(NSWorkspace.shared.icon(for: type), to: 32,
+                                                   preserveAspectRatio: thumbnail)
+                    let actual = provider.icon(for: item, side: 32, wantThumbnail: thumbnail)
+                    XCTAssertEqual(actual.tiffRepresentation, expected.tiffRepresentation,
+                                   "Nonlocal .\(ext) must show its file-type icon (thumbnail=\(thumbnail))")
+                }
+            }
+        }
+    }
 
     func testCancelOffscreenDropsPendingRequests() async throws {
         let provider = await MainActor.run { FileIconProvider() }

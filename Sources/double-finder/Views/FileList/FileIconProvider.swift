@@ -1,5 +1,6 @@
 import AppKit
 import QuickLookThumbnailing
+import UniformTypeIdentifiers
 
 /// Asynchronous file-icon and QuickLook-thumbnail provider with an in-memory
 /// bitmap cache. The public API is fully main-thread — `draw(_:)` can call
@@ -239,7 +240,11 @@ private final class IconOperation: Operation, @unchecked Sendable {
             // macOS 10.6+.
             raw = NSWorkspace.shared.icon(forFile: path)
         } else {
-            raw = NSWorkspace.shared.icon(for: .data)
+            // Remote and archive paths do not exist on the local filesystem.
+            // Resolve their registered type icon without downloading the file;
+            // otherwise one generic result is cached for the entire extension.
+            let ext = (item.name as NSString).pathExtension.lowercased()
+            raw = NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
         }
         guard !isCancelled else { return }
         deliver(raw)
