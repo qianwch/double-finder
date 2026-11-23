@@ -3880,7 +3880,7 @@ extension MainViewController: PanelViewControllerDelegate {
     private func persistTabs(of vc: PanelViewController, tabsKey: String, activeKey: String) {
         let (states, active) = vc.exportTabs()
         let tabs = states.map { TabSession.Tab(path: persistablePath(of: $0), locked: $0.isLocked,
-                                               lockedPath: $0.lockedPath) }
+                                               lockedPath: $0.lockedPath, lockedTitle: $0.lockedTitle) }
         let d = UserDefaults.standard
         d.set(TabSession.encode(tabs), forKey: tabsKey)
         d.set(active, forKey: activeKey)
@@ -3927,12 +3927,14 @@ extension MainViewController: PanelViewControllerDelegate {
                 // loaded) so AppState keeps pointing at the live instance.
                 panel.isLocked = tab.locked
                 panel.lockedPath = tab.lockedPath
+                panel.lockedTitle = tab.lockedTitle
                 states.append(panel)
             } else {
                 let s = PanelState(path: tab.path)
                 s.showHidden = panel.showHidden
                 s.isLocked = tab.locked
                 s.lockedPath = tab.lockedPath
+                s.lockedTitle = tab.lockedTitle
                 states.append(s)   // loads lazily on first activation
             }
         }

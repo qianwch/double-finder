@@ -10,6 +10,11 @@ enum TabSession {
         /// Folder captured when the tab was folder-locked ("Lock Tab and
         /// Folder"). nil = unlocked or plain lock (close protection only).
         var lockedPath: String? = nil
+        /// Title frozen when the tab was locked (either mode): the tab keeps
+        /// showing this name instead of following the directory it has since
+        /// navigated to. nil = unlocked, or a plain-locked tab saved before
+        /// this field existed (its title keeps following the current path).
+        var lockedTitle: String? = nil
     }
 
     /// UserDefaults representation: one dict per tab.
@@ -17,6 +22,7 @@ enum TabSession {
         tabs.map {
             var dict = ["path": $0.path, "locked": $0.locked ? "1" : "0"]
             if let lockedPath = $0.lockedPath { dict["lockedPath"] = lockedPath }
+            if let lockedTitle = $0.lockedTitle { dict["lockedTitle"] = lockedTitle }
             return dict
         }
     }
@@ -35,8 +41,20 @@ enum TabSession {
             if locked, let stored = dict["lockedPath"], isDirectory(stored) {
                 lockedPath = stored
             }
+            var lockedTitle: String?
+            if locked, let stored = dict["lockedTitle"], !stored.isEmpty {
+                lockedTitle = stored
+            }
+            // Sessions saved before lockedTitle existed: a folder-locked tab
+            // can still recover its frozen name from the captured folder; a
+            // plain-locked tab stored nothing to recover (title keeps
+            // following the path).
+            if locked, lockedTitle == nil, let lockedPath = lockedPath {
+                let component = (lockedPath as NSString).lastPathComponent
+                lockedTitle = component.isEmpty ? "/" : component
+            }
             return Tab(path: isDirectory(path) ? path : fallback,
-                       locked: locked, lockedPath: lockedPath)
+                       locked: locked, lockedPath: lockedPath, lockedTitle: lockedTitle)
         }
     }
 

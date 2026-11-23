@@ -402,6 +402,8 @@ class PanelViewController: NSViewController {
 
     /// Toggle plain lock (context menu "Lock Tab"): close protection only.
     /// Clicking it while folder-locked switches to plain (drops folder memory).
+    /// Locking freezes the tab's title at the directory shown right now, so the
+    /// tab keeps naming its locked location however far it later navigates.
     func toggleTabLock(at index: Int) {
         ensureTabsInitialized()
         guard index >= 0, index < tabs.count else { return }
@@ -409,6 +411,7 @@ class PanelViewController: NSViewController {
         let wasPlain = state.isLocked && state.lockedPath == nil
         state.isLocked = !wasPlain
         state.lockedPath = nil
+        state.lockedTitle = wasPlain ? nil : Self.tabTitle(for: state)
         refreshTabBar()
         panelDelegate?.panelViewControllerTabsDidChange(self)
     }
@@ -423,9 +426,11 @@ class PanelViewController: NSViewController {
         if state.lockedPath != nil {
             state.isLocked = false
             state.lockedPath = nil
+            state.lockedTitle = nil
         } else if let folder = state.lockableFolder {
             state.isLocked = true
             state.lockedPath = folder
+            state.lockedTitle = Self.tabTitle(for: state)
         } else {
             return   // no capturable folder (the menu item is disabled then)
         }
@@ -482,11 +487,19 @@ class PanelViewController: NSViewController {
         panelDelegate?.panelViewControllerTabsDidChange(self)
     }
 
+    /// The title a tab shows for `state`'s current location: the last path
+    /// component ("/" at the root). Shared by `refreshTabBar` and the lock
+    /// toggles, which freeze this value into `lockedTitle` at lock time.
+    private static func tabTitle(for state: PanelState) -> String {
+        let component = (state.currentPath as NSString).lastPathComponent
+        return component.isEmpty ? "/" : component
+    }
+
     private func refreshTabBar() {
         ensureTabsInitialized()
         let infos = tabs.map { s in
             TabBarView.TabInfo(
-                title: (s.currentPath as NSString).lastPathComponent.isEmpty ? "/" : (s.currentPath as NSString).lastPathComponent,
+                title: s.lockedTitle ?? Self.tabTitle(for: s),
                 lock: s.lockedPath != nil ? .folder : (s.isLocked ? .plain : .none),
                 folderLockable: s.lockableFolder != nil)
         }
@@ -1381,7 +1394,11 @@ class PathBar: NSView {
             let btn = NSButton(title: comp.label, target: self, action: #selector(segmentClicked(_:)))
             btn.bezelStyle = .inline
             btn.isBordered = false
-            btn.font = NSFont.systemFont(ofSize: 11)
+            // The inline bezel draws its title in a muted gray by default; tint
+            // the path near-black so the location reads at a glance, with the
+            // current folder (last segment) emphasized Finder-style.
+            btn.contentTintColor = .labelColor
+            btn.font = NSFont.systemFont(ofSize: 11, weight: i == components.count - 1 ? .semibold : .regular)
             btn.tag = i
             btn.toolTip = comp.path
             btn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

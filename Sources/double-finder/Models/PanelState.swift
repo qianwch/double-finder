@@ -37,6 +37,13 @@ class PanelState: ObservableObject {
     /// tab set. nil = unlocked or plain lock.
     var lockedPath: String?
 
+    /// Title frozen at lock time (both lock modes): while set, the tab keeps
+    /// showing this name instead of following the current directory, so a
+    /// locked tab still identifies the folder it was locked on after the user
+    /// navigates it elsewhere. Captured on every lock action, cleared on
+    /// unlock, persisted with the tab set.
+    var lockedTitle: String?
+
     /// The folder a lock should capture: the current path when it's a real
     /// local (or local-archive) location. Remote and search-result listings
     /// aren't restorable by path alone (the session may be gone at snap time),
