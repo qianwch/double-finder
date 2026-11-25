@@ -28,6 +28,7 @@ enum RemoteEditWriteBack {
 /// Tracks remote edit sessions and reports which temp copies changed since
 /// download. Not thread-safe; used from the main actor only.
 final class RemoteEditWatcher {
+    enum Decision { case upload, discard, cancel }
     private var store: [RemoteEditSession] = []
     var sessions: [RemoteEditSession] { store }
 
@@ -37,22 +38,22 @@ final class RemoteEditWatcher {
         store.append(session)
     }
 
-    /// Re-stat each tracked temp file. Files that no longer exist are dropped.
-    /// Returns the sessions whose temp copy changed vs. its baseline.
+    /// A missing/unreadable path may be an editor's atomic-save interval.
+    /// Keep it pending until the user explicitly discards it; never lose tracking.
     func pendingChanges(fileManager: FileManager = .default) -> [RemoteEditSession] {
         var changed: [RemoteEditSession] = []
-        store.removeAll { session in
+        for session in store {
             guard let a = try? fileManager.attributesOfItem(atPath: session.tempPath),
                   let mod = a[.modificationDate] as? Date,
                   let size = (a[.size] as? NSNumber)?.int64Value else {
-                return true   // missing/unreadable → drop
+                changed.append(session)
+                continue
             }
             if RemoteEditWriteBack.hasChanged(baselineModified: session.baselineModified,
                                               baselineSize: session.baselineSize,
                                               currentModified: mod, currentSize: size) {
                 changed.append(session)
             }
-            return false
         }
         return changed
     }
@@ -65,6 +66,57 @@ final class RemoteEditWatcher {
 
     func forget(tempPath: String) {
         store.removeAll { $0.tempPath == tempPath }
+    }
+
+    /// Resolve one pass. A save made during an upload stays pending for the next
+    /// pass: baseline only the immutable bytes actually handed to the backend.
+    @MainActor
+    func resolveChanges(decide: (RemoteEditSession) async -> Decision,
+                        onError: (Error) -> Void) async -> Bool {
+        for session in pendingChanges() {
+            switch await decide(session) {
+            case .cancel: return false
+            case .discard:
+                do {
+                    let version = try Self.version(at: session.tempPath)
+                    updateBaseline(tempPath: session.tempPath, modified: version.0, size: version.1)
+                } catch {
+                    let nsError = error as NSError
+                    if nsError.domain == NSCocoaErrorDomain,
+                       [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(nsError.code) {
+                        forget(tempPath: session.tempPath)
+                    } else { onError(error); return false }
+                }
+            case .upload:
+                let directory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("DoubleFinder-Upload-" + UUID().uuidString, isDirectory: true)
+                let snapshot = directory.appendingPathComponent((session.tempPath as NSString).lastPathComponent)
+                do {
+                    let version = try await Task.detached(priority: .userInitiated) {
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                        try FileManager.default.copyItem(atPath: session.tempPath, toPath: snapshot.path)
+                        return try Self.version(at: snapshot.path)
+                    }.value
+                    try await session.upload(snapshot.path, session.remotePath)
+                    updateBaseline(tempPath: session.tempPath, modified: version.0, size: version.1)
+                } catch {
+                    await Task.detached { try? FileManager.default.removeItem(at: directory) }.value
+                    onError(error)
+                    return false
+                }
+                await Task.detached { try? FileManager.default.removeItem(at: directory) }.value
+            }
+        }
+        return true
+    }
+
+    private nonisolated static func version(at path: String) throws -> (Date, Int64) {
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        guard let modified = attributes[.modificationDate] as? Date,
+              let size = (attributes[.size] as? NSNumber)?.int64Value else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return (modified, size)
     }
 }
 

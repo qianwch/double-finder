@@ -250,8 +250,14 @@ Pure-logic tests for the MTP virtual path model.  Real-device values are used on
 | `testHasChanged` | — |
 | `testRemoteParentDir` | — |
 | `testTrackDetectsChangeThenBaselineClears` | — |
-| `testPendingDropsMissingFile` | — |
+| `testPendingRetainsMissingFileUntilDiscarded` | 原子保存间隙不丢跟踪，明确放弃后可移除缺失会话。 |
 | `testTrackDedupesByTempPath` | — |
+| `testUploadFailureAndCancelPreservePendingChanges` | 上传失败/取消保持本地内容和待处理基线。 |
+| `testUploadUsesSnapshotAndKeepsSavesMadeDuringUploadPending` | 上传稳定快照到原完整路径；上传中的新保存仍待处理，结束删除快照。 |
+
+### `ExternalFileWorkspaceTests` — ExternalFileWorkspaceTests.swift
+
+真实 LocalFS 导出验证重复打开保留编辑、跨端点隔离、本次运行清理不影响其他运行和源文件、关闭后拒绝新下载，失败/取消不遗留副本。
 
 ### `RemoteSearchLiveTests` — RemoteSearchLiveTests.swift
 
@@ -1214,3 +1220,5 @@ The "Reset to Defaults" key tables. These run against a private UserDefaults sui
 ### `MediaByteRangeTests` / `AndroidMediaStreamTests`
 
 Quick View Android 视频分段读取：完整、开放、后缀、截断及无效 Range；真实 loopback HTTP 后缀 Range 只读取请求字节，HEAD/416 不访问 USB，stop 取消正在执行的异步读取。测试使用注入读取器，不需手机，也不写 UserDefaults。
+
+- RemoteEditWatcherTests.testUnreadableCopyIsStillPendingInsteadOfForgotten：stat 权限错误保留会话供用户处理。ExternalFileWorkspaceTests.testCleanupFailureStillClosesWorkspaceAfterExitWasCommitted：真实权限拒绝后禁止重新打开部分已删除的工作区。

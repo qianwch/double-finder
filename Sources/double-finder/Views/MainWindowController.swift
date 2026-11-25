@@ -1,6 +1,6 @@
 import AppKit
 
-class MainWindowController: NSWindowController {
+class MainWindowController: NSWindowController, NSWindowDelegate {
     private var mainVC: MainViewController!
     private let appState: AppState
 
@@ -22,6 +22,7 @@ class MainWindowController: NSWindowController {
         mainVC = MainViewController()
         mainVC.appState = appState
         window.contentViewController = mainVC
+        window.delegate = self
 
         // Save the frame live on every move/resize so it survives even a crash
         // or force-quit (applicationWillTerminate only fires on a clean quit).
@@ -33,6 +34,12 @@ class MainWindowController: NSWindowController {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Keep the last window available if an edit prompt cancels termination.
+        NSApp.terminate(sender)
+        return false
+    }
 
     // UserDefaults key holding the window frame ("{{x, y}, {w, h}}") from last session.
     private static let frameKey = "MainWindowFrame"

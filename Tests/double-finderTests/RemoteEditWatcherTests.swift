@@ -56,15 +56,80 @@ final class RemoteEditWatcherTests: XCTestCase {
         XCTAssertTrue(w.pendingChanges(fileManager: .default).isEmpty)
     }
 
-    func testPendingDropsMissingFile() {
+    @MainActor
+    func testPendingRetainsMissingFileUntilDiscarded() async {
         let path = makeTempFile("x")
         let (m, s) = attrs(path)
         let w = RemoteEditWatcher()
         w.track(RemoteEditSession(tempPath: path, remotePath: "/b/x", serverLabel: "b",
                                   baselineModified: m, baselineSize: s, upload: { _, _ in }))
         try? FileManager.default.removeItem(atPath: path)
-        XCTAssertTrue(w.pendingChanges(fileManager: .default).isEmpty)
-        XCTAssertTrue(w.sessions.isEmpty)   // dropped
+        XCTAssertEqual(w.pendingChanges(fileManager: .default).count, 1)
+        XCTAssertEqual(w.sessions.count, 1)
+        // An editor can temporarily remove the original during an atomic save.
+        try? "saved again".write(toFile: path, atomically: true, encoding: .utf8)
+        XCTAssertEqual(w.pendingChanges().count, 1)
+        try? FileManager.default.removeItem(atPath: path)
+        let discarded = await w.resolveChanges(decide: { _ in .discard }, onError: { _ in XCTFail() })
+        XCTAssertTrue(discarded)
+        XCTAssertTrue(w.sessions.isEmpty)
+    }
+
+    @MainActor
+    func testUploadFailureAndCancelPreservePendingChanges() async throws {
+        let path = makeTempFile("original")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let (modified, size) = attrs(path)
+        let watcher = RemoteEditWatcher()
+        watcher.track(RemoteEditSession(tempPath: path, remotePath: "/origin/note.txt", serverLabel: "server",
+                                       baselineModified: modified, baselineSize: size,
+                                       upload: { _, _ in throw CocoaError(.fileWriteNoPermission) }))
+        try "edited locally".write(toFile: path, atomically: true, encoding: .utf8)
+        var failed = false
+        let uploaded = await watcher.resolveChanges(decide: { _ in .upload }, onError: { _ in failed = true })
+        XCTAssertFalse(uploaded)
+        XCTAssertTrue(failed)
+        XCTAssertEqual(watcher.pendingChanges().count, 1)
+        let cancelled = await watcher.resolveChanges(decide: { _ in .cancel }, onError: { _ in XCTFail() })
+        XCTAssertFalse(cancelled)
+        XCTAssertEqual(try String(contentsOfFile: path), "edited locally")
+        XCTAssertEqual(watcher.pendingChanges().count, 1)
+    }
+
+    @MainActor
+    func testUploadUsesSnapshotAndKeepsSavesMadeDuringUploadPending() async throws {
+        let path = makeTempFile("original")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let (modified, size) = attrs(path)
+        let watcher = RemoteEditWatcher()
+        var snapshotPath: String?
+        watcher.track(RemoteEditSession(tempPath: path, remotePath: "/origin/note.txt", serverLabel: "server",
+                                       baselineModified: modified, baselineSize: size, upload: { snapshot, remote in
+            snapshotPath = snapshot
+            XCTAssertNotEqual(snapshot, path)
+            XCTAssertEqual(remote, "/origin/note.txt")
+            try "second longer save".write(toFile: path, atomically: true, encoding: .utf8)
+            XCTAssertEqual(try String(contentsOfFile: snapshot), "first save")
+        }))
+        try "first save".write(toFile: path, atomically: true, encoding: .utf8)
+        let success = await watcher.resolveChanges(decide: { _ in .upload }, onError: { _ in XCTFail() })
+        XCTAssertTrue(success)
+        XCTAssertEqual(watcher.pendingChanges().count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(snapshotPath)))
+        let discarded = await watcher.resolveChanges(decide: { _ in .discard }, onError: { _ in XCTFail() })
+        XCTAssertTrue(discarded)
+        XCTAssertTrue(watcher.pendingChanges().isEmpty)
+    }
+
+    func testUnreadableCopyIsStillPendingInsteadOfForgotten() {
+        let path = makeTempFile("original")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let (modified, size) = attrs(path)
+        let watcher = RemoteEditWatcher()
+        watcher.track(RemoteEditSession(tempPath: path, remotePath: "/origin/note.txt", serverLabel: "server",
+                                       baselineModified: modified, baselineSize: size, upload: { _, _ in }))
+        XCTAssertEqual(watcher.pendingChanges(fileManager: UnreadableFileManager()).count, 1)
+        XCTAssertEqual(watcher.sessions.count, 1)
     }
 
     func testTrackDedupesByTempPath() {
@@ -76,5 +141,11 @@ final class RemoteEditWatcherTests: XCTestCase {
         w.track(s1); w.track(s2)
         XCTAssertEqual(w.sessions.count, 1)
         XCTAssertEqual(w.sessions.first?.remotePath, "/c/a")   // replaced
+    }
+}
+
+private final class UnreadableFileManager: FileManager, @unchecked Sendable {
+    override func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
+        throw CocoaError(.fileReadNoPermission)
     }
 }

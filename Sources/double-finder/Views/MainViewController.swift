@@ -43,6 +43,8 @@ class MainViewController: NSViewController {
     private var quickViewLoadGeneration = UUID()
     private var quickViewMediaStream: AndroidMediaStream?
     private let fileContentService = FileContentService()
+    private let externalFileWorkspace = ExternalFileWorkspace()
+    private var isPreparingToQuit = false
     private let remoteEditWatcher = RemoteEditWatcher()
     private var isHandlingEditWriteBack = false
     /// True while restoreTabs() is importing saved tabs at startup. Importing into
@@ -860,9 +862,8 @@ class MainViewController: NSViewController {
         } else if item.isDirectory {
             panel.navigate(to: item.path)
         } else if panel.s3 != nil {
-            // S3 objects, including archives, stay in the current listing.
-            // Use F3 to view or F5 to download before browsing an archive locally.
-            return
+            // S3 archives keep their existing F5-before-browsing behavior.
+            if !item.isArchive { confirmRemoteOpen(item, in: panelVC) }
         } else if FileItem.isArchiveFileName(item.name), let session = panel.remote?.adbSession {
             downloadAndEnterADBArchive(item, session: session, panel: panelVC)
         } else if FileItem.isArchiveFileName(item.name), let device = panel.android {
@@ -889,8 +890,59 @@ class MainViewController: NSViewController {
             // A plain file inside an archive has only a virtual path — extract it to a
             // temp copy first (via the panel's ZipFS / RemoteArchiveFS), then open it.
             openExtractedThenOpen(item, in: panelVC)
+        } else if panel.remote != nil {
+            confirmRemoteOpen(item, in: panelVC)
         }
-        // Other remote (SFTP/S3) plain files: no auto-open (F3 to view / F5 to download).
+    }
+
+    private func confirmRemoteOpen(_ item: FileItem, in panelVC: PanelViewController) {
+        guard !isPreparingToQuit, let window = sheetHost() else { return }
+        let panel = panelVC.panelState
+        let fs = panel.fs, remote = panel.remote, endpointID = panel.fileEndpointID
+        let alert = NSAlert()
+        alert.messageText = tr("Open remote file “%@”?", (item.path as NSString).lastPathComponent)
+        alert.informativeText = tr("The file will be downloaded to a temporary folder and opened in its default app. Save and close it before quitting Double Finder. Temporary copies are deleted when Double Finder quits.")
+        alert.addButton(withTitle: tr("Open"))
+        alert.addButton(withTitle: tr("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            // NSAlert's completion can run before attachedSheet is cleared.
+            // Start the next sheet after AppKit finishes dismissing this one.
+            DispatchQueue.main.async {
+                self?.openMaterializedFile(item, using: fs, endpointID: endpointID, remote: remote, inEditor: false)
+            }
+        }
+    }
+
+    /// External-open and F4 share a run-owned copy. Reopening never overwrites edits.
+    private func openMaterializedFile(_ item: FileItem, using fs: VirtualFS,
+                                      endpointID: FileEndpointID, remote: RemoteSession?, inEditor: Bool) {
+        guard !isPreparingToQuit, let window = sheetHost() else { return }
+        let reference = FileReference(endpointID: endpointID, path: item.path)
+        let launch: (URL) -> Void = { [weak self] url in
+            guard let self else { return }
+            self.registerEditWriteBack(localURL: url, remotePath: item.path, fs: fs, remote: remote)
+            if inEditor { self.openInEditor(url) }
+            else {
+                NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                    guard let error else { return }
+                    Task { @MainActor [weak self] in self?.presentLocalizedError(error, in: window) }
+                }
+            }
+        }
+        if let url = externalFileWorkspace.existingCopy(for: reference) { launch(url); return }
+        let request = FileContentRequest(reference: reference, size: item.size, modified: item.modified)
+        let op = FileOperation(type: .copy, sources: [item.path], destination: nil)
+        op.customTitle = tr("Downloading")
+        op.indeterminate = true
+        var localURL: URL?
+        op.perItemOperation = { [externalFileWorkspace] _ in
+            localURL = try await externalFileWorkspace.materialize(request, using: fs)
+        }
+        runOperation(op, on: window) { [weak op] in
+            guard let op, !op.cancelRequested, op.failures.isEmpty, let url = localURL else { return }
+            launch(url)
+        }
     }
 
     /// Extract one archive-interior file to a temp copy and open it with its default app.
@@ -1091,8 +1143,8 @@ class MainViewController: NSViewController {
     /// `useCache` (F3 only) keys the folder by identity+size+mtime instead and reuses
     /// an already-materialized copy — stepping back to a file with ⌘↑/⌘↓ then costs
     /// nothing, which matters most on a solid 7z where one entry means a full pass
-    /// over the archive. F4 (edit) deliberately passes false: it must start from the
-    /// remote bytes, otherwise a second F4 would reopen the user's own unsaved edits.
+    /// over the archive. External editing uses ExternalFileWorkspace instead,
+    /// preserving open copies until this app run ends.
     private func materializeOne(_ item: FileItem, using fs: VirtualFS,
                                 endpointID: FileEndpointID, useCache: Bool = false,
                                 onProgress: (@Sendable (Int64) -> Void)? = nil,
@@ -1123,14 +1175,7 @@ class MainViewController: NSViewController {
         let fs = archiveEntryRow ? PanelState.fileSystem(for: item.path) : panel.fs
         let remote = panel.remote
         let endpointID = panel.fileEndpointID
-        Task {
-            let urls = await self.materialize([item], using: fs, endpointID: endpointID)
-            await MainActor.run {
-                guard let u = urls.first else { NSSound.beep(); return }
-                self.registerEditWriteBack(localURL: u, remotePath: item.path, fs: fs, remote: remote)
-                self.openInEditor(u)
-            }
-        }
+        openMaterializedFile(item, using: fs, endpointID: endpointID, remote: remote, inEditor: true)
     }
 
     /// If the edited file came from a remote endpoint, track it so a later change can be
@@ -1139,6 +1184,7 @@ class MainViewController: NSViewController {
                                        fs: VirtualFS, remote: RemoteSession?) {
         guard !(fs is RemoteArchiveFS), !(fs is PluginArchiveFS) else { return }
         let tempPath = localURL.path
+        guard !remoteEditWatcher.sessions.contains(where: { $0.tempPath == tempPath }) else { return }
         guard let a = try? FileManager.default.attributesOfItem(atPath: tempPath),
               let mod = a[.modificationDate] as? Date,
               let size = (a[.size] as? NSNumber)?.int64Value else { return }
@@ -1189,44 +1235,76 @@ class MainViewController: NSViewController {
             baselineModified: mod, baselineSize: size, upload: upload))
     }
 
-    /// On app reactivation, offer to upload any remote-edit temp copy that changed.
+    /// On reactivation, offer to upload saved edits without interrupting another sheet.
     @objc private func handleEditWriteBack() {
-        guard !isHandlingEditWriteBack else { return }
-        let changed = remoteEditWatcher.pendingChanges()
-        guard !changed.isEmpty, let window = view.window else { return }
+        guard !isPreparingToQuit, !isHandlingEditWriteBack,
+              view.window?.attachedSheet == nil,
+              !externalFileWorkspace.hasActiveLoads,
+              !remoteEditWatcher.pendingChanges().isEmpty else { return }
         isHandlingEditWriteBack = true
         Task { @MainActor in
             defer { self.isHandlingEditWriteBack = false }
-            for session in changed {
-                let name = (session.remotePath as NSString).lastPathComponent
-                let alert = NSAlert()
-                alert.messageText = tr("\u{201C}%@\u{201D} was changed. Upload it back to %@?", name, session.serverLabel)
-                alert.addButton(withTitle: tr("Upload"))
-                alert.addButton(withTitle: tr("Discard"))
-                let upload = alert.runModal() == .alertFirstButtonReturn
-                if upload {
-                    do {
-                        try await session.upload(session.tempPath, session.remotePath)
-                        self.rebaseline(session.tempPath)   // don't re-prompt this save
-                        self.activePanelVC.panelState.refresh()
-                        self.inactivePanelVC.panelState.refresh()
-                    } catch {
-                        self.presentLocalizedError(error, in: window)
-                        // keep old baseline → re-prompt next time (don't lose the edit)
-                    }
-                } else {
-                    self.rebaseline(session.tempPath)        // discard: mark handled
-                }
+            if await self.resolveEditChanges(quitting: false) {
+                self.activePanelVC.panelState.refresh()
+                self.inactivePanelVC.panelState.refresh()
             }
         }
     }
 
-    /// Reset a session's baseline to the temp file's current state.
-    private func rebaseline(_ tempPath: String) {
-        guard let a = try? FileManager.default.attributesOfItem(atPath: tempPath),
-              let mod = a[.modificationDate] as? Date,
-              let size = (a[.size] as? NSNumber)?.int64Value else { return }
-        remoteEditWatcher.updateBaseline(tempPath: tempPath, modified: mod, size: size)
+    private func resolveEditChanges(quitting: Bool) async -> Bool {
+        await remoteEditWatcher.resolveChanges(decide: { session in
+            let alert = NSAlert()
+            alert.messageText = tr("“%@” was changed. Upload it back to %@?",
+                                   (session.remotePath as NSString).lastPathComponent, session.serverLabel)
+            if quitting {
+                alert.informativeText = tr("Temporary copies will be deleted when Double Finder quits. Upload your changes, discard them, or cancel quitting.")
+            }
+            alert.addButton(withTitle: tr("Upload"))
+            alert.addButton(withTitle: tr("Discard"))
+            alert.addButton(withTitle: tr(quitting ? "Cancel Quit" : "Later"))
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: return .upload
+            case .alertSecondButtonReturn: return .discard
+            default: return .cancel
+            }
+        }, onError: { error in
+            // A modal error completes before terminateLater replies; a sheet
+            // could otherwise be left attached after a cancelled quit.
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = tr((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            alert.informativeText = tr("The temporary copy has been kept. You can try again later.")
+            alert.runModal()
+        })
+    }
+
+    var canBeginExternalFileTermination: Bool {
+        !isPreparingToQuit && !isHandlingEditWriteBack && !externalFileWorkspace.hasActiveLoads
+            && view.window?.attachedSheet == nil
+    }
+
+    /// Called through terminateLater, before plugins/devices are disconnected.
+    func prepareExternalFilesForTermination() async -> Bool {
+        guard canBeginExternalFileTermination else { return false }
+        isPreparingToQuit = true
+        var approved = false
+        defer { if !approved { isPreparingToQuit = false } }
+        repeat {
+            guard await resolveEditChanges(quitting: true) else { return false }
+            // An external app may save again while an upload is in flight.
+        } while !remoteEditWatcher.pendingChanges().isEmpty
+        // All edits have been uploaded or explicitly discarded. Commit to
+        // exit before recursive removal, which can fail after partial cleanup.
+        approved = true
+        do { try await externalFileWorkspace.cleanup() }
+        catch {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = tr("Some temporary files could not be deleted.")
+            alert.informativeText = tr("Remaining temporary files: %@", externalFileWorkspace.rootDirectory.path)
+            alert.runModal()
+        }
+        return true
     }
 
     /// Opens `url` (local file, or a downloaded temp copy of a remote file) in the

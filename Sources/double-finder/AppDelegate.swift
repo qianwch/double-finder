@@ -7,6 +7,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private weak var terminalAppMenu: NSMenu?
     private weak var pluginsMenu: NSMenu?
     private var helpKeyMonitor: Any?
+    private var isWaitingForExternalFileTermination = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Double Finder runs its own folder tabs inside each panel; the system's
@@ -75,6 +76,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isWaitingForExternalFileTermination else { return .terminateLater }
+        guard let mainVC = mainVC() else { return .terminateNow }
+        guard mainVC.canBeginExternalFileTermination else { NSSound.beep(); return .terminateCancel }
+        isWaitingForExternalFileTermination = true
+        Task { @MainActor in
+            let approved = await mainVC.prepareExternalFilesForTermination()
+            self.isWaitingForExternalFileTermination = false
+            sender.reply(toApplicationShouldTerminate: approved)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
